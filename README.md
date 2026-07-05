@@ -11,7 +11,61 @@ This repository contains two skills:
 
 - Git.
 - Codex or Claude Code installed.
-- A local clone of this repository:
+- Node.js 18+ when installing through `npx`.
+
+## Fast Install With npx
+
+Install both skills globally for Codex and Claude Code:
+
+```bash
+npx github:gotowebpl/monteby-skills
+```
+
+After this package is published to npm, the same installer can be run as:
+
+```bash
+npx @gotowebpl/monteby-skills
+```
+
+Install only Codex skills:
+
+```bash
+npx github:gotowebpl/monteby-skills --target codex
+```
+
+Install Codex skills to both current Codex paths, `$HOME/.agents/skills` and legacy-compatible `$HOME/.codex/skills`:
+
+```bash
+npx github:gotowebpl/monteby-skills --target codex --codex-legacy
+```
+
+Install only Claude Code skills:
+
+```bash
+npx github:gotowebpl/monteby-skills --target claude
+```
+
+Install into a project instead of user-level directories:
+
+```bash
+npx github:gotowebpl/monteby-skills --target both --scope project --project-dir .
+```
+
+Install one skill:
+
+```bash
+npx github:gotowebpl/monteby-skills --skills monteby-site-authoring
+```
+
+Preview what would be installed:
+
+```bash
+npx github:gotowebpl/monteby-skills --dry-run
+```
+
+## Manual Install From Clone
+
+Clone this repository:
 
 ```bash
 git clone git@github.com:gotowebpl/monteby-skills.git

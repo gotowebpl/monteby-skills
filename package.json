@@ -1,0 +1,37 @@
+{
+  "name": "@gotowebpl/monteby-skills",
+  "version": "0.1.0",
+  "description": "Install Monteby Agent Skills for Codex and Claude Code.",
+  "license": "MIT",
+  "type": "commonjs",
+  "bin": {
+    "monteby-skills": "./bin/monteby-skills.js"
+  },
+  "files": [
+    "bin/",
+    "monteby-site-authoring/",
+    "monteby-widget-development/",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node ./bin/monteby-skills.js --help && node ./bin/monteby-skills.js --dry-run --target both"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gotowebpl/monteby-skills.git"
+  },
+  "homepage": "https://github.com/gotowebpl/monteby-skills#readme",
+  "bugs": {
+    "url": "https://github.com/gotowebpl/monteby-skills/issues"
+  },
+  "keywords": [
+    "agent-skills",
+    "codex",
+    "claude-code",
+    "monteby",
+    "wordpress"
+  ]
+}
