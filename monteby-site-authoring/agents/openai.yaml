@@ -1,0 +1,5 @@
+interface:
+  display_name: "Monteby Site Authoring"
+  short_description: "Author Monteby layouts from live site contracts"
+  brand_color: "#111827"
+  default_prompt: "Use $monteby-site-authoring to build and validate a Monteby page layout from this WordPress site contract."
