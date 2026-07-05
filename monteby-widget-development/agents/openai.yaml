@@ -1,0 +1,4 @@
+interface:
+  display_name: "Monteby Widget Development"
+  short_description: "Develop Builder/Core widgets safely"
+  default_prompt: "Use $monteby-widget-development to add or modify a Monteby Builder widget across Builder, Core, and Theme."
