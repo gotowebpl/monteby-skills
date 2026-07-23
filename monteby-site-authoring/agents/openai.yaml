@@ -1,5 +1,5 @@
 interface:
   display_name: "Monteby Site Authoring"
-  short_description: "Author Monteby layouts from live site contracts"
+  short_description: "Author and benchmark Monteby layouts"
   brand_color: "#111827"
-  default_prompt: "Use $monteby-site-authoring to build and validate a Monteby page layout from this WordPress site contract."
+  default_prompt: "Use $monteby-site-authoring to recreate the complete responsive page from this HTML, screenshot, or Envato-style reference as close to 1:1 as possible using only live-contract Monteby controls; never author classes or raw markup, and add a typed Builder/Core control when the contract cannot express a measured requirement."

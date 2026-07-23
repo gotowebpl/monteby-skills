@@ -203,6 +203,30 @@ function copySkill(source, destination, dryRun) {
   });
 }
 
+function copySkillRuntimeDependencies(skill, destination, dryRun) {
+  if (dryRun || skill !== 'monteby-site-authoring') {
+    return;
+  }
+
+  const dependencies = ['pixelmatch', 'pngjs'];
+  const sourceNodeModules = path.join(packageRoot(), 'node_modules');
+  const destinationNodeModules = path.join(destination, 'scripts', 'node_modules');
+
+  for (const dependency of dependencies) {
+    const source = path.join(sourceNodeModules, dependency);
+    if (!fs.existsSync(source)) {
+      continue;
+    }
+
+    fs.mkdirSync(destinationNodeModules, { recursive: true });
+    fs.cpSync(source, path.join(destinationNodeModules, dependency), {
+      recursive: true,
+      force: true,
+      errorOnExist: false,
+    });
+  }
+}
+
 function install(options) {
   const directories = targetDirectories(options);
   const planned = [];
@@ -222,6 +246,7 @@ function install(options) {
   for (const item of planned) {
     console.log(`${options.dryRun ? '[dry-run] ' : ''}${item.agent}: ${item.skill} -> ${item.destination}`);
     copySkill(item.source, item.destination, options.dryRun);
+    copySkillRuntimeDependencies(item.skill, item.destination, options.dryRun);
   }
 
   if (!options.dryRun) {

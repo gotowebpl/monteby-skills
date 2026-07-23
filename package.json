@@ -17,7 +17,11 @@
     "node": ">=18"
   },
   "scripts": {
-    "test": "node ./bin/monteby-skills.js --help && node ./bin/monteby-skills.js --dry-run --target both"
+    "test": "node --test --test-concurrency=1 ./tests/*.test.js && node ./bin/monteby-skills.js --help && node ./bin/monteby-skills.js --dry-run --target both"
+  },
+  "dependencies": {
+    "pixelmatch": "^5.3.0",
+    "pngjs": "^7.0.0"
   },
   "repository": {
     "type": "git",

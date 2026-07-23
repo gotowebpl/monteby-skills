@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "siteContractVersion": 1,
+  "siteContractFingerprint": "sha256:7157b60d8cc7c623bd76114f114660da8215244d2d67723aa4c3bfcf52127ebf",
+  "builderSnapshot": "tests/fixtures/site-contract/full-contract-with-child-theme-widget.json"
+}
