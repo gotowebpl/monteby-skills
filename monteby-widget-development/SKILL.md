@@ -47,14 +47,18 @@ Read each repo's `AGENTS.md` and the Builder `docs/PRODUCTION-PLAN.md` when pres
 
    For visible widgets, align editor component, schema controls, defaults, inserter props, `aiProps`, `allowedParents`, AI catalog/export/import behavior, PHP renderer, JS compiler, and Core parity where applicable.
 
-7. Test the behavior.
+7. Treat editor usability as part of the widget contract.
+
+   Use control types that match the value: selects/segments for bounded choices, toggles for booleans, media controls for assets, and repeaters for ordered items. Give controls user-facing labels and predictable defaults. Repeaters must expose and enforce `minItems`/`maxItems`, disable impossible actions, preserve the active/default item after add, move, or remove, and show useful empty and limit states. For interactive widgets, keep canvas state synchronized with the inspector, support keyboard and focus behavior, use complete ARIA relations, and verify desktop/tablet/mobile preview behavior against the PHP/compiled frontend. Browser and benchmark evidence must exercise hit-tested pointer transitions plus both applicable keyboard patterns: automatic arrow activation or manual Arrow+Enter/Space activation must change selection, visible content, and focus, then restore a known default. A pixel-identical screenshot with dead, covered, pointer-disabled, or structurally unrelated handlers is a failed widget implementation. A technically valid control that is hard to discover or produces a misleading preview is incomplete.
+
+8. Test the behavior.
 
    Every logical parser, validator, transformer, renderer change, or widget authoring change needs PHPUnit/Vitest coverage. Run the narrow tests first, then the relevant repo gates.
 
-8. Record the result.
+9. Record the result.
 
    Report what changed, which repos were touched, which tests ran, and any remaining compatibility or follow-up risk. If new helpers/classes/functions were introduced, list inspected helper/class paths and explain why reuse was insufficient.
 
 ## Detailed Playbook
 
-Read `references/widget-development-playbook.md` when implementing or reviewing an actual widget/block change. It contains the expected files, contracts, tests, and review checklist.
+Read `references/widget-development-playbook.md` when implementing or reviewing an actual widget/block change. It contains the expected files, contracts, production benchmark defect checklist, tests, and review checklist.
