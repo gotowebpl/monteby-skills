@@ -22,6 +22,42 @@ The allowed reference paths are:
 - screenshot-to-Monteby: inspect the screenshot/demo visually, derive a visual spec, then author Monteby JSON directly.
 - reference-HTML-to-Monteby: create or inspect temporary HTML only as a measuring/prototyping artifact, then discard the source structure and author Monteby JSON from the live contract.
 
+## Fast Path: reproducing an HTML/CSS reference
+
+For the common job — turn a measured HTML/CSS mockup into a saved Monteby page —
+follow `references/quick-start-runbook.md` instead of improvising. It is a numbered
+procedure with one command and one exit condition per step, written so a smaller
+model can execute it without reasoning about the contract, and it targets minutes
+rather than a long tuning session. `references/html-to-monteby.md` is its lookup
+table: CSS → composition mappings, control-value rules that silently reject authored
+values, and renderer traps that pass validation but break the rendered page.
+
+Three tools carry the work that otherwise becomes trial and error:
+
+- `scripts/layout-kit.mjs` — build the node map declaratively. It enforces
+  components, props, blocked props, and `allowedParents`, normalizes every value to
+  its control's step/enum/type, and repairs the known renderer traps (zero top
+  margin on text, zeroed sibling border edges, object-shaped `ListBlock.items`).
+  Pass CSS values straight from the reference; the kit snaps them.
+- `scripts/normalize-layout.js` — pre-flight an existing node map, with `--fix` to
+  write the repaired copy. Run it before `/validate`: the REST endpoint reports one
+  violation class at a time, this reports all of them at once.
+- `scripts/compare-geometry.js` — section-by-section geometry diff between the
+  reference and the candidate, plus heading line-count and overflow checks. Use it
+  as the acceptance signal; a screenshot taken by resizing a headless window can
+  fake an overflow, a live measurement cannot.
+- `scripts/audit-reference-css.mjs` — run it on the reference stylesheet **before**
+  authoring. It resolves `:root` variables, expands shorthands, and splits every
+  declaration into what the contract expresses, what must be rebuilt as a node, what
+  belongs in the product, and what is a genuine residual. Knowing the residuals up
+  front is what turns a long tuning session into a short one.
+- `scripts/emit-child-theme-css.mjs` — generates the residual stylesheet from a
+  plan plus the freshly saved page, resolving node references into current renderer
+  classes. See `references/child-theme-residual-styles.md`.
+
+Skip the heavier `Visual Benchmark Loop` below unless the task is a marketplace
+template benchmark or a product-fidelity investigation.
+
 ## Contract Compatibility Baseline
 
 Read `references/site-contract-compatibility.json` before authoring and treat it only as the tested Builder/skill compatibility baseline. It records the public Site Contract version and the exact Builder snapshot fingerprint against which this skill was released.
@@ -57,6 +93,16 @@ For a measured hero proof card, portrait, or media panel that visibly protrudes 
 
    Keep WordPress site structure semantic. Author the header and footer as separate global templates, and keep page JSON limited to page content. A WordPress header is composed from separate `SiteBranding`, real host-provided `WPMenu`, CTA, and layout nodes; do not replace it with one monolithic `Navbar`. Select an existing menu from `hostChoices` instead of guessing or typing a location.
 
+   A global template is a `gotoweb_template` post that Builder resolves **by canonical slug**, not by title, ID, or template-type meta alone. Create or reuse exactly `gotoweb-global-header` and `gotoweb-global-footer`; Builder's `gotoweb_craft_builder_global_template_post_id()` looks the post up through `get_page_by_path()` on that slug, so a template stored under any other slug is invisible to the Monteby admin panel and to the editor entry point even when the theme still renders it. Also set `_gotoweb_craft_template_type` to `header` or `footer` on the post and keep its status `publish`.
+
+   When a Monteby theme owns the shell, the theme selects the rendered template through its own option (`monteby_theme_global_templates` with `header_template_id`/`footer_template_id`). That selection and Builder's canonical slug lookup must resolve to the same post. When they diverge, the site renders one template while the panel edits another, and the user sees a header/footer that "cannot be edited". Verify both resolvers agree before reporting the templates as done, and prefer creating templates through Builder's own setup path so the canonical slug is assigned for you.
+
+   Save global-template layouts through the same versioned `/pages/{id}/layout` route as pages, passing the template post ID.
+
+   Every authored form is GDPR-compliant by default, on every site and in every language. A contact, quote, callback, or newsletter form always carries a required consent `checkbox` field naming the data controller and the processing purpose, plus a privacy-policy link through the field's `linkText`/`linkUrl` controls, and a short processing note stating the data subject's rights. Never ship a form whose only fields collect personal data. If the live `FormBlock` contract lacks the `checkbox` field type or its link controls, treat that as a blocking contract gap and fix it through `monteby-widget-development` before publishing the form. Link the consent to a real published privacy-policy page; create one if the site has none.
+
+   Match every repeater or list prop to the shape the live renderer actually reads. `ListBlock.items` takes plain strings (or one newline-separated string) and has no per-item link control, while repeaters exposing `itemControls` take objects with exactly those keys. Passing an object where the widget expects a string still renders server-side but throws React error #31 in the editor canvas and isolates the widget, so the page looks correct on the frontend while being uneditable. When a list needs clickable entries, compose `ButtonBlock` or a host-provided `WPMenu` instead of inventing an `href` key.
+
 4. Stay inside authoring props.
 
    Use only props listed by the contract for that widget. Never author:
@@ -65,6 +111,8 @@ For a measured hero proof card, portrait, or media panel that visibly protrudes 
    - raw HTML, raw CSS, inline scripts, event handler props such as `onClick`
    - Tailwind utility strings or arbitrary class strings
    - unknown widgets, guessed host IDs, guessed taxonomy names, or guessed template IDs
+
+   Full 1:1 fidelity is still the target when a measured behavior has no control. Work the order in `references/child-theme-residual-styles.md`: confirm with `audit-reference-css.mjs` that no prop expresses it, rebuild decorative pseudo-elements as ordinary nodes, send anything reusable to `monteby-widget-development`, and only then let a **generated** child-theme stylesheet carry the remainder — interaction states, sticky positioning, a second background layer, variable-font axes, and resets of plugin defaults that have no zero token. Never hand-write those selectors: renderer classes are prop hashes and a copied selector stops matching at the next edit. Keep the residual plan in the project repository, regenerate the stylesheet after every layout save, and list every residual in the final report as product debt.
 
    When the measured target requires a visual behavior that the live contract cannot express, stop treating the current candidate as matched. Name the exact missing widget, prop, control type, responsive axis, renderer behavior, or validation rule and switch to the `monteby-widget-development` workflow. Add a typed, schema-backed control in its owning Core/Builder layer with editor, compiler, PHP renderer, validation, AI contract, and test parity; fetch the refreshed live contract before resuming authoring. Do not silently approximate a required capability with classes, raw CSS, Advanced props, duplicate breakpoint sections, or theme-specific code.
 
@@ -75,6 +123,8 @@ For a measured hero proof card, portrait, or media panel that visibly protrudes 
 6. Save only through the official API.
 
    Fetch `GET /wp-json/monteby/v1/pages/{id}/layout` immediately before saving and retain its `postModifiedGmt` value. Use `PUT /wp-json/monteby/v1/pages/{id}/layout` with the validated `layout`, `nodeMap`, `nodes`, or `builderJson` payload and send that value as `expectedModifiedGmt`. Preserve the returned `presentation` unless the task requires a deliberate page-shell change. When an exact standalone page or visual benchmark must exclude the theme/global header and footer, and the live contract exposes the presentation schema, include `"presentation": { "layout": "canvas", "disableGlobalTemplates": true }` in that same versioned PUT. Do not call the legacy page-settings route for AI authoring, and do not send CSS, JS, SEO, or other page settings through the site-authoring API. A `428` response means the write precondition is missing. A `409` response means another editor changed the page. In either case, fetch the layout again, reconcile changes, revalidate, and retry. Never bypass a conflict with stale JSON. Do not write post meta directly, do not use wp-admin form scraping, and do not update `post_content` yourself.
+
+   `presentation.layout` decides the page shell, so pick it deliberately for a normal site page too, not only for standalone benchmarks. `default` keeps the theme's constrained content column (Builder's `gotoweb_craft_builder_content_width` option, commonly `1280px`), which visibly clips full-bleed Sections and leaves the theme background showing beside every band. A page whose Sections carry their own `background`, `backgroundImage`, or edge-to-edge colour needs `"presentation": { "layout": "full-width", "disableGlobalTemplates": false }` and should keep the site's measured content column on the Section itself through `innerMaxWidth` plus `innerPaddingX*`. Reserve `canvas` for pages that must also drop the global header and footer. A candidate that reproduces the reference inside a narrower column than the header/footer is a shell mismatch, not a spacing bug — fix the presentation value rather than shrinking the Section padding.
 
 7. Preview and inspect.
 
