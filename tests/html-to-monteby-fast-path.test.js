@@ -364,3 +364,15 @@ test('extractor role rules keep structured content out of flattened text', () =>
   // span z display:block łamie textOnly (wiersze karty kontaktu)
   assert.match(snippet, /d === 'block' \|\| d === 'flex' \|\| d === 'grid'/);
 });
+
+test('compiler pins typography and keeps marker rows from stacking', async () => {
+  const source = fs.readFileSync(path.join(SCRIPTS, 'spec-to-layout.mjs'), 'utf8');
+  // R1: renderer nakłada płynny clamp bez jawnych wariantów — kompilator przypina rozmiary
+  assert.match(source, /fontSizeTablet: px\(t\.fontSize\)/);
+  assert.match(source, /fontSizeMobile: px\(t\.fontSize\)/);
+  // R2: wąski pierwszy track (znacznik/plakietka) zostaje flexem i nie składa się na tablecie
+  assert.match(source, /widths\[0\] <= 60\) return \{ marker/);
+  assert.match(source, /noStack: percent <= 25/);
+  // R3: tekst ze zmierzoną miarą dostaje Container maxWidth
+  assert.match(source, /st\.maxWidth && st\.rect/);
+});
