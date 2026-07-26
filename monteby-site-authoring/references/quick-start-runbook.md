@@ -245,3 +245,24 @@ evidence for `canonical_verified_1_to_1`.
 If the user/site owner separately authorizes a named site-specific exception, read
 `child-theme-residual-styles.md`. Keep it outside completion criteria and report
 the owner, scope, product rationale, and rollback.
+
+
+## Capture caveat: narrow viewports in headless Chrome
+
+`chrome --headless=new --screenshot --window-size=390,H` silently enforces a
+minimum window width (~435px) and crops the image back to 390 — every element
+appears clipped at the right edge even though the live layout is correct. Any
+"words cut at the right edge" finding from such a capture is a measurement
+artifact until confirmed in a real browser or an exact-width frame.
+
+Capture narrow viewports through a fixed-width iframe harness instead:
+
+```html
+<!doctype html><meta charset="utf-8">
+<style>html,body{margin:0}iframe{border:0;width:390px;height:14400px;display:block}</style>
+<iframe src="PAGE_URL"></iframe>
+```
+
+Screenshot the harness at a wide window (e.g. 600px) and slice the left 390
+columns. Cross-origin pages render fine — the harness needs pixels, not DOM
+access.
