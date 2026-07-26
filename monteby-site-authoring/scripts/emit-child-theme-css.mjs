@@ -34,6 +34,10 @@
  *   sectionIndex — n-ta sekcja treści (od 0)
  *   linkText     — dokładny tekst odnośnika
  *   css          — gotowy selektor, gdy cel nie jest węzłem buildera
+ *
+ * Pola opcjonalne reguły: `state` (hover/focus), `pseudo` ("::before", " > *"),
+ * `important`, `prefix` — przedrostek podnoszący specyficzność, gdy reguła musi
+ * pokonać szerszy selektor z tego samego arkusza.
  */
 
 'use strict';
@@ -207,8 +211,9 @@ async function main() {
     }
     const state = rule.state ? `:${rule.state}` : '';
     const pseudo = rule.pseudo || '';
+    const prefix = rule.prefix || '';
     if (rule.comment) lines.push(`/* ${rule.comment} — ${target.source} */`);
-    lines.push(`${target.selector}${state}${pseudo} {`);
+    lines.push(`${prefix}${target.selector}${state}${pseudo} {`);
     lines.push(renderDeclarations(rule.declarations || {}, rule.important));
     lines.push('}', '');
     emitted += 1;
