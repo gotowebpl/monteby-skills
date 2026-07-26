@@ -4,7 +4,7 @@ Reusable Agent Skills for working with the Monteby ecosystem.
 
 This repository contains two skills:
 
-- `monteby-site-authoring` - author or modify layouts on any live WordPress site running Monteby Builder + Monteby Theme by fetching the site's live REST contract, validating Monteby JSON, saving through the official API, previewing through WordPress/PHP, and running visual HTML-to-Monteby benchmark loops without authoring classes or raw markup.
+- `monteby-site-authoring` - discover, take over, hand off, author, or modify any WordPress site running Monteby Builder + Monteby Theme; preserve a reproducible Docker/project contract, fetch the site's live REST authoring contract, validate Monteby JSON, save through the official API, preview through WordPress/PHP, and run visual HTML-to-Monteby benchmark loops without authoring classes or raw markup.
 - `monteby-widget-development` - develop Monteby Builder/Core/Theme widgets in local repositories, including props-first schema controls, AI props, renderer parity, validation, and tests.
 
 ## Requirements

@@ -166,3 +166,35 @@ test('production-site benchmark guidance preserves site structure, SEO ownership
   assert.match(widgetGuidance, /unrelated Box\/Hover groups must not open/);
   assert.match(widgetGuidance, /fail on asset `404` or console errors/);
 });
+
+test('client-site handoff guidance keeps Codex and Claude instructions equivalent and secrets isolated', () => {
+  const skill = fs.readFileSync(
+    path.join(root, 'monteby-site-authoring', 'SKILL.md'),
+    'utf8',
+  );
+  const handoff = fs.readFileSync(
+    path.join(root, 'monteby-site-authoring', 'references', 'client-site-handoff.md'),
+    'utf8',
+  );
+
+  assert.match(skill, /references\/client-site-handoff\.md/);
+  assert.match(skill, /`AGENTS\.md` and `CLAUDE\.md` semantically equivalent/);
+  assert.match(handoff, /@AGENTS\.md/);
+  assert.match(handoff, /one canonical body/);
+  assert.match(handoff, /Run the project's actual Compose discovery and status commands/);
+  assert.match(handoff, /`docker compose config --services`/);
+  assert.match(handoff, /named volumes and bind mounts/);
+  assert.match(handoff, /Never run or recommend `docker compose down -v`/);
+  assert.match(handoff, /read-only WP-CLI/);
+  assert.match(handoff, /If a project directory is not a Git repository, say so explicitly/);
+  assert.match(handoff, /Do not assume an existing ignore file protects operational artifacts/);
+  assert.match(handoff, /historical authoring directories as untrusted until audited and redacted/);
+  assert.match(handoff, /deployment directory or package: immutable release snapshot/);
+  assert.match(handoff, /Do not record administrator passwords, application passwords, cookies, nonces/);
+  assert.match(handoff, /child theme as a hidden patch layer/);
+  assert.match(handoff, /## Handoff Report/);
+  assert.match(handoff, /origin, branch, commit SHA, upstream relation, and dirty state/);
+  assert.match(handoff, /backup status, rollback procedure/);
+  assert.match(handoff, /`CLAUDE\.md` resolves to the same contract as `AGENTS\.md`/);
+  assert.doesNotMatch(handoff, /Społem|spolem|8194|8195|strona-projektowa/i);
+});
