@@ -8,6 +8,11 @@ const { spawnSync } = require('child_process');
 const { fileURLToPath, pathToFileURL } = require('url');
 
 const LONG_MOBILE_VIEWPORT = 'mobile-long:390x1800';
+const CANONICAL_VIEWPORTS = [
+  'desktop:1440x1200',
+  'tablet:834x1112',
+  'mobile:390x844',
+];
 const LONG_MOBILE_FIRST_VIEWPORT_COVERAGE_MAX = 0.02;
 const LONG_MOBILE_AFTER_FOLD_MIN = 0.9;
 const LONG_MOBILE_AFTER_FOLD_MAX = 2.6;
@@ -23,6 +28,7 @@ function parseArgs(argv) {
     marketplaceReference: false,
     referenceUrls: [],
     referenceHtmlFile: '',
+    candidateLayout: '',
     waitMs: '1000',
     referenceWaitMs: '3500',
     fullPage: true,
@@ -79,6 +85,7 @@ function parseArgs(argv) {
       '--archetype',
       '--reference-url',
       '--reference-html-file',
+      '--candidate-layout',
       '--wait-ms',
       '--reference-wait-ms',
       '--channel',
@@ -124,6 +131,9 @@ function parseArgs(argv) {
         break;
       case '--reference-html-file':
         options.referenceHtmlFile = path.resolve(value);
+        break;
+      case '--candidate-layout':
+        options.candidateLayout = path.resolve(value);
         break;
       case '--wait-ms':
         options.waitMs = value;
@@ -181,10 +191,11 @@ function parsePositiveInteger(value, label) {
 
 function usage() {
   return `Usage:
-  run-visual-iteration.js --contract contract.json [--seed value] [--variant auto|split-hero|editorial-ledger|bento-showcase|tabbed-program|marketplace-service] [--archetype name] [--reference-url url | --reference-html-file file] [--preserve-source-text] [--out-dir dir] [--viewport label:WIDTHxHEIGHT] [--full-page | --viewport-only] [--viewport-timeout-ms milliseconds] [--channel chrome] [--max-percent value] [--max-viewport-percent value] [--allow-structural-verdict] [--json]
+  run-visual-iteration.js --contract contract.json [--seed value] [--variant auto|split-hero|editorial-ledger|bento-showcase|tabbed-program|marketplace-service] [--archetype name] [--reference-url url | --reference-html-file file] [--candidate-layout layout.json] [--preserve-source-text] [--out-dir dir] [--viewport label:WIDTHxHEIGHT] [--full-page | --viewport-only] [--viewport-timeout-ms milliseconds] [--channel chrome] [--max-percent value] [--max-viewport-percent value] [--allow-structural-verdict] [--json]
 
 Options:
   --reference-html-file <file>  Use a local HTML document as the measured reference without requiring a remote URL.
+  --candidate-layout <file>     Audit and benchmark an edited candidate while retaining the measured layout plan.
   --full-page                  Capture and compare complete responsive pages. This is the default and remains a static visual diagnostic.
   --viewport-only              Capture only the first viewport for a faster diagnostic iteration. It cannot prove full-page fidelity.
   --viewport-timeout-ms <ms>  Positive timeout forwarded to every reference, target, candidate, and long-mobile viewport capture. Default: capture auto
@@ -196,11 +207,12 @@ Options:
 Runs one local visual-fidelity iteration:
   1. start-visual-benchmark.js creates/captures the target
   2. audit-authoring-readiness.js checks the live contract
-  3. draft-monteby-layout.js creates a clean Monteby draft
+  3. draft-monteby-layout.js creates a measured plan and clean Monteby draft
   4. render-monteby-preview.js renders a diagnostic local preview
   5. capture-template-reference.js captures the preview
   6. run-visual-benchmark.js reports blockers
 
+Every report includes a versioned layout-plan artifact plus exactly one nextAction. Execute that action; do not improvise a parallel workflow.
 This is a local diagnostic loop. A successful run reports diagnostic_passed, never final fidelity or canonical success.
 The generated JSON and Markdown keep the visual benchmark result separate from fidelityPassed and canonicalVerification.
 WordPress REST validation, REST save, and PHP preview remain required for canonical verification on real sites.`;
@@ -320,6 +332,10 @@ function candidateContractPath(options) {
 
 function layoutDraftPath(options) {
   return path.join(candidateDir(options), 'layout-draft.json');
+}
+
+function layoutPlanPath(options) {
+  return path.join(candidateDir(options), 'layout-plan.json');
 }
 
 function layoutPath(options) {
@@ -465,6 +481,8 @@ function draftArgs(options, startReport, referenceManifest) {
     referenceManifest,
     '--out',
     layoutDraftPath(options),
+    '--plan-out',
+    layoutPlanPath(options),
     '--json',
   ];
 
@@ -476,6 +494,27 @@ function draftArgs(options, startReport, referenceManifest) {
   }
   if (options.preserveSourceText) {
     args.push('--preserve-source-text');
+  }
+
+  return args;
+}
+
+function auditCandidateArgs(options, startReport, referenceManifest) {
+  const args = [
+    '--layout',
+    options.candidateLayout,
+    '--contract',
+    candidateContractPath(options),
+    '--reference-manifest',
+    referenceManifest,
+    '--json',
+  ];
+
+  if (shouldRequireRealReference(startReport)) {
+    args.push('--require-real-reference');
+  }
+  if (shouldRequireMarketplace(startReport)) {
+    args.push('--require-marketplace-media');
   }
 
   return args;
@@ -730,7 +769,16 @@ function collectVisualBudgetBlockers(benchmarkReport) {
 }
 
 function initialReport(options) {
+  const requestedViewports = options.viewports.length > 0
+    ? options.viewports.map(String)
+    : [...CANONICAL_VIEWPORTS];
+  const missingViewports = CANONICAL_VIEWPORTS
+    .filter((viewport) => !requestedViewports.includes(viewport));
+  const requestedViewportLabels = requestedViewports.map((viewport) => viewport.split(':')[0]);
+  const missingViewportLabels = missingViewports.map((viewport) => viewport.split(':')[0]);
   return {
+    schemaVersion: 1,
+    artifact: 'monteby-visual-iteration',
     label: options.label,
     generatedAt: new Date().toISOString(),
     ok: false,
@@ -744,6 +792,18 @@ function initialReport(options) {
     fidelityPassed: false,
     canonicalVerification: false,
     productReady: false,
+    canonicalViewportCoverage: {
+      required: CANONICAL_VIEWPORTS,
+      requested: requestedViewports,
+      requestedLabels: requestedViewportLabels,
+      missing: missingViewports,
+      missingLabels: missingViewportLabels,
+      fullPage: options.fullPage,
+      strictVisualBudget: options.allowStructuralVerdict !== true,
+      complete: options.fullPage
+        && missingViewportLabels.length === 0
+        && options.allowStructuralVerdict !== true,
+    },
     canonicalEvidence: {
       renderer: 'render-monteby-preview.js',
       staticHtmlPreview: true,
@@ -757,7 +817,9 @@ function initialReport(options) {
       contract: candidateContractPath(options),
       startReport: startReportPath(options),
       layoutDraft: layoutDraftPath(options),
+      layoutPlan: layoutPlanPath(options),
       layout: layoutPath(options),
+      sourceCandidateLayout: options.candidateLayout,
       preview: previewPath(options),
       previewFragment: previewFragmentPath(options),
       candidateManifest: candidateManifestPath(options),
@@ -779,10 +841,16 @@ function initialReport(options) {
       viewports: options.viewports,
       viewportTimeoutMs: options.viewportTimeoutMs,
       fullPage: options.fullPage,
+      waitMs: options.waitMs,
+      referenceWaitMs: options.referenceWaitMs,
+      channel: options.channel,
+      playwrightPackage: options.playwrightPackage,
       maxPercent: options.maxPercent,
       maxViewportPercent: options.maxViewportPercent,
       allowStructuralVerdict: options.allowStructuralVerdict,
       preserveSourceText: options.preserveSourceText,
+      referenceHtmlFile: options.referenceHtmlFile,
+      candidateLayout: options.candidateLayout,
     },
     referenceManifest: '',
     targetManifest: '',
@@ -794,6 +862,14 @@ function initialReport(options) {
     },
     steps: {},
     blockers: [],
+    repairQueue: [],
+    nextAction: {
+      id: 'wait_for_step',
+      tool: '',
+      args: [],
+      requires: [],
+      instruction: 'The iteration is running.',
+    },
   };
 }
 
@@ -817,10 +893,13 @@ function writeIterationMarkdown(report) {
     `- Final fidelity passed: ${report.fidelityPassed ? 'yes' : 'no'}`,
     `- Canonical WordPress verification: ${report.canonicalVerification ? 'yes' : 'no'}`,
     `- Product ready / REST verified: ${report.productReady ? 'yes' : 'no'}`,
+    `- Canonical viewport coverage: ${report.canonicalViewportCoverage?.complete ? 'complete' : 'incomplete'}`,
+    `- Missing canonical viewports: ${(report.canonicalViewportCoverage?.missingLabels || []).join(', ') || 'none'}`,
     `- Label: ${report.label}`,
     `- Target manifest: \`${report.targetManifest || ''}\``,
     `- Reference manifest: \`${report.referenceManifest || ''}\``,
     `- Layout: \`${report.files.layout}\``,
+    `- Layout plan: \`${report.files.layoutPlan}\``,
     `- Preview: \`${report.files.preview}\``,
     `- Candidate manifest: \`${report.files.candidateManifest}\``,
     `- Benchmark report: \`${report.files.benchmarkReport}\``,
@@ -863,12 +942,384 @@ function writeIterationMarkdown(report) {
     }
   }
 
+  lines.push('', '## Repair Queue', '');
+  if (!Array.isArray(report.repairQueue) || report.repairQueue.length === 0) {
+    lines.push('- None');
+  } else {
+    for (const item of report.repairQueue) {
+      const section = item.sectionId ? ` section \`${item.sectionId}\`,` : '';
+      const viewport = item.viewport ? ` viewport \`${item.viewport}\`,` : '';
+      lines.push(`- ${item.code}:${section}${viewport} ${item.instruction}`);
+    }
+  }
+
+  lines.push('', '## Next Action', '');
+  lines.push(`- ID: \`${report.nextAction?.id || ''}\``);
+  lines.push(`- Tool: \`${report.nextAction?.tool || ''}\``);
+  lines.push(`- Args: \`${JSON.stringify(report.nextAction?.args || [])}\``);
+  lines.push(`- Requires: \`${JSON.stringify(report.nextAction?.requires || [])}\``);
+  lines.push(`- Instruction: ${report.nextAction?.instruction || ''}`);
+
   fs.writeFileSync(iterationMarkdownPath({ outDir: report.files.outDir }), `${lines.join('\n')}\n`);
 }
 
 function persist(report) {
   writeJson(report.files.iterationReport, report);
   writeIterationMarkdown(report);
+}
+
+function loadLayoutPlan(report) {
+  const file = report?.files?.layoutPlan;
+  if (!file || !fs.existsSync(file)) {
+    return null;
+  }
+
+  try {
+    return readJson(file);
+  } catch (error) {
+    return null;
+  }
+}
+
+function validateLayoutPlan(file) {
+  let plan;
+  try {
+    plan = readJson(file);
+  } catch (error) {
+    return [{
+      source: 'draft',
+      code: 'layout_plan_invalid_json',
+      message: 'The required layout plan is not valid JSON.',
+    }];
+  }
+
+  const blockers = [];
+  if (plan.schemaVersion !== 1 || plan.artifact !== 'monteby-layout-plan') {
+    blockers.push({
+      source: 'draft',
+      code: 'layout_plan_schema_invalid',
+      message: 'The layout plan must use schemaVersion 1 and artifact "monteby-layout-plan".',
+    });
+  }
+  if (typeof plan.sourceLayout !== 'string' || !plan.sourceLayout || !fs.existsSync(plan.sourceLayout)) {
+    blockers.push({
+      source: 'draft',
+      code: 'layout_plan_source_missing',
+      message: 'The layout plan must retain the original generated layout used to restore mapped subtrees.',
+    });
+  }
+  if (!plan.completion || typeof plan.completion !== 'object' || Array.isArray(plan.completion)) {
+    blockers.push({
+      source: 'draft',
+      code: 'layout_plan_completion_missing',
+      message: 'The layout plan must contain a completion object.',
+    });
+    return blockers;
+  }
+
+  const omittedBands = Array.isArray(plan.completion.omittedBands) ? plan.completion.omittedBands : null;
+  const omittedMedia = Array.isArray(plan.completion.omittedMedia) ? plan.completion.omittedMedia : null;
+  if (
+    plan.completion.truncated !== false
+    || omittedBands === null
+    || omittedMedia === null
+    || omittedBands.length > 0
+    || omittedMedia.length > 0
+  ) {
+    blockers.push({
+      source: 'draft',
+      code: 'layout_plan_incomplete',
+      message: 'The layout plan is truncated or reports omitted bands/media; no later stage may continue.',
+    });
+  }
+
+  const rootSectionIds = Array.isArray(plan.rootSectionIds) ? plan.rootSectionIds : [];
+  if (rootSectionIds.length !== Number(plan.completion.emittedSections)) {
+    blockers.push({
+      source: 'draft',
+      code: 'layout_plan_section_count_mismatch',
+      message: 'The layout plan emittedSections count does not match rootSectionIds.',
+    });
+  }
+
+  if (plan.mode === 'generic-measured-reference') {
+    const bands = Array.isArray(plan.bands) ? plan.bands : [];
+    if (
+      bands.length !== Number(plan.completion.plannedBands)
+      || plan.completion.allBandsMapped !== true
+      || bands.some((band) => !band || typeof band.generatedSectionId !== 'string' || !band.generatedSectionId)
+    ) {
+      blockers.push({
+        source: 'draft',
+        code: 'layout_plan_band_mapping_incomplete',
+        message: 'Every measured generic band must map to one stable generated section ID.',
+      });
+    }
+  }
+
+  return blockers;
+}
+
+function buildRepairQueue(report) {
+  if (report.status === 'diagnostic_passed') {
+    return [];
+  }
+
+  const queue = [];
+  const plan = loadLayoutPlan(report);
+  const planBands = Array.isArray(plan?.bands) ? plan.bands : [];
+  let candidateRootIds = [];
+  try {
+    const payload = report?.files?.layout && fs.existsSync(report.files.layout)
+      ? readJson(report.files.layout)
+      : null;
+    const nodeMap = payload?.ROOT
+      ? payload
+      : payload?.nodeMap?.ROOT
+        ? payload.nodeMap
+        : payload?.layout?.ROOT
+          ? payload.layout
+          : null;
+    candidateRootIds = Array.isArray(nodeMap?.ROOT?.nodes) ? nodeMap.ROOT.nodes : [];
+  } catch {
+    candidateRootIds = [];
+  }
+  const viewports = Array.isArray(report?.benchmark?.genericGeometry?.stats?.viewports)
+    ? report.benchmark.genericGeometry.stats.viewports
+    : [];
+
+  for (const viewport of viewports) {
+    const label = String(viewport?.label || 'unknown');
+    for (const missing of Array.isArray(viewport?.bands?.missing) ? viewport.bands.missing : []) {
+      const band = planBands[Number(missing.index)] || null;
+      queue.push({
+        code: 'restore_measured_band',
+        viewport: label,
+        referenceIndex: missing.index,
+        sectionId: band?.generatedSectionId || '',
+        evidence: {
+          tags: missing.tags,
+          top: missing.top,
+          height: missing.height,
+          width: missing.width,
+          target: band?.viewports?.[label] || null,
+          sourceLayout: plan?.sourceLayout || '',
+          sourceSectionId: band?.generatedSectionId || '',
+        },
+        instruction: `Restore reference band #${Number(missing.index) + 1} with the captured order and normalized top/height/width.`,
+      });
+    }
+
+    for (const extra of Array.isArray(viewport?.bands?.extra) ? viewport.bands.extra : []) {
+      const candidateRootId = candidateRootIds[Number(extra.index)] || '';
+      queue.push({
+        code: 'remove_or_merge_extra_band',
+        viewport: label,
+        candidateIndex: extra.index,
+        sectionId: candidateRootId,
+        evidence: {
+          tags: extra.tags,
+          top: extra.top,
+          height: extra.height,
+          width: extra.width,
+          candidateRootId,
+        },
+        instruction: `Remove or merge candidate band #${Number(extra.index) + 1}; it has no ordered reference counterpart.`,
+      });
+    }
+
+    const pairs = Array.isArray(viewport?.geometry?.pairs) ? viewport.geometry.pairs : [];
+    const rankedPairs = pairs
+      .map((pair) => ({
+        ...pair,
+        severity: Math.max(
+          Number(pair.topDelta) || 0,
+          Number(pair.heightDelta) || 0,
+          Number(pair.widthDelta) || 0
+        ),
+      }))
+      .filter((pair) => pair.severity > 0)
+      .sort((left, right) => right.severity - left.severity)
+      .slice(0, 12);
+
+    for (const pair of rankedPairs) {
+      const band = planBands[Number(pair.referenceIndex)] || null;
+      queue.push({
+        code: 'match_band_geometry',
+        viewport: label,
+        referenceIndex: pair.referenceIndex,
+        candidateIndex: pair.candidateIndex,
+        sectionId: band?.generatedSectionId || '',
+        evidence: {
+          topDelta: pair.topDelta,
+          heightDelta: pair.heightDelta,
+          widthDelta: pair.widthDelta,
+          signedTopDelta: pair.signedTopDelta,
+          signedHeightDelta: pair.signedHeightDelta,
+          signedWidthDelta: pair.signedWidthDelta,
+          referenceGeometry: pair.referenceGeometry,
+          candidateGeometry: pair.candidateGeometry,
+          candidateGeometrySource: pair.candidateGeometrySource,
+          target: band?.viewports?.[label] || null,
+          precedingSectionId: Number(pair.referenceIndex) > 0
+            ? planBands[Number(pair.referenceIndex) - 1]?.generatedSectionId || ''
+            : '',
+        },
+        instruction: `Tune the mapped section to reduce normalized deltas (top ${pair.topDelta}, height ${pair.heightDelta}, width ${pair.widthDelta}).`,
+      });
+    }
+  }
+
+  for (const blocker of Array.isArray(report.blockers) ? report.blockers : []) {
+    const duplicate = queue.some((item) => item.code === blocker.code && item.viewport === blocker.label);
+    if (!duplicate) {
+      queue.push({
+        code: blocker.code || 'resolve_blocker',
+        viewport: blocker.label || '',
+        sectionId: '',
+        evidence: blocker,
+        instruction: blocker.message || 'Resolve the reported blocker without bypassing the contract.',
+      });
+    }
+  }
+
+  return queue.slice(0, 24);
+}
+
+function iterationArgsFor(report, candidateLayout = '', overrides = {}) {
+  const options = report.options || {};
+  const fullPage = typeof overrides.fullPage === 'boolean' ? overrides.fullPage : options.fullPage;
+  const viewports = Array.isArray(overrides.viewports) ? overrides.viewports : options.viewports;
+  const allowStructuralVerdict = typeof overrides.allowStructuralVerdict === 'boolean'
+    ? overrides.allowStructuralVerdict
+    : options.allowStructuralVerdict;
+  const args = [
+    '--label', report.label,
+    '--contract', report.files.sourceContract,
+    '--seed', options.seed,
+    '--variant', options.variant,
+    '--out-dir', report.files.outDir,
+    fullPage ? '--full-page' : '--viewport-only',
+    '--wait-ms', options.waitMs,
+    '--reference-wait-ms', options.referenceWaitMs,
+    '--playwright-package', options.playwrightPackage,
+    '--max-percent', options.maxPercent,
+    '--max-viewport-percent', options.maxViewportPercent,
+    '--json',
+  ];
+
+  if (options.archetype) {
+    args.push('--archetype', options.archetype);
+  }
+  if (options.referenceHtmlFile) {
+    args.push('--reference-html-file', options.referenceHtmlFile);
+  }
+  for (const url of Array.isArray(options.referenceUrls) ? options.referenceUrls : []) {
+    args.push('--reference-url', url);
+  }
+  if (options.marketplaceReference) {
+    args.push('--marketplace-reference');
+  }
+  if (options.preserveSourceText) {
+    args.push('--preserve-source-text');
+  }
+  if (allowStructuralVerdict) {
+    args.push('--allow-structural-verdict');
+  }
+  if (options.channel) {
+    args.push('--channel', options.channel);
+  }
+  if (Number(options.viewportTimeoutMs) > 0) {
+    args.push('--viewport-timeout-ms', String(options.viewportTimeoutMs));
+  }
+  if (options.renderedMinCoverageRatio) {
+    args.push('--rendered-min-coverage-ratio', options.renderedMinCoverageRatio);
+  }
+  for (const viewport of Array.isArray(viewports) ? viewports : []) {
+    args.push('--viewport', viewport);
+  }
+  if (candidateLayout) {
+    args.push('--candidate-layout', candidateLayout);
+  }
+
+  return args;
+}
+
+function nextActionFor(report) {
+  const retry = {
+    tool: scriptPath('run-visual-iteration.js'),
+    args: iterationArgsFor(report, report.files.sourceCandidateLayout || ''),
+    requires: [],
+  };
+
+  if (report.status === 'diagnostic_passed') {
+    if (report.canonicalViewportCoverage?.complete !== true) {
+      return {
+        id: 'capture_canonical_viewports',
+        tool: scriptPath('run-visual-iteration.js'),
+        args: iterationArgsFor(report, report.files.layout, {
+          fullPage: true,
+          viewports: CANONICAL_VIEWPORTS,
+          allowStructuralVerdict: false,
+        }),
+        requires: [],
+        instruction: 'Run the exact full-page three-viewport command before any canonical WordPress mutation.',
+      };
+    }
+    return {
+      id: 'snapshot_canonical_page',
+      tool: scriptPath('wordpress-layout-client.js'),
+      args: [
+        'snapshot',
+        '--site', '$MONTEBY_SITE_URL',
+        '--page-id', '$MONTEBY_PAGE_ID',
+        '--out-dir', path.join(report.files.outDir, 'wordpress'),
+      ],
+      requires: ['MONTEBY_SITE_URL', 'MONTEBY_PAGE_ID', 'MONTEBY_AUTH_HEADER'],
+      instruction: 'Provide the target site and page ID, keep authorization in MONTEBY_AUTH_HEADER, then snapshot before validation or save.',
+    };
+  }
+
+  if (
+    report.status === 'visual_budget_failed'
+    || report.status === 'benchmark_failed'
+    || report.status === 'candidate_audit_failed'
+  ) {
+    const repairLayout = report.status === 'candidate_audit_failed'
+      ? report.files.sourceCandidateLayout
+      : report.files.layout;
+    return {
+      id: 'repair_candidate_from_queue',
+      tool: retry.tool,
+      args: iterationArgsFor(report, repairLayout),
+      requires: ['REPAIR_QUEUE_APPLIED'],
+      instruction: 'Edit only the section IDs named in repairQueue, then run this exact command to re-audit the candidate.',
+    };
+  }
+
+  if (report.status === 'readiness_failed' || report.status === 'draft_failed') {
+    return {
+      id: 'resolve_product_gap',
+      tool: 'monteby-widget-development',
+      args: [],
+      requires: [],
+      instruction: 'Treat the reported contract or capability gap as product work. Do not bypass it with raw CSS, HTML, or theme overrides.',
+    };
+  }
+
+  if (report.status === 'render_failed' || report.status === 'candidate_capture_failed') {
+    return {
+      id: 'retry_render_or_capture',
+      ...retry,
+      instruction: 'Resolve the reported renderer or capture failure, then run this exact command without changing the measured plan.',
+    };
+  }
+
+  return {
+    id: 'retry_failed_stage',
+    ...retry,
+    instruction: 'Resolve the explicit blocker and run this exact command again.',
+  };
 }
 
 function finish(report, status, blockers = []) {
@@ -879,6 +1330,8 @@ function finish(report, status, blockers = []) {
   report.fidelityPassed = false;
   report.canonicalVerification = false;
   report.productReady = false;
+  report.repairQueue = buildRepairQueue(report);
+  report.nextAction = nextActionFor(report);
   persist(report);
   return report;
 }
@@ -1131,6 +1584,9 @@ function main() {
     if (!fs.existsSync(options.contract)) {
       throw new Error(`Contract file does not exist: ${options.contract}`);
     }
+    if (options.candidateLayout && !fs.existsSync(options.candidateLayout)) {
+      throw new Error(`Candidate layout file does not exist: ${options.candidateLayout}`);
+    }
 
     fs.mkdirSync(candidateDir(options), { recursive: true });
     copyFile(options.contract, candidateContractPath(options));
@@ -1187,8 +1643,44 @@ function main() {
       process.exitCode = 1;
       return;
     }
+    if (!fs.existsSync(layoutPlanPath(options))) {
+      report = finish(report, 'draft_failed', [{
+        source: 'draft',
+        code: 'layout_plan_missing',
+        message: 'The drafter completed without the required versioned layout-plan artifact.',
+      }]);
+      output(report, options);
+      process.exitCode = 1;
+      return;
+    }
+    const planBlockers = validateLayoutPlan(layoutPlanPath(options));
+    if (planBlockers.length > 0) {
+      report = finish(report, 'draft_failed', planBlockers);
+      output(report, options);
+      process.exitCode = 1;
+      return;
+    }
 
-    copyFile(layoutDraftPath(options), layoutPath(options));
+    if (options.candidateLayout) {
+      const candidateAuditRun = runNodeScript(
+        'audit-monteby-layout.js',
+        auditCandidateArgs(options, startReport, referenceManifest)
+      );
+      report.steps.candidateAudit = stepSummary(candidateAuditRun);
+      report.candidateAudit = candidateAuditRun.report;
+      persist(report);
+      if (candidateAuditRun.status !== 0 || candidateAuditRun.report?.ok === false || !candidateAuditRun.report) {
+        report = failAt(report, 'candidate_audit_failed', 'candidate-audit', candidateAuditRun);
+        output(report, options);
+        process.exitCode = 1;
+        return;
+      }
+      if (path.resolve(options.candidateLayout) !== path.resolve(layoutPath(options))) {
+        copyFile(options.candidateLayout, layoutPath(options));
+      }
+    } else {
+      copyFile(layoutDraftPath(options), layoutPath(options));
+    }
 
     const renderRun = runNodeScript('render-monteby-preview.js', renderArgs(options));
     report.steps.render = stepSummary(renderRun);
@@ -1278,9 +1770,22 @@ function output(report, options) {
   console.log(`visual_iteration_visual_benchmark_passed=${report.visualBenchmarkPassed ? 'true' : 'false'}`);
   console.log(`visual_iteration_fidelity_passed=${report.fidelityPassed ? 'true' : 'false'}`);
   console.log(`visual_iteration_canonical_verification=${report.canonicalVerification ? 'true' : 'false'}`);
+  console.log(`visual_iteration_next_action=${report.nextAction?.id || ''}`);
   if (report.blockers.length > 0) {
     console.log(`visual_iteration_blockers=${report.blockers.length}`);
   }
 }
 
-main();
+if (require.main === module) {
+  main();
+}
+
+module.exports = {
+  CANONICAL_VIEWPORTS,
+  buildRepairQueue,
+  initialReport,
+  iterationArgsFor,
+  nextActionFor,
+  parseArgs,
+  validateLayoutPlan,
+};

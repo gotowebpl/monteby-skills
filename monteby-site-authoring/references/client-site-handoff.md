@@ -18,7 +18,7 @@ Do not modify the site while producing the inventory. Starting a stopped local s
 
 ## Create Tool-Equivalent Instructions
 
-Store the complete project contract in a root `AGENTS.md` for Codex. Provide a root `CLAUDE.md` for Claude Code with equivalent instructions. Prefer one canonical body:
+Store the complete project contract in a root `AGENTS.md` for Codex. Provide a root `CLAUDE.md` for Claude Code with equivalent instructions, keeping `AGENTS.md` and `CLAUDE.md` semantically equivalent through one canonical body. Prefer one canonical body:
 
 ```markdown
 # Project Instructions

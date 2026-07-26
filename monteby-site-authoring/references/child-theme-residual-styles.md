@@ -1,117 +1,186 @@
-# Residua: dokładne 1:1, gdy kontrakt czegoś nie wyraża
+# Residual child-theme styles: exceptional policy
 
-Ta referencja opisuje **jedyną dopuszczalną drogę** dopięcia wierności do 1:1, gdy
-Builder nie ma kontrolki dla zmierzonego zachowania. Nie jest to furtka do
-stylowania serwisu CSS-em — to wąski, generowany margines dla resztek.
+Residual CSS is forbidden by default in Monteby site authoring. It is not a normal
+layout layer, a fast path, a fallback for missing controls, or a way to complete a
+visual benchmark.
 
-## Kiedy wolno sięgnąć po arkusz
+An exception is available only when the user/site owner explicitly authorizes one
+named, genuinely site-specific behavior. General or reusable behavior belongs in
+Monteby Builder/Core through `monteby-widget-development`.
 
-Dopiero po przejściu tej kolejności:
+## Non-negotiable verdict rule
 
-1. **Czy kontrakt to wyraża?** Uruchom `scripts/audit-reference-css.mjs`. Ok. 80%
-   deklaracji typowej makiety mapuje się na propsy. Nie zgaduj — sprawdź.
-2. **Czy da się to przebudować węzłem?** Pseudoelementy dekoracyjne (kreska przed
-   nadtytułem, kropka, znacznik) odtwarzaj `Container`em o zmierzonych wymiarach.
-   Audytor oznacza je jako `rebuild-as-node`.
-3. **Czy to brak, który powinien trafić do produktu?** Jeśli kontrolka istnieje, ale
-   ma zbyt zgrubny krok, brakuje wariantu responsywnego albo brak jest właściwości
-   przydatnej na wielu serwisach — to zadanie dla `monteby-widget-development`.
-   Ta droga jest domyślna dla wszystkiego, co wielokrotnego użytku.
-4. **Dopiero teraz arkusz motywu potomnego** — dla rzeczy z natury site-specific
-   albo takich, których kontrakt świadomie nie wystawia.
+Residual CSS is never:
 
-## Co należy do arkusza, a co nie
+- a prerequisite for `canonical_verified`;
+- a completion criterion;
+- evidence for `canonical_verified_1_to_1`;
+- permission to ignore a benchmark mismatch;
+- a replacement for a missing typed widget, prop, responsive control, renderer
+  behavior, or validation rule.
 
-**Należy** (kontrakt tego nie wystawia z założenia lub konstrukcji):
+If removing the residual makes the candidate fail the claimed match, the 1:1
+verdict is unavailable. An authorized residual may accompany a published
+site-specific exception, but report the page as
+`canonical_verified_with_authorized_residual`, not as 1:1.
 
-| Residuum | Dlaczego nie propsem |
-|---|---|
-| `:hover`, `:focus`, `:active` | `authoring.blockedProps` blokuje `hoverBg`, `hoverColor`, `hoverShadow` |
-| `transition` | stanów nie ma, więc i czasu przejścia |
-| `position: sticky` na nagłówku | `Section` nie ma kontrolki pozycji |
-| druga warstwa tła (siatka, szum, maska) | kontrakt składa gradient + jeden akcent radialny |
-| `font-variation-settings` / oś `wdth` | brak kontrolki osi fontu zmiennego |
-| reset domyślnych stylów wtyczki bez tokenu zerowego | np. `border-radius` pól formularza |
+## Authorization gate
 
-**Nie należy** — jeśli piszesz w arkuszu któreś z poniższych, wróć do node mapy:
-kolory, typografia, odstępy, siatki, ramki, tła jednowarstwowe, wymiary, widoczność
-responsywna. Wszystko to ma propsy.
+Do not create or generate a residual plan until all fields below are recorded:
 
-## Zasada nadrzędna: arkusz jest generowany
+```yaml
+decision: explicitly-authorized
+site: exact-site-identifier
+authorizedBy: user-or-site-owner
+authorizedAt: YYYY-MM-DD
+behavior: one-named-site-specific-behavior
+reasonNotProduct: why-this-is-not-reusable
+affectedPageOrTemplate: exact-scope
+rollback: exact-disable-or-remove-procedure
+reviewOwner: named-owner
+```
 
-Klasy renderera (`gcb-…`) są skrótem propsów węzła. Zmiana dowolnego propa zmienia
-klasę, więc **ręcznie przepisany selektor po cichu przestaje działać** — strona
-wygląda dobrze do najbliższej edycji.
+An inferred preference, old theme rule, broad request for “pixel perfect,” or
+permission to edit the site is not explicit residual authorization.
 
-Dlatego:
+If authorization is missing, return `blocked_residual_not_authorized`.
 
-1. Opisz residua w pliku planu, wskazując węzły trwale — tekstem nagłówka, tekstem
-   odnośnika albo numerem sekcji treści.
-2. Wygeneruj arkusz ze **świeżo zapisanej** strony:
+## Pre-authorization technical gate
+
+Before asking for or using an exception:
+
+1. Fetch the current live Site Contract.
+2. Prove that no listed component/prop/control expresses the behavior.
+3. Try a normal semantic node composition for a decorative surface.
+4. Decide whether the capability would benefit more than this one named site.
+5. If reusable, stop with `blocked_product_gap` and use
+   `monteby-widget-development`.
+6. Confirm that omitting the behavior is safe and does not corrupt content,
+   accessibility, legal meaning, or a core interaction.
+
+`scripts/audit-reference-css.mjs` may support the classification, but its residual
+bucket does not grant authorization.
+
+## Never eligible
+
+Do not authorize residual CSS for:
+
+- ordinary color, typography, spacing, grids, flex, dimensions, borders, single
+  backgrounds, or responsive visibility that a typed control can express;
+- copied selectors, classes, markup, asset URLs, fonts, or styles from an external
+  reference;
+- third-party brand identity, copy, contact data, or legal content;
+- form consent/legal wording or privacy links;
+- a reusable hover/focus/active state, responsive variant, variable-font axis,
+  sticky behavior, background layer, or plugin reset that belongs in the product;
+- raw HTML, scripts, event handlers, tracking, or security-sensitive behavior;
+- compensating for incomplete 1440/834/390 evidence;
+- making a benchmark threshold green.
+
+Do not author `className`, `cssId`, raw style props, or Advanced/runtime props in
+Monteby JSON even after an exception is authorized.
+
+## Narrow eligible class
+
+An authorized exception must be:
+
+- unique to the named site's integration or art direction;
+- bounded to an exact page/template/node behavior;
+- nonessential to content, accessibility, legal compliance, and interaction
+  semantics;
+- safe to remove without invalidating the clean Monteby layout;
+- documented with owner and rollback;
+- generated from the freshly saved canonical page rather than copied renderer
+  hashes.
+
+Examples may include a one-off integration correction for a client-owned theme or
+plugin that cannot reasonably be generalized. The example is not automatic
+approval; the recorded gate still applies.
+
+## Generated-only implementation
+
+Renderer classes may be hashes of node props and can change after an edit. Never
+hand-copy them into a stylesheet.
+
+After explicit authorization:
+
+1. Store a project-owned residual plan beside the layout evidence.
+2. Identify nodes through stable rendered evidence supported by the generator,
+   such as exact approved heading/link text or a bounded section index.
+3. Generate from the freshly saved canonical page:
 
 ```bash
-node $SKILL/scripts/emit-child-theme-css.mjs \
-  --url http://SITE/strona/ --plan .monteby/residual-plan.json \
-  --out wp-content/themes/<child>/assets/monteby-custom.css
+node "$SKILL/scripts/emit-child-theme-css.mjs" \
+  --url "$PUBLIC_PAGE_URL" \
+  --plan "$WORK/authorized-residual-plan.json" \
+  --out "$CHILD_THEME/assets/monteby-site-exception.css"
 ```
 
-3. Po **każdym** zapisie layoutu uruchom generator ponownie. Niezerowy kod wyjścia
-   oznacza, że któregoś węzła nie odnaleziono — napraw plan, zanim uznasz stronę
-   za gotową.
+4. Treat a missing or ambiguous node as failure. Do not widen the selector.
+5. Regenerate after every layout save while the exception remains active.
+6. Keep the plan, authorization record, generated file, and rollback instructions
+   in the project repository.
 
-Plan trzymaj w repozytorium projektu obok layoutu. To on jest źródłem prawdy, nie
-wygenerowany CSS.
+The plan and authorization record are the source of truth. The generated CSS is a
+derived artifact.
 
-## Podpięcie w motywie potomnym
+## Child-theme loading
 
-Arkusz ładuj po stylu motywu, z wersją z `filemtime`, żeby nie walczyć z cache:
+Load the generated file after the child theme's normal stylesheet and version it
+with `filemtime`:
 
 ```php
-add_action( 'wp_enqueue_scripts', static function (): void {
-    $path = get_stylesheet_directory() . '/assets/monteby-custom.css';
-    if ( ! is_file( $path ) ) {
+add_action('wp_enqueue_scripts', static function (): void {
+    $path = get_stylesheet_directory() . '/assets/monteby-site-exception.css';
+    if (!is_file($path)) {
         return;
     }
+
     wp_enqueue_style(
-        'monteby-residual',
-        get_stylesheet_directory_uri() . '/assets/monteby-custom.css',
-        array( 'monteby-child' ),
-        (string) filemtime( $path )
+        'monteby-site-exception',
+        get_stylesheet_directory_uri() . '/assets/monteby-site-exception.css',
+        ['monteby-child'],
+        (string) filemtime($path)
     );
-}, 20 );
+}, 20);
 ```
 
-Gdy residuum wymaga zasobu (oś fontu zmiennego), dołóż go do **istniejącego**
-zapytania zamiast ładować drugi arkusz tej samej rodziny:
+Keep the child theme on the project's tracked bind mount or release source. Do not
+leave the only copy in an ephemeral container volume.
 
-```php
-add_filter( 'style_loader_src', static function ( $src, $handle ) {
-    if ( 'gotoweb-google-fonts' !== $handle || ! is_string( $src ) ) {
-        return $src;
-    }
-    return str_replace( 'family=Archivo:wght@100..900',
-                        'family=Archivo:wdth,wght@75..125,100..900', $src );
-}, 10, 2 );
-```
+## Verification
 
-Motyw potomny trzymaj na bind moncie i w repozytorium projektu — nie w wolumenie
-kontenera, gdzie zniknie przy odtworzeniu.
+Verify the clean Monteby page without the residual first:
 
-## Kolejność, gdy residuum zmienia metrykę
+- live contract and local audit pass;
+- live `/validate` passes;
+- versioned save passes;
+- WordPress preview and public PHP page render;
+- complete 1440, 834, and 390 pixel captures exist;
+- content, layout, accessibility, and interactions remain valid.
 
-Niektóre residua zmieniają wymiary, nie tylko wygląd — oś `wdth` zmienia łamanie
-wierszy i wysokość każdej sekcji. Zawsze:
+Then enable the authorized exception and verify that it affects only the recorded
+scope. The exception must not introduce overflow, hide focus, alter legal copy,
+load external reference assets, or change unrelated pages.
 
-1. najpierw wdroż residuum,
-2. potem zdejmij obejścia, które kompensowały jego brak (np. zwężone `maxWidth`
-   nagłówków dobierane pod węższy font),
-3. dopiero na końcu mierz `compare-geometry.js`.
+The canonical page may be delivered with the documented exception, but the
+exception does not upgrade the verdict and cannot turn a failed comparison into
+1:1.
 
-Odwrotna kolejność prowadzi do strojenia szerokości pod stan, który zaraz zniknie.
+## Final report
 
-## Raport końcowy
+Report:
 
-Każde residuum wymień w podsumowaniu dla użytkownika: czego dotyczy, dlaczego nie
-dało się propsem i gdzie trafiło (arkusz czy `monteby-widget-development`). Residuum
-w arkuszu to dług produktowy — jeśli powtarza się na kolejnych serwisach, przenieś
-je do kontraktu jako typowaną kontrolkę.
+- authorization owner and date;
+- exact site/page/template scope;
+- behavior and why it is site-specific;
+- why a product control was rejected;
+- plan and generated artifact paths;
+- regeneration trigger;
+- rollback command/procedure;
+- review owner;
+- explicit statement that the exception is not 1:1 evidence or a completion
+  criterion.
+
+If the same behavior appears on another site, reclassify it as a product gap. Do
+not copy the residual plan forward.

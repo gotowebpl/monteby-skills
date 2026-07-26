@@ -60,8 +60,8 @@ const DEFAULT_REPLACEMENT_PROFILE = {
 };
 
 const GENERIC_MEASURED_REFERENCE = 'generic-measured-reference';
-const MAX_GENERIC_REFERENCE_BANDS = 24;
-const MAX_GENERIC_REFERENCE_MEDIA_PER_BAND = 8;
+const MAX_GENERIC_REFERENCE_BANDS = 64;
+const MAX_GENERIC_REFERENCE_MEDIA_PER_BAND = 24;
 const MAX_GENERIC_REFERENCE_MEDIA_DIMENSION = 8192;
 const MAX_GENERIC_REFERENCE_MEDIA_SCALE = 4;
 const GENERIC_GRID_TOKENS = {
@@ -397,6 +397,7 @@ function parseArgs(argv) {
     startReport: '',
     briefJson: '',
     out: '',
+    planOut: '',
     referenceManifest: '',
     minMediaSurfaces: null,
     requireRealReference: false,
@@ -415,6 +416,8 @@ function parseArgs(argv) {
       options.briefJson = path.resolve(requiredValue(argv, index += 1, arg));
     } else if (arg === '--out') {
       options.out = path.resolve(requiredValue(argv, index += 1, arg));
+    } else if (arg === '--plan-out') {
+      options.planOut = path.resolve(requiredValue(argv, index += 1, arg));
     } else if (arg === '--reference-manifest') {
       options.referenceManifest = path.resolve(requiredValue(argv, index += 1, arg));
     } else if (arg === '--min-media-surfaces') {
@@ -466,9 +469,9 @@ function requiredValue(argv, index, arg) {
 
 function printHelp() {
   console.log(`Usage:
-  draft-monteby-layout.js --contract contract.json (--start-report benchmark-start-report.json | --brief-json visual-brief.json) --out layout-draft.json [--reference-manifest reference-manifest.json] [--require-real-reference] [--require-marketplace-media] [--preserve-source-text] [--json]
+  draft-monteby-layout.js --contract contract.json (--start-report benchmark-start-report.json | --brief-json visual-brief.json) --out layout-draft.json [--plan-out mechanical-layout-plan.json] [--reference-manifest reference-manifest.json] [--require-real-reference] [--require-marketplace-media] [--preserve-source-text] [--json]
 
-Writes a clean Monteby JSON draft from a visual brief and live contract. When --reference-manifest is provided, the draft is immediately audited for blocked props, placement, and replacement media roles. This is a first-pass scaffold only; do not treat it as a pixel-perfect result.`);
+Writes a clean Monteby JSON draft from a visual brief and live contract. When --plan-out is provided, it also writes a mechanical section-mapping plan. When --reference-manifest is provided, the draft is immediately audited for blocked props, placement, and replacement media roles. This is a first-pass scaffold only; do not treat it as a pixel-perfect result.`);
 }
 
 function readJson(file) {
@@ -1092,8 +1095,13 @@ function summarizeReferenceBandContent(band, index, viewportWidth, textBoxes, me
       referenceBoxTop(left) - referenceBoxTop(right)
       || Number(left?.rect?.left || left?.rect?.x || 0) - Number(right?.rect?.left || right?.rect?.x || 0)
       || referenceBoxArea(right) - referenceBoxArea(left)
-    ))
-    .slice(0, MAX_GENERIC_REFERENCE_MEDIA_PER_BAND);
+    ));
+  if (bandMediaBoxes.length > MAX_GENERIC_REFERENCE_MEDIA_PER_BAND) {
+    const sourceKey = String(band.key || '').trim();
+    throw new Error(
+      `[generic_reference_media_limit_exceeded] Captured reference band ${index + 1}${sourceKey ? ` (${sourceKey})` : ''} contains ${bandMediaBoxes.length} meaningful media surfaces; the bounded generic path supports at most ${MAX_GENERIC_REFERENCE_MEDIA_PER_BAND} per band.`
+    );
+  }
   const semanticForm = summarizeReferenceForm(interactions, layoutGroups, bandTextBoxes, band, index);
   const semanticTabs = summarizeReferenceTabs(
     interactions,
@@ -2501,9 +2509,12 @@ function draftLayout(contractIndex, brief) {
     }
   }
 
+  const mechanicalPlan = buildMechanicalLayoutPlan(context.nodeMap, genericPlan);
+
   return {
     generatedAt: new Date().toISOString(),
     layout: context.nodeMap,
+    mechanicalPlan,
     warnings: context.warnings,
     stats: {
       nodes: Object.keys(context.nodeMap).length,
@@ -2525,6 +2536,137 @@ function draftLayout(contractIndex, brief) {
       measuredViewportLabels: genericPlan?.viewportLabels || [],
     },
   };
+}
+
+function buildMechanicalLayoutPlan(layout, genericPlan) {
+  const rootSectionIds = Array.isArray(layout?.ROOT?.nodes)
+    ? layout.ROOT.nodes.filter((nodeId) => typeof nodeId === 'string' && nodeId)
+    : [];
+  if (!genericPlan) {
+    return {
+      schemaVersion: 1,
+      artifact: 'monteby-layout-plan',
+      mode: 'specialized-or-generated',
+      rootSectionIds,
+      completion: {
+        draftedRootSections: rootSectionIds.length,
+        emittedSections: rootSectionIds.length,
+        truncated: false,
+        omittedBands: [],
+        omittedMedia: [],
+      },
+    };
+  }
+
+  const viewportLabels = genericPlan.viewports.map((viewport) => viewport.label);
+  const bands = genericPlan.bands.map((band) => {
+    const generatedSectionId = String(band.generatedSectionId || rootSectionIds[band.index] || '');
+    return {
+      order: band.index,
+      sourceKey: String(band.sourceKey || ''),
+      tag: String(band.tag || 'section'),
+      generatedSectionId: generatedSectionId || null,
+      viewports: Object.fromEntries(viewportLabels.map((label) => ([
+        label,
+        mechanicalBandViewportMeasurement(band.viewportMeasurements?.[label]),
+      ]))),
+    };
+  });
+  const mappedSectionIds = bands
+    .map((band) => band.generatedSectionId)
+    .filter((nodeId) => typeof nodeId === 'string' && rootSectionIds.includes(nodeId));
+  const allBandsMapped = bands.length === rootSectionIds.length
+    && mappedSectionIds.length === bands.length
+    && new Set(mappedSectionIds).size === bands.length;
+  const completion = {
+    capturedBands: bands.length,
+    draftedRootSections: rootSectionIds.length,
+    allBandsMapped,
+    plannedBands: bands.length,
+    emittedSections: rootSectionIds.length,
+    truncated: false,
+    omittedBands: [],
+    omittedMedia: [],
+  };
+  if (!allBandsMapped) {
+    throw new Error(
+      `[mechanical_layout_plan_incomplete] Captured ${bands.length} bands but drafted ${rootSectionIds.length} root sections; every measured band must map to one generated Section.`
+    );
+  }
+
+  return {
+    schemaVersion: 1,
+    artifact: 'monteby-layout-plan',
+    mode: GENERIC_MEASURED_REFERENCE,
+    canonicalViewport: { ...genericPlan.canonicalViewport },
+    viewports: genericPlan.viewports.map((viewport) => ({ ...viewport })),
+    rootSectionIds,
+    bands,
+    completion,
+  };
+}
+
+function mechanicalBandViewportMeasurement(measurement) {
+  const rect = normalizeReferenceRect(measurement?.rect);
+  const counts = genericMeasurementEvidenceCounts(measurement);
+  const contentBounds = normalizeReferenceRect(measurement?.contentBounds);
+  const explicitContentInset = finitePlanNumber(measurement?.contentInset);
+  const contentInset = explicitContentInset !== null
+    ? explicitContentInset
+    : rect && contentBounds
+      ? Math.max(0, Math.round((contentBounds.left - rect.left) * 100) / 100)
+      : null;
+  const measuredColumns = finitePlanNumber(measurement?.columns);
+
+  return {
+    rect: rect ? { ...rect } : null,
+    top: rect?.top ?? null,
+    height: rect?.height ?? null,
+    width: rect?.width ?? null,
+    contentInset,
+    columns: measuredColumns === null ? null : measuredColumns,
+    display: measurement ? String(measurement.display || '') : '',
+    textCount: counts.textCount,
+    mediaCount: counts.mediaCount,
+    groupCount: counts.groupCount,
+    paintedBackground: measurement?.paintedBackground === true,
+  };
+}
+
+function genericMeasurementEvidenceCounts(measurement) {
+  if (!measurement || typeof measurement !== 'object') {
+    return { textCount: 0, mediaCount: 0, groupCount: 0 };
+  }
+
+  let textCount = Array.isArray(measurement.texts) ? measurement.texts.length : 0;
+  let mediaCount = Math.max(
+    Array.isArray(measurement.media) ? measurement.media.length : 0,
+    Math.max(0, finitePlanNumber(measurement.mediaCount) || 0)
+  );
+  let groupCount = 0;
+  for (const child of [
+    ...(Array.isArray(measurement.groups) ? measurement.groups : []),
+    ...(Array.isArray(measurement.children) ? measurement.children : []),
+  ]) {
+    const childCounts = genericMeasurementEvidenceCounts(child);
+    groupCount += 1 + childCounts.groupCount;
+    textCount += childCounts.textCount;
+    mediaCount += childCounts.mediaCount;
+  }
+
+  return { textCount, mediaCount, groupCount };
+}
+
+function genericMeasurementMediaSurfaceCount(measurement) {
+  return genericMeasurementEvidenceCounts(measurement).mediaCount;
+}
+
+function finitePlanNumber(value) {
+  if (value === null || typeof value === 'undefined' || value === '') {
+    return null;
+  }
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
 }
 
 function isGenericMeasuredReferenceBrief(brief) {
@@ -2561,27 +2703,59 @@ function buildGenericMeasuredSectionPlan(brief) {
   const tabletEntry = viewportEntryForRole(viewportEntries, 'tablet');
   const mobileEntry = viewportEntryForRole(viewportEntries, 'mobile');
   const primaryHeadingIndex = genericPrimaryHeadingIndex(canonicalGeometry.bands);
-  const bands = canonicalGeometry.bands.map((canonicalBand, index) => ({
-    index,
-    tag: canonicalBand.tag,
-    primaryHeading: index === primaryHeadingIndex,
-    desktop: matchedReferenceBand(canonicalBand, index, canonicalGeometry.bands, desktopEntry?.[1]?.bands),
-    tablet: matchedReferenceBand(canonicalBand, index, canonicalGeometry.bands, tabletEntry?.[1]?.bands),
-    mobile: matchedReferenceBand(canonicalBand, index, canonicalGeometry.bands, mobileEntry?.[1]?.bands),
-  }));
+  const bands = canonicalGeometry.bands.map((canonicalBand, index) => {
+    const viewportMeasurements = Object.fromEntries(viewportEntries.map(([label, viewportGeometry]) => ([
+      label,
+      matchedReferenceBand(canonicalBand, index, canonicalGeometry.bands, viewportGeometry?.bands),
+    ])));
+    return {
+      index,
+      sourceKey: String(canonicalBand?.key || ''),
+      tag: canonicalBand.tag,
+      primaryHeading: index === primaryHeadingIndex,
+      viewportMeasurements,
+      desktop: viewportMeasurements[desktopEntry?.[0]] || null,
+      tablet: tabletEntry ? viewportMeasurements[tabletEntry[0]] || null : null,
+      mobile: mobileEntry ? viewportMeasurements[mobileEntry[0]] || null : null,
+    };
+  });
 
   for (const band of bands) {
-    for (const [viewport, measurement] of Object.entries({ desktop: band.desktop, tablet: band.tablet, mobile: band.mobile })) {
+    for (const [viewport, measurement] of Object.entries(band.viewportMeasurements)) {
       const height = Number(measurement?.rect?.height || 0);
       if (height > 3200) {
         throw new Error(`[generic_reference_band_height_out_of_bounds] Band ${band.index + 1} is ${Math.round(height)}px tall at ${viewport}; split the captured landmark into major full-width bands before drafting.`);
       }
+      const mediaCount = genericMeasurementMediaSurfaceCount(measurement);
+      if (mediaCount > MAX_GENERIC_REFERENCE_MEDIA_PER_BAND) {
+        throw new Error(
+          `[generic_reference_media_limit_exceeded] Captured reference band ${band.index + 1}${band.sourceKey ? ` (${band.sourceKey})` : ''} contains ${mediaCount} meaningful media surfaces at ${viewport}; the bounded generic path supports at most ${MAX_GENERIC_REFERENCE_MEDIA_PER_BAND} per band.`
+        );
+      }
     }
   }
+
+  const capturedViewports = viewportEntries.map(([label, viewportGeometry]) => ({
+    label,
+    width: finitePlanNumber(viewportGeometry?.viewport?.width),
+    height: finitePlanNumber(viewportGeometry?.viewport?.height),
+    pageHeight: finitePlanNumber(viewportGeometry?.pageHeight),
+    bandCount: Array.isArray(viewportGeometry?.bands) ? viewportGeometry.bands.length : 0,
+  }));
+  const canonicalViewport = capturedViewports.find((viewport) => viewport.label === canonicalLabel)
+    || {
+      label: canonicalLabel,
+      width: null,
+      height: null,
+      pageHeight: finitePlanNumber(canonicalGeometry?.pageHeight),
+      bandCount: canonicalGeometry.bands.length,
+    };
 
   return {
     mode: GENERIC_MEASURED_REFERENCE,
     canonicalLabel,
+    canonicalViewport,
+    viewports: capturedViewports,
     viewportLabels: viewportEntries.map(([label]) => label),
     hasTablet: Boolean(tabletEntry),
     hasMobile: Boolean(mobileEntry),
@@ -3589,6 +3763,7 @@ function addGenericMeasuredSections(context, plan, sectionName, containerName) {
         backgroundOverlay: heroBackgroundOverlay,
       } : {}),
     });
+    band.generatedSectionId = section.id;
     if (topDividerProps && edgeDividerComponent) {
       createLeafNode(context, edgeDividerComponent.name, section.id, topDividerProps);
     }
@@ -14275,6 +14450,10 @@ function main() {
     const draft = draftLayout(buildContractIndex(contract), brief);
 
     writeFile(options.out, `${JSON.stringify(draft.layout, null, 2)}\n`);
+    if (options.planOut) {
+      draft.mechanicalPlan.sourceLayout = options.out;
+      writeFile(options.planOut, `${JSON.stringify(draft.mechanicalPlan, null, 2)}\n`);
+    }
     const audit = auditDraft(options);
     const qualityErrors = draftQualityErrors(draft, referenceManifest, options);
     const ok = (!audit || audit.ok) && qualityErrors.length === 0;
@@ -14282,6 +14461,7 @@ function main() {
       console.log(JSON.stringify({
         ok,
         out: options.out,
+        planOut: options.planOut || null,
         warnings: draft.warnings,
         qualityErrors,
         stats: draft.stats,
@@ -14289,6 +14469,9 @@ function main() {
       }, null, 2));
     } else {
       console.log(`layout_draft=${options.out}`);
+      if (options.planOut) {
+        console.log(`layout_plan=${options.planOut}`);
+      }
       if (audit) {
         console.log(`draft_audit=${audit.ok ? 'ok' : 'failed'}`);
       }

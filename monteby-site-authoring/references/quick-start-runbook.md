@@ -1,237 +1,247 @@
-# Runbook: HTML → Monteby w kilkunastu minutach
+# Mechanical runbook: owned HTML → canonical Monteby
 
-Procedura do wykonania krok po kroku. Każdy krok ma komendę i warunek przejścia
-dalej. Nie improwizuj — jeśli warunek nie jest spełniony, wróć do wskazanego kroku.
-Napisane tak, by dało się wykonać bez wnioskowania o kontrakcie: reguły są
-w narzędziach, nie w głowie.
+Use this runbook only in `owned-html-reconstruction` mode. The HTML, text, fonts,
+and assets must belong to the user/project or be explicitly licensed for reuse.
+Otherwise stop with `blocked_source_rights` and restart in
+`external-reference-benchmark` mode with replacement content.
 
-Ścieżki poniżej zakładają katalog roboczy projektu i katalog `.monteby/` na
-artefakty. `$SKILL` to katalog tego skilla.
+Read `mechanical-workflow-protocol.md` first. At every phase, execute only the
+report's `nextAction`. It is an ordered object with `id`, `tool`, `args`,
+`requires`, and `instruction`; do not choose another tool or reconstruct argv.
 
----
+For an arg token exactly equal to `$NAME`, resolve `NAME` from `requires` and
+substitute the approved value directly, without shell expansion. An unresolved
+required token is a hard stop.
 
-## Krok 0 — Dane wejściowe (30 s)
+## Inputs
 
-Potrzebujesz trzech rzeczy. Jeśli którejś brakuje, zapytaj użytkownika i zatrzymaj się.
+Resolve these before phase 1:
 
-1. Adres działającej instalacji WordPress z Monteby (np. `http://localhost:8200`).
-2. Login i hasło aplikacyjne do REST.
-3. Referencja: adres HTML makiety **albo** plik HTML.
+- `SKILL`: absolute path to `monteby-site-authoring`;
+- `WORK`: project-owned artifact directory, normally `.monteby`;
+- `SITE`: WordPress base URL, without credentials;
+- `PAGE_ID`: exact target page ID;
+- `PUBLIC_PAGE_URL`: canonical public URL of that page;
+- `REFERENCE_HTML`: absolute path to the owned/licensed HTML file;
 
----
+The WordPress client reads authentication from the environment variable named
+`MONTEBY_AUTH_HEADER`. Populate it through the project's approved secret
+mechanism. Never paste its value, a password, application password, cookie, nonce,
+or bearer token into a command, report, plan, shell history, or committed file.
 
-## Krok 1 — Kontrakt (30 s)
+Require a current backup/rollback path before the first write.
 
-```bash
-curl -s -u "USER:APP_PASSWORD" http://SITE/wp-json/monteby/v1/contract -o .monteby/contract.json
-```
+## Phase table
 
-**Warunek:** plik istnieje i ma klucz `components`. Jeśli nie — przerwij i zgłoś,
-że workflow wymaga działającego Site Contract API.
+| Phase | Required inputs | Required artifacts | Command | Pass condition | Failure action | Allowed verdict |
+|---|---|---|---|---|---|---|
+| 0. Rights and target | Ownership/license evidence, site/page/public URL, HTML path, rollback owner | Recorded mode and rights decision | No authoring command | Source may be reused; target and rollback are exact | Unknown rights → stop and use external-reference mode. Unknown target/rollback → stop | `continue`, `blocked_source_rights`, or `blocked_target` |
+| 1. Discover exact live target | Phase 0, approved auth environment | `contract.json`; page-scoped discovery `layout-before.json`; snapshot report | `wordpress-layout-client.js snapshot` | Contract exposes components/layout persistence; snapshot has `artifact: "monteby-page-snapshot"` and this exact site/page | Missing contract or scope mismatch → stop; never substitute a policy file, fixture, remembered contract, or another page's snapshot | `continue` or `blocked_live_contract_unavailable` |
+| 2. Full measured iteration and plan | Live contract, owned HTML | Complete reference captures/layouts; `visual-iteration-report.json`; exact `files.layout`; exact `files.layoutPlan` | `run-visual-iteration.js --full-page` at all three viewports; runner internally invokes `draft-monteby-layout.js --plan-out` | Capture is complete; plan uses `generic-measured-reference`, maps every band, is untruncated, and omits nothing; report ends `diagnostic_passed` | Consume the report's blocker/queue; never redraft manually or relax evidence with a tolerance shortcut | `diagnostic_passed`, `blocked_incomplete_evidence`, `blocked_product_gap`, or `failed` |
+| 3. Bounded AUTHOR loop, only if emitted | Iteration report with non-empty `repairQueue` | Updated candidate plus rerun report | Apply only named `sectionId` edits; execute the emitted `run-visual-iteration.js` action | Queue gate is satisfied and the rerun reaches `diagnostic_passed` without regressing passing sections | Missing reusable capability → separate `product-gap` run; otherwise repair only reported sections and rerun the exact action | `diagnostic_passed`, `blocked_product_gap`, or `failed` |
+| 4. Fresh canonical snapshot | Passing iteration report, its exact layout, approved auth environment | Fresh `contract.json`; page-scoped `layout-before.json`; snapshot report | Execute emitted `snapshot_canonical_page` action | Snapshot matches the exact site/page and its next action is `validate_candidate` | Scope/version evidence missing → stop; do not reuse discovery evidence from another page or run | `continue` or `blocked_live_contract_unavailable` |
+| 5. Live validation | Exact `files.layout` from phase 2/3 | `validate-response.json` containing `layoutSha256` | Resolve `MONTEBY_LAYOUT_PATH` in emitted `validate_candidate`; execute ordered argv | Server accepts that exact node map; `nextAction.id` is `save_validated_candidate` and carries the same hash | Repair from live errors, rerun the local path, and snapshot again; never save rejected or different JSON | `continue` or `failed` |
+| 6. Versioned save | Validated layout, matching fresh snapshot, validation hash | Required `save-response.json`, before/after version evidence | Execute emitted `save_validated_candidate` with `--snapshot`, `--expected-layout-sha256`, and `--out` | Save succeeds with snapshot `postModifiedGmt`; presentation is preserved/explicit; next action is `preview_saved_candidate` | `428`/`409` → execute `resnapshot_and_reconcile`, manually reconcile, revalidate; never auto-retry PUT | `continue`, `blocked_concurrent_edit`, or `failed` |
+| 7. PHP preview | Saved candidate and successful save report | `preview.html`; required `preview-response.json` | Execute emitted `preview_saved_candidate` with `--save-report` and `--report-out` | Preview is bound to the successful save; `nextAction.id` is `verify_canonical_page` | Return through repair/validation/save; preview cannot prove 1:1 | `continue` or `failed` |
+| 8. Canonical capture + comparison | Passing iteration report, successful preview report, confirmed saved public URL | Complete canonical screenshots/layouts/manifest at 1440, 834, 390; benchmark/diffs; canonical report | Resolve the emitted `verify_canonical_page` action, including `--preview-report`; execute ordered argv | `status: "DONE"`, `ok`, `fidelityPassed`, and `canonicalVerification` are true; direct review finds no mismatch | Consume blockers and section-addressed queue; make a bounded AUTHOR edit; then repeat validation, save, preview, and canonical verification through emitted actions | `canonical_verified_1_to_1`, `blocked_incomplete_evidence`, `blocked_product_gap`, or `failed` |
 
-Nie czytaj kontraktu w całości. Wszystkie reguły wartości egzekwuje `layout-kit.mjs`.
+## Commands and gates
 
----
+The commands below contain no secret value. Prefer the exact emitted
+`nextAction.args` when a report is already available.
 
-## Krok 2 — Pomiar makiety (2 min)
-
-Otwórz makietę w przeglądarce, ustaw szerokość **1440**, wykonaj snippet:
-
-```bash
-node $SKILL/scripts/compare-geometry.js --emit-snippet
-```
-
-Wynik zapisz jako `.monteby/ref-1440.json`.
-
-**Warunek:** `sections` ma tyle pozycji, ile pasów widać na makiecie. Jeśli 0 —
-makieta używa innej struktury; zmierz ręcznie i zapisz w tym samym formacie.
-
-Z pomiaru weź do planu: liczbę i kolejność sekcji, ich wysokości, kolory tła,
-paddingi, oraz liczbę wierszy każdego nagłówka.
-
----
-
-## Krok 2b — Audyt CSS makiety (1 min)
-
-```bash
-node $SKILL/scripts/audit-reference-css.mjs --contract .monteby/contract.json \
-  --css MAKIETA.css --out .monteby/residual-plan-raw.json
-```
-
-Czytasz jedną liczbę: ile deklaracji trafia do koszyka `residual`. To lista rzeczy,
-których **nie próbuj** robić propsami — zajmiesz się nimi w kroku 9. Reszta jest
-wyrażalna i należy do kroku 4.
-
-Jeśli nie masz pliku CSS (makieta jest tylko pod adresem), pomiń ten krok i wróć do
-niego po kroku 7, gdy zobaczysz różnice.
-
-**Warunek:** plan zapisany. Typowo 75–85% deklaracji ląduje w koszyku `contract`.
-
----
-
-## Krok 3 — Plan sekcji (2 min)
-
-Wypisz listę sekcji w kolejności z pomiaru. Dla każdej ustal jedną linijkę:
-tło, padding góra/dół, układ. Układ dobierz z tabeli — nie wymyślaj:
-
-| Co widać w makiecie | Co ustawiasz |
-|---|---|
-| jedna kolumna treści | brak `layoutDisplay` |
-| dwie równe kolumny | `layoutDisplay: 'grid'`, `gridTemplateColumns: 'two'` |
-| dwie nierówne kolumny | `'two-proportional'` + `gridFirstColumnPercent: <udział 1. kolumny w %>` |
-| trzy/cztery równe kafle | `'three'` / `'four'` |
-| pięć równych kafli | `layoutDisplay: 'flex'` + dzieci `flexBasis: '20%'`, `flexGrow: 1`, `minWidth: '0px'` |
-| rząd elementów obok siebie | `layoutDisplay: 'flex'`, `flexDirection: 'row'`, `gap` |
-| wąski znacznik + tekst | flex + dziecko o stałej `width` i `flexShrink: 0` |
-
-Na tablet i mobile dodaj `gridTemplateColumnsTablet: 'one'` wszędzie tam, gdzie
-kolumny mają się złożyć.
-
----
-
-## Krok 4 — Budowa layoutu (5–10 min)
-
-Napisz jeden plik `.monteby/build.mjs` na bazie `layout-kit.mjs`. Kit sam pilnuje
-kontraktu i naprawia pułapki renderera, więc podawaj wartości wprost z CSS makiety —
-zaokrągli je do dozwolonego kroku.
-
-```js
-import { Kit } from '$SKILL/scripts/layout-kit.mjs';
-const k = await Kit.fromContract('.monteby/contract.json');
-
-const hero = k.shell(
-  { background: '#0a0b0d', paddingTop: '104px', paddingBottom: '84px',
-    layoutDisplay: 'grid', gridTemplateColumns: 'two-proportional',
-    gridFirstColumnPercent: 63, gridTemplateColumnsTablet: 'one', gap: '72px' },
-  [
-    k.box({}, [
-      k.heading('Nagłówek', { tag: 'h1', fontSize: '78px', lineHeight: '1.05',
-                              fontWeight: '800', textColor: '#f4f2ee' }),
-      k.text('Lead…', { fontSize: '20px', lineHeight: '1.65', textColor: '#e6e2da' }),
-      k.button('Kontakt', '#kontakt', { backgroundColor: '#ffbe00', textColor: '#0a0b0d' }),
-    ]),
-    k.image('https://…/rysunek.png', { width: '100%', height: '402px', objectFit: 'contain' }),
-  ]
-);
-
-const res = await k.write('.monteby/layout.json', [hero /*, kolejne sekcje w kolejności */]);
-console.log(res.nodes, res.notes);
-```
-
-Zasady, których nie łam:
-
-- kolejność sekcji dokładnie jak w pomiarze — bez pomijania i przestawiania;
-- treść przepisz z makiety co do słowa, nie streszczaj;
-- każdy obraz z `height` (inaczej ma zerową wysokość do czasu wczytania);
-- listy pozycji: `ListBlock` przyjmuje **teksty**; jeśli mają być klikalne, użyj
-  `k.button(...)` w kolumnie;
-- formularz zawsze z wymaganą zgodą RODO (typ `checkbox`, `linkText`, `linkUrl`).
-
-**Warunek:** skrypt kończy się bez wyjątku. Wyjątek = zła nazwa propa lub złe
-zagnieżdżenie; komunikat wskazuje węzeł — popraw i uruchom ponownie.
-
----
-
-## Krok 5 — Kontrola lokalna (30 s)
+### 1 — Snapshot exact site/page
 
 ```bash
-node $SKILL/scripts/normalize-layout.js --contract .monteby/contract.json --layout .monteby/layout.json
+node "$SKILL/scripts/wordpress-layout-client.js" snapshot \
+  --site "$SITE" \
+  --page-id "$PAGE_ID" \
+  --out-dir "$WORK" \
+  --out "$WORK/discovery-response.json" \
+  --auth-header-env MONTEBY_AUTH_HEADER
 ```
 
-**Warunek:** `Błędy: 0`. Ostrzeżenia przeczytaj — każde opisuje realny defekt
-w rendererze. Dopiero teraz wołaj REST.
+Require `$WORK/contract.json` and `$WORK/layout-before.json`. The snapshot shape is:
 
----
+```json
+{
+  "schemaVersion": 1,
+  "artifact": "monteby-page-snapshot",
+  "site": "canonical-site-origin",
+  "pageId": 123,
+  "capturedAt": "timestamp",
+  "data": {}
+}
+```
 
-## Krok 6 — Walidacja i zapis (1 min)
+Never reuse the envelope for another site or page.
+
+The discovery snapshot's `validate_candidate` action initially lacks
+`MONTEBY_LAYOUT_PATH`. Phase 2 exists solely to produce that required artifact.
+Do not substitute an older or hand-authored layout. Once the runner emits its
+fresh `snapshot_canonical_page` action, that newer action and snapshot govern the
+canonical chain.
+
+### 2 — Run the measured generic loop
 
 ```bash
-# walidacja
-curl -s -u "USER:PASS" -X POST http://SITE/wp-json/monteby/v1/validate \
-  -H "Content-Type: application/json" \
-  -d "$(python3 -c "import json;print(json.dumps({'nodeMap':json.load(open('.monteby/layout.json'))}))")"
-
-# odczyt wersji, potem zapis z warunkiem
-MOD=$(curl -s -u "USER:PASS" http://SITE/wp-json/monteby/v1/pages/ID/layout | python3 -c "import json,sys;print(json.load(sys.stdin)['postModifiedGmt'])")
+node "$SKILL/scripts/run-visual-iteration.js" \
+  --contract "$WORK/contract.json" \
+  --reference-html-file "$REFERENCE_HTML" \
+  --preserve-source-text \
+  --out-dir "$WORK/iteration" \
+  --full-page \
+  --viewport desktop:1440x1200 \
+  --viewport tablet:834x1112 \
+  --viewport mobile:390x844 \
+  --channel chrome \
+  --json
 ```
 
-W `PUT /wp-json/monteby/v1/pages/ID/layout` wyślij `expectedModifiedGmt` = `$MOD`
-oraz `nodeMap`. Dla strony z sekcjami na pełną szerokość dołóż
-`"presentation": {"layout": "full-width", "disableGlobalTemplates": false}`.
+`--preserve-source-text` is permitted only because this mode already proved
+ownership/licensing. Never add it to an external/public reference run.
 
-**Warunek:** HTTP 200. Kod 428/409 = pobierz layout ponownie i powtórz.
+The runner captures, checks readiness, invokes the generic measured drafter with
+`--plan-out`, audits the resulting candidate, renders a local diagnostic, captures
+it, and compares it. `diagnostic_passed` is the strongest possible verdict at
+this phase.
 
----
+Do not replace this route with:
 
-## Krok 7 — Pomiar kandydata i porównanie (2 min)
+- `compare-geometry.js --emit-snippet`;
+- `extract-reference-spec.mjs` or `spec-to-layout.mjs`;
+- a hand-written `build.mjs`;
+- direct/manual `layout-kit.mjs`;
+- hand-transcribed Craft JSON;
+- `--viewport-only`.
 
-Otwórz zapisaną stronę przy szerokości **1440**, wykonaj ten sam snippet co w kroku 2,
-zapisz jako `.monteby/cand-1440.json`, po czym:
+When `repairQueue` is non-empty, AUTHOR is a bounded manual edit: change only the
+named `sectionId` values, preserve passing sections, and rerun the emitted action.
+It is not an automatic mutator and not permission to rewrite the page.
+
+### 3 — Consume the runner's exact plan and layout
+
+For generic measured mode require:
+
+- `artifact: "monteby-layout-plan"`;
+- `mode: "generic-measured-reference"`;
+- `completion.allBandsMapped: true`;
+- `completion.truncated: false`;
+- `capturedBands === draftedRootSections` (equivalently planned/emitted counts);
+- `omittedBands` and `omittedMedia` are empty.
+
+Read the paths from `files.layoutPlan` and `files.layout` in the passing iteration
+report. Those are the exact artifacts the runner audited and benchmarked. Do not
+rerun `draft-monteby-layout.js` after a passing runner: a second draft would be a
+different, unbenchmarked candidate. The plan is evidence, not an alternate input
+language; never edit it to hide loss.
+
+### 4–5 — Fresh snapshot, then validate the exact runner layout
+
+Execute `snapshot_canonical_page` exactly as emitted by the passing runner.
+Resolve the resulting `validate_candidate` action's `MONTEBY_LAYOUT_PATH` to the
+passing iteration report's exact `files.layout`, then execute its ordered argv.
+
+For the command shown in phase 2, those emitted actions use:
 
 ```bash
-node $SKILL/scripts/compare-geometry.js --reference .monteby/ref-1440.json --candidate .monteby/cand-1440.json
+node "$SKILL/scripts/wordpress-layout-client.js" snapshot \
+  --site "$SITE" \
+  --page-id "$PAGE_ID" \
+  --out-dir "$WORK/iteration/wordpress"
+
+node "$SKILL/scripts/wordpress-layout-client.js" validate \
+  --site "$SITE" \
+  --layout "$WORK/iteration/candidate/layout.json" \
+  --out "$WORK/iteration/wordpress/validate-response.json" \
+  --auth-header-env MONTEBY_AUTH_HEADER
 ```
 
-Czytaj wynik mechanicznie:
+Require `validate-response.json`, `ok: true`, and a 64-character `layoutSha256`.
+The returned `save_validated_candidate` action binds that hash into
+`--expected-layout-sha256`; execute its ordered argv without rebuilding it.
 
-| Objaw w raporcie | Co zrobić |
-|---|---|
-| inna liczba sekcji | wróć do kroku 4, brakuje sekcji |
-| głębokość < 95% | patrz „łamanie nagłówków” poniżej; jeśli równe — sprawdź paddingi sekcji z pomiaru |
-| „inne łamanie nagłówków” | referencja używa innej osi szerokości fontu — patrz `html-to-monteby.md` §5–6 |
-| „inne tło” w sekcji N | porównaj `background` z pomiaru; przy `backgroundType: 'image'` kolor tła nie jest emitowany |
-| poziome przepełnienie | zwykle nagłówek strony: skróć etykiety menu, ukryj CTA (`responsiveDisplay`) |
-| pojedyncze delty ±30 px | zignoruj, jeśli suma mieści się w 95% |
+### 6 — Save with concurrency protection
 
-Powtarzaj kroki 4–7, aż raport powie „Bez zastrzeżeń”. Zwykle wystarczają dwa obiegi.
-
----
-
-## Krok 8 — Responsywność (1 min)
-
-Powtórz pomiar przy 390 i 768. Sprawdzasz jedną rzecz: `overflow: false`.
-Przy przepełnieniu winowajcą jest prawie zawsze nagłówek — użyj
-`responsiveDisplay: 'hide-mobile'` lub `'hide-tablet-down'` na elemencie CTA.
-
----
-
-## Krok 9 — Residua (3 min)
-
-Weź listę z kroku 2b i dopnij 1:1. Kolejność jest obowiązkowa — opisuje ją
-`references/child-theme-residual-styles.md`.
-
-1. Pozycje `rebuild-as-node` (kreski, kropki, znaczniki) odtwórz `Container`em
-   o zmierzonych wymiarach — wróć do kroku 4.
-2. Pozycje `widget-development` (za zgrubny krok kontrolki, brakujący wariant
-   responsywny) zgłoś jako lukę produktu; nie obchodź ich CSS-em.
-3. Resztę zapisz jako plan i wygeneruj arkusz:
+The emitted save action includes all of these bindings:
 
 ```bash
-node $SKILL/scripts/emit-child-theme-css.mjs --url http://SITE/strona/ \
-  --plan .monteby/residual-plan.json \
-  --out wp-content/themes/CHILD/assets/monteby-custom.css
+node "$SKILL/scripts/wordpress-layout-client.js" save \
+  --site "$SITE" \
+  --page-id "$PAGE_ID" \
+  --layout "$WORK/iteration/candidate/layout.json" \
+  --snapshot "$WORK/iteration/wordpress/layout-before.json" \
+  --expected-layout-sha256 "$VALIDATION_LAYOUT_SHA256" \
+  --out "$WORK/iteration/wordpress/save-response.json" \
+  --auth-header-env MONTEBY_AUTH_HEADER
 ```
 
-Plan wskazuje węzły trwale (`headingText`, `linkText`, `sectionIndex`), nie klasami.
-Klasy renderera zmieniają się przy każdej edycji propsów, dlatego arkusz
-**regeneruj po każdym zapisie layoutu**.
+Resolve `VALIDATION_LAYOUT_SHA256` directly from the validate report's
+`layoutSha256` without shell expansion or recomputation. The report's emitted argv
+remains authoritative.
 
-**Warunek:** generator kończy się kodem 0 (wszystkie węzły odnalezione).
+Preserve presentation by default. A deliberate shell change may use only a value
+from `contract.layoutPersistence.presentation` through
+`--presentation-layout`; presentation belongs to this same versioned save.
 
-Jeśli residuum zmienia metrykę (oś `wdth` zmienia łamanie i wysokość sekcji):
-wdroż je, potem zdejmij obejścia, które kompensowały jego brak, i dopiero wtedy
-wróć do kroku 7.
+On `428`/`409`, execute `resnapshot_and_reconcile`. Reconcile remote changes,
+revalidate, and wait for a newly emitted save action. Never auto-retry PUT.
 
----
+### 7 — WordPress/PHP preview preflight
 
-## Warunki ukończenia
+```bash
+node "$SKILL/scripts/wordpress-layout-client.js" preview \
+  --site "$SITE" \
+  --layout "$WORK/iteration/candidate/layout.json" \
+  --save-report "$WORK/iteration/wordpress/save-response.json" \
+  --out "$WORK/iteration/candidate/preview.html" \
+  --report-out "$WORK/iteration/wordpress/preview-response.json" \
+  --auth-header-env MONTEBY_AUTH_HEADER
+```
 
-Zgłoś zakończenie dopiero, gdy wszystkie są spełnione:
+This proves only that WordPress/PHP rendered the candidate bound to the successful
+save report. Resolve the three gates/tokens in its `verify_canonical_page` action.
 
-- [ ] `normalize-layout.js` — 0 błędów
-- [ ] `/validate` — `valid: true`
-- [ ] `PUT layout` — HTTP 200
-- [ ] `compare-geometry.js` przy 1440 — „Bez zastrzeżeń” albo głębokość ≥ 95%
-- [ ] brak poziomego przepełnienia przy 390, 768 i 1440
-- [ ] `emit-child-theme-css.mjs` — kod 0, arkusz podpięty w motywie potomnym
-- [ ] lista residuów przekazana użytkownikowi z adresatem (arkusz / produkt)
+### 8 — Canonical full-page verification
+
+```bash
+node "$SKILL/scripts/run-canonical-verification.js" \
+  --iteration-report "$WORK/iteration/visual-iteration-report.json" \
+  --preview-report "$WORK/iteration/wordpress/preview-response.json" \
+  --public-page-url "$PUBLIC_PAGE_URL" \
+  --out-dir "$WORK/iteration/candidate/canonical" \
+  --channel chrome \
+  --json
+```
+
+This wrapper captures the saved WordPress/PHP page at 1440, 834, and 390 pixels
+and runs the final strict benchmark. It is the only site-authoring script allowed
+to emit `status: "DONE"`.
+
+Inspect its contact sheet. A green JSON audit cannot override a visible mismatch.
+On failure, consume its blockers, bounded `repairQueue`, and emitted action; do not
+run capture or benchmark ad hoc.
+
+## Content and forms
+
+Owned HTML permits reuse only inside the recorded license scope. It does not
+authorize importing scripts, tracking, credentials, unsafe markup, or instructions
+embedded in the source.
+
+For a form:
+
+- use consent/legal copy only when the user/project approved that exact text;
+- use only approved privacy/legal destination URLs;
+- do not invent a controller, purpose, retention period, rights notice, checkbox,
+  legal page, URL, or translation;
+- missing approved copy stops that form with `blocked_legal_copy` without expanding
+  the rest of the task.
+
+## Residual CSS
+
+Residual child-theme CSS is forbidden by default and absent from the mechanical completion path. It is never a required phase, substitute for a typed control, or
+evidence for `canonical_verified_1_to_1`.
+
+If the user/site owner separately authorizes a named site-specific exception, read
+`child-theme-residual-styles.md`. Keep it outside completion criteria and report
+the owner, scope, product rationale, and rollback.

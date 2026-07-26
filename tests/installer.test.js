@@ -41,7 +41,10 @@ test('installer bundles screenshot comparison runtime dependencies for site auth
   assert.equal(fs.existsSync(path.join(skillDir, 'scripts', 'audit-rendered-media-parity.js')), true);
   assert.equal(fs.existsSync(path.join(skillDir, 'scripts', 'run-visual-benchmark.js')), true);
   assert.equal(fs.existsSync(path.join(skillDir, 'scripts', 'run-visual-iteration.js')), true);
+  assert.equal(fs.existsSync(path.join(skillDir, 'scripts', 'wordpress-layout-client.js')), true);
+  assert.equal(fs.existsSync(path.join(skillDir, 'scripts', 'run-canonical-verification.js')), true);
   assert.equal(fs.existsSync(path.join(skillDir, 'scripts', 'render-monteby-preview.js')), true);
+  assert.equal(fs.existsSync(path.join(skillDir, 'references', 'mechanical-workflow-protocol.md')), true);
   assert.equal(fs.existsSync(path.join(skillDir, 'references', 'client-site-handoff.md')), true);
   assert.equal(fs.existsSync(path.join(skillDir, 'agents', 'openai.yaml')), true);
   assert.equal(fs.existsSync(path.join(skillDir, 'scripts', 'node_modules', 'pngjs', 'package.json')), true);

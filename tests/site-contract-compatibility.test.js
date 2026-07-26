@@ -11,14 +11,16 @@ const root = path.resolve(__dirname, '..');
 const manifestRelativePath = 'monteby-site-authoring/references/site-contract-compatibility.json';
 const manifestPath = path.join(root, manifestRelativePath);
 
-test('site contract compatibility manifest pins the tested Builder contract baseline', () => {
+test('site contract compatibility manifest requires the exact live contract without a phantom baseline', () => {
   const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
 
   assert.deepEqual(manifest, {
-    schemaVersion: 1,
-    siteContractVersion: 1,
-    siteContractFingerprint: 'sha256:7157b60d8cc7c623bd76114f114660da8215244d2d67723aa4c3bfcf52127ebf',
-    builderSnapshot: 'tests/fixtures/site-contract/full-contract-with-child-theme-widget.json',
+    schemaVersion: 2,
+    contractEndpoint: '/wp-json/monteby/v1/contract',
+    liveContractRequired: true,
+    compatibilityPolicy: 'exact-live-contract',
+    bundledBaseline: null,
+    reason: "No verified portable Builder contract snapshot is bundled. Authoring must use the current target site's live contract.",
   });
 });
 
@@ -44,13 +46,13 @@ test('site contract compatibility manifest ships in the npm package', () => {
   );
 });
 
-test('site authoring requires the baseline and keeps the live contract authoritative', () => {
+test('site authoring requires the compatibility policy and keeps the live contract authoritative', () => {
   const skill = fs.readFileSync(
     path.join(root, 'monteby-site-authoring', 'SKILL.md'),
     'utf8',
   );
 
-  assert.match(skill, /Read `references\/site-contract-compatibility\.json` before authoring/);
+  assert.match(skill, /references\/site-contract-compatibility\.json/);
   assert.match(skill, /Always fetch `GET \/wp-json\/monteby\/v1\/contract` for the target site/);
-  assert.match(skill, /Never use the bundled baseline[\s\S]*as a substitute for the live response/);
+  assert.match(skill, /live contract|live response/i);
 });

@@ -5642,7 +5642,7 @@ test('text-only generic measured drafting is unchanged when media controls are a
   assert.doesNotMatch(JSON.stringify(layouts[0]), /backgroundImage/);
 });
 
-test('generic measured media evidence is bounded and ignores invalid or oversized geometry', () => {
+test('generic measured media evidence preserves up to 24 surfaces and ignores invalid or oversized geometry', () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'monteby-draft-generic-media-bounds-'));
   const contractPath = path.join(directory, 'contract.json');
   const briefPath = path.join(directory, 'visual-brief.json');
@@ -5735,7 +5735,7 @@ test('generic measured media evidence is bounded and ignores invalid or oversize
   const mediaContainers = Object.values(layout).filter((node) => (
     node?.type?.resolvedName === 'Container' && typeof node.props?.backgroundImage === 'string'
   ));
-  assert.equal(mediaContainers.length, 8);
+  assert.equal(mediaContainers.length, 16);
   assert.equal(mediaContainers.every((node) => node.props.width === '100%'), true);
   assert.equal(mediaContainers.every((node) => node.props.maxWidth === '240px'), true);
   assert.equal(mediaContainers.every((node) => node.props.minHeight === '140px'), true);
@@ -7462,51 +7462,58 @@ test('draft layout can recover generic band geometry from the captured reference
   assert.deepEqual(layout.ROOT.nodes.map((nodeId) => layout[nodeId].props.minHeightMobile), ['72px', '760px', '680px', '740px', '520px', '720px', '360px']);
 });
 
-test('draft layout rejects generic evidence beyond the bounded band limit', () => {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'monteby-draft-generic-bound-'));
-  const contractPath = path.join(directory, 'contract.json');
-  const briefPath = path.join(directory, 'visual-brief.json');
-  const manifestPath = path.join(directory, 'reference-manifest.json');
-  const layoutPath = path.join(directory, 'layout-draft.json');
-  const count = 25;
-  const bandHeights = Array.from({ length: count }, () => 100);
+test('draft layout accepts 40 generic bands and rejects 65 beyond the bounded limit', () => {
+  for (const count of [40, 65]) {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), `monteby-draft-generic-bound-${count}-`));
+    const contractPath = path.join(directory, 'contract.json');
+    const briefPath = path.join(directory, 'visual-brief.json');
+    const manifestPath = path.join(directory, 'reference-manifest.json');
+    const layoutPath = path.join(directory, 'layout-draft.json');
+    const bandHeights = Array.from({ length: count }, () => 100);
 
-  fs.writeFileSync(contractPath, JSON.stringify(contract()));
-  fs.writeFileSync(briefPath, JSON.stringify({
-    ...visualBrief({ target: { variant: 'split-hero', archetype: '', referenceStyle: '' } }),
-    media: { surfaces: [], requiredRoles: [] },
-    authoringRequirements: {
-      referenceClassification: { kind: 'generic-measured-reference', family: '', familyMechanics: false },
-    },
-  }));
-  fs.writeFileSync(path.join(directory, 'reference-layout.json'), JSON.stringify(genericMeasuredLayout({
-    label: 'desktop',
-    width: 1440,
-    height: 1200,
-    bandHeights,
-    bandTags: Array.from({ length: count }, () => 'section'),
-    bandColors: Array.from({ length: count }, () => 'rgb(248, 249, 246)'),
-    columns: Array.from({ length: count }, () => 1),
-  })));
-  fs.writeFileSync(manifestPath, JSON.stringify({
-    sourceUrl: 'file:///tmp/unknown-long-page.html',
-    mediaSurfaces: [],
-    requiredMediaRoles: [],
-    layouts: [{ label: 'desktop', file: 'reference-layout.json', status: 'ok' }],
-  }));
+    fs.writeFileSync(contractPath, JSON.stringify(contract()));
+    fs.writeFileSync(briefPath, JSON.stringify({
+      ...visualBrief({ target: { variant: 'split-hero', archetype: '', referenceStyle: '' } }),
+      media: { surfaces: [], requiredRoles: [] },
+      authoringRequirements: {
+        referenceClassification: { kind: 'generic-measured-reference', family: '', familyMechanics: false },
+      },
+    }));
+    fs.writeFileSync(path.join(directory, 'reference-layout.json'), JSON.stringify(genericMeasuredLayout({
+      label: 'desktop',
+      width: 1440,
+      height: 1200,
+      bandHeights,
+      bandTags: Array.from({ length: count }, () => 'section'),
+      bandColors: Array.from({ length: count }, () => 'rgb(248, 249, 246)'),
+      columns: Array.from({ length: count }, () => 1),
+    })));
+    fs.writeFileSync(manifestPath, JSON.stringify({
+      sourceUrl: 'file:///tmp/unknown-long-page.html',
+      mediaSurfaces: [],
+      requiredMediaRoles: [],
+      layouts: [{ label: 'desktop', file: 'reference-layout.json', status: 'ok' }],
+    }));
 
-  const result = spawnSync(process.execPath, [
-    draftScript,
-    '--contract', contractPath,
-    '--brief-json', briefPath,
-    '--out', layoutPath,
-    '--reference-manifest', manifestPath,
-    '--json',
-  ], { encoding: 'utf8' });
+    const result = spawnSync(process.execPath, [
+      draftScript,
+      '--contract', contractPath,
+      '--brief-json', briefPath,
+      '--out', layoutPath,
+      '--reference-manifest', manifestPath,
+      '--json',
+    ], { encoding: 'utf8' });
 
-  assert.equal(result.status, 1);
-  assert.match(result.stderr, /\[generic_reference_band_limit_exceeded\].*25 major bands.*at most 24/);
-  assert.equal(fs.existsSync(layoutPath), false);
+    if (count === 40) {
+      assert.equal(result.status, 0, result.stderr || result.stdout);
+      const layout = JSON.parse(fs.readFileSync(layoutPath, 'utf8'));
+      assert.equal(layout.ROOT.nodes.length, 40);
+    } else {
+      assert.equal(result.status, 1);
+      assert.match(result.stderr, /\[generic_reference_band_limit_exceeded\].*65 major bands.*at most 64/);
+      assert.equal(fs.existsSync(layoutPath), false);
+    }
+  }
 });
 
 test('draft layout reports the exact missing responsive control for a generic measured plan', () => {

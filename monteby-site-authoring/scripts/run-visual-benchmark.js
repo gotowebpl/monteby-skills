@@ -2426,6 +2426,19 @@ function compareGenericGeometryViewport(referenceEntry, candidateEntry) {
       referenceTags: referenceBand.tags,
       candidateTags: capturedCandidateBand.tags,
       candidateGeometrySource: candidateBand.geometrySource,
+      referenceGeometry: {
+        top: referenceBand.top,
+        height: referenceBand.height,
+        width: referenceBand.width,
+      },
+      candidateGeometry: {
+        top: candidateBand.top,
+        height: candidateBand.height,
+        width: candidateBand.width,
+      },
+      signedTopDelta: candidateBand.top - referenceBand.top,
+      signedHeightDelta: candidateBand.height - referenceBand.height,
+      signedWidthDelta: candidateBand.width - referenceBand.width,
       topDelta: Math.abs(referenceBand.top - candidateBand.top),
       heightDelta: Math.abs(referenceBand.height - candidateBand.height),
       widthDelta: Math.abs(referenceBand.width - candidateBand.width),
@@ -2502,6 +2515,15 @@ function compareGenericGeometryViewport(referenceEntry, candidateEntry) {
       topDelta: roundGeometry(pair.topDelta, 4),
       heightDelta: roundGeometry(pair.heightDelta, 4),
       widthDelta: roundGeometry(pair.widthDelta, 4),
+      signedTopDelta: roundGeometry(pair.signedTopDelta, 4),
+      signedHeightDelta: roundGeometry(pair.signedHeightDelta, 4),
+      signedWidthDelta: roundGeometry(pair.signedWidthDelta, 4),
+      referenceGeometry: Object.fromEntries(
+        Object.entries(pair.referenceGeometry).map(([key, value]) => [key, roundGeometry(value, 4)])
+      ),
+      candidateGeometry: Object.fromEntries(
+        Object.entries(pair.candidateGeometry).map(([key, value]) => [key, roundGeometry(value, 4)])
+      ),
     })),
   };
   result.paintedSurfaces = {

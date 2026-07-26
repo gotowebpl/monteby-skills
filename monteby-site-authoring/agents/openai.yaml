@@ -1,5 +1,5 @@
 interface:
   display_name: "Monteby Site Authoring"
-  short_description: "Author, benchmark, and hand off Monteby sites"
+  short_description: "Route and verify canonical Monteby site work"
   brand_color: "#111827"
-  default_prompt: "Use $monteby-site-authoring to discover this WordPress/Monteby project, preserve a reproducible and secret-safe Docker handoff, and author or benchmark the complete responsive site using only live-contract Monteby controls; never author classes or raw markup, and add a typed Builder/Core control when the contract cannot express a measured requirement."
+  default_prompt: "Use $monteby-site-authoring to select exactly one base mode, follow the reported nextAction, and return a live-contract-backed verdict without raw markup, copied external content, or embedded secrets."

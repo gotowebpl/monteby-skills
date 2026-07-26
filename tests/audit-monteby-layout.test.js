@@ -2139,6 +2139,66 @@ test('audit rejects captured template media URLs as authored layout assets', () 
   assert.deepEqual(report.errors.map((error) => error.code), ['reused_reference_media']);
 });
 
+test('audit rejects orphaned, cyclic, duplicated, multi-parent, and leaf-child graph edges', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'monteby-audit-graph-'));
+  const contractPath = path.join(directory, 'contract.json');
+  const layoutPath = path.join(directory, 'layout.json');
+
+  fs.writeFileSync(contractPath, JSON.stringify({
+    components: [
+      { name: 'Section', allowedParents: ['ROOT'], aiProps: [] },
+      { name: 'Container', allowedParents: ['Section', 'Container'], aiProps: [] },
+      { name: 'Text', allowedParents: ['Section', 'Container'], aiProps: ['text'] },
+    ],
+  }));
+
+  fs.writeFileSync(layoutPath, JSON.stringify({
+    ROOT: node('RootCanvas', null, ['section', 'section', 'second']),
+    section: {
+      ...node('Section', 'ROOT', ['container', 'shared']),
+      isCanvas: true,
+    },
+    second: {
+      ...node('Section', 'ROOT', ['shared']),
+      isCanvas: true,
+    },
+    container: {
+      ...node('Container', 'section', ['container']),
+      isCanvas: true,
+    },
+    shared: {
+      ...node('Text', 'section', ['leaf-child']),
+      isCanvas: false,
+      props: { text: 'Shared' },
+    },
+    'leaf-child': {
+      ...node('Text', 'shared', []),
+      props: { text: 'Nested under a leaf' },
+    },
+    orphan: {
+      ...node('Text', 'section', []),
+      props: { text: 'Not referenced by ROOT descendants' },
+    },
+  }));
+
+  const result = spawnSync(process.execPath, [auditScript, '--layout', layoutPath, '--contract', contractPath, '--json'], {
+    encoding: 'utf8',
+  });
+
+  assert.equal(result.status, 1);
+  const report = JSON.parse(result.stdout);
+  const codes = new Set(report.errors.map((error) => error.code));
+  for (const code of [
+    'duplicate_child_reference',
+    'multiple_parent_references',
+    'child_cycle',
+    'orphan_node',
+    'leaf_has_children',
+  ]) {
+    assert.equal(codes.has(code), true, `${code} should be reported`);
+  }
+});
+
 function node(type, parent, nodes) {
   return {
     type: { resolvedName: type },

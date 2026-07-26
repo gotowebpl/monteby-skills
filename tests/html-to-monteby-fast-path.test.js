@@ -228,27 +228,161 @@ test('audit-reference-css resolves variables, expands shorthands, and isolates r
   );
 });
 
-test('fast-path guidance documents the residual escalation order', () => {
+test('fast-path guidance uses measured runner, generic drafter, and plan artifact', () => {
   const skill = fs.readFileSync(path.join(REPO, 'monteby-site-authoring', 'SKILL.md'), 'utf8');
   const runbook = fs.readFileSync(path.join(REFERENCES, 'quick-start-runbook.md'), 'utf8');
+  const html = fs.readFileSync(path.join(REFERENCES, 'html-to-monteby.md'), 'utf8');
+
+  assert.match(skill, /quick-start-runbook\.md/);
+  assert.match(skill, /html-to-monteby\.md/);
+  assert.match(skill, /run-visual-iteration\.js/);
+  assert.match(skill, /draft-monteby-layout\.js/);
+  assert.match(skill, /--plan-out/);
+  assert.match(runbook, /Phase table/);
+  assert.match(runbook, /Required inputs/);
+  assert.match(runbook, /Required artifacts/);
+  assert.match(runbook, /Pass condition/);
+  assert.match(runbook, /Failure action/);
+  assert.match(runbook, /Allowed verdict/);
+  assert.match(runbook, /--full-page/);
+  assert.match(runbook, /desktop:1440x1200/);
+  assert.match(runbook, /tablet:834x1112/);
+  assert.match(runbook, /mobile:390x844/);
+  assert.match(runbook, /mode: "generic-measured-reference"/);
+  assert.match(runbook, /completion\.allBandsMapped/);
+  assert.match(runbook, /completion\.truncated/);
+  assert.match(runbook, /capturedBands === draftedRootSections/);
+  assert.match(runbook, /`omittedBands` and `omittedMedia` are empty/);
+  assert.match(runbook, /runner internally invokes `draft-monteby-layout\.js --plan-out`/);
+  assert.match(runbook, /Do not\s+rerun `draft-monteby-layout\.js` after a passing runner/);
+  assert.doesNotMatch(runbook, /node "\$SKILL\/scripts\/draft-monteby-layout\.js"/);
+  assert.match(runbook, /--expected-layout-sha256/);
+  assert.match(runbook, /--save-report/);
+  assert.match(runbook, /--report-out/);
+  assert.match(runbook, /--preview-report/);
+  assert.match(html, /Do not make a browser snippet, hand-written `build\.mjs`/);
+  assert.match(html, /do not rerun the drafter after a passing\s+runner/);
+  assert.match(html, /`run-visual-iteration\.js` renders a static diagnostic candidate/);
+  assert.match(html, /saved canonical\s+WordPress\/PHP page/);
+});
+
+test('fast-path guidance contains no embedded secrets or third-party copy path', () => {
+  const runbook = fs.readFileSync(path.join(REFERENCES, 'quick-start-runbook.md'), 'utf8');
+
+  assert.match(runbook, /MONTEBY_AUTH_HEADER/);
+  assert.match(runbook, /Never paste its value/);
+  assert.match(runbook, /Use this runbook only in `owned-html-reconstruction` mode/);
+  assert.match(runbook, /Unknown rights → (?:stop and use )?external-reference mode/);
+  assert.match(runbook, /Never add it to an external\/public reference run/);
+  assert.doesNotMatch(runbook, /USER:PASS|USER:APP_PASSWORD|-u "USER|Authorization: Bearer [A-Za-z0-9]/);
+});
+
+test('guidance forbids residual CSS by default and removes tolerance shortcuts', () => {
+  const skill = fs.readFileSync(path.join(REPO, 'monteby-site-authoring', 'SKILL.md'), 'utf8');
+  const runbook = fs.readFileSync(path.join(REFERENCES, 'quick-start-runbook.md'), 'utf8');
+  const html = fs.readFileSync(path.join(REFERENCES, 'html-to-monteby.md'), 'utf8');
   const residuals = fs.readFileSync(path.join(REFERENCES, 'child-theme-residual-styles.md'), 'utf8');
+  const guidance = `${skill}\n${runbook}\n${html}\n${residuals}`;
 
-  for (const needle of [
-    'quick-start-runbook.md',
-    'html-to-monteby.md',
-    'layout-kit.mjs',
-    'normalize-layout.js',
-    'compare-geometry.js',
-    'audit-reference-css.mjs',
-    'emit-child-theme-css.mjs',
-  ]) {
-    assert.match(skill, new RegExp(needle.replace('.', '\\.')), `SKILL.md wskazuje ${needle}`);
-  }
+  assert.match(skill, /Residual CSS is forbidden\s+by default/);
+  assert.match(runbook, /absent from the mechanical\s+completion path/);
+  assert.match(residuals, /explicitly authorizes one\s+named, genuinely site-specific behavior/);
+  assert.match(residuals, /Residual CSS is never:[\s\S]*a completion criterion/);
+  assert.match(residuals, /cannot turn a failed comparison into[\s\n]*1:1/);
+  assert.match(residuals, /emit-child-theme-css\.mjs/);
+  assert.doesNotMatch(guidance, /(?:depth|głębokość)[^\n]*95%/i);
+  assert.doesNotMatch(guidance, /±\s*30\s*px/);
+});
 
-  assert.match(skill, /generated.*child-theme stylesheet|child-theme stylesheet.*carry the remainder/s);
-  assert.match(runbook, /Krok 9 — Residua/);
-  assert.match(runbook, /emit-child-theme-css\.mjs/);
-  assert.match(residuals, /rebuild-as-node|odtwórz zwykłym Containerem/);
-  assert.match(residuals, /monteby-widget-development/);
-  assert.match(residuals, /regeneruj|Po \*\*każdym\*\*|po każdym zapisie/i);
+test('form guidance requires approved legal copy without expanding scope', () => {
+  const skill = fs.readFileSync(path.join(REPO, 'monteby-site-authoring', 'SKILL.md'), 'utf8');
+  const runbook = fs.readFileSync(path.join(REFERENCES, 'quick-start-runbook.md'), 'utf8');
+  const html = fs.readFileSync(path.join(REFERENCES, 'html-to-monteby.md'), 'utf8');
+  const guidance = `${skill}\n${runbook}\n${html}`;
+
+  assert.match(guidance, /only when (?:that exact copy and its destination URLs are supplied|the user\/project approved that exact text)/);
+  assert.match(guidance, /do not invent a controller/i);
+  assert.match(guidance, /do not expand|without expanding/i);
+  assert.match(guidance, /blocked_legal_copy/);
+});
+
+test('spec-to-layout compiles a measured spec into a valid scaffold with a report', () => {
+  const dir = tempDir();
+  const contract = writeContract(dir);
+  const spec = {
+    kind: 'monteby-reference-spec',
+    version: 2,
+    viewport: 1440,
+    pageHeight: 2000,
+    contentWidth: 1280,
+    sections: [
+      {
+        role: 'box', tag: 'section', index: 0,
+        style: { rect: { x: 0, y: 0, w: 1440, h: 900 }, background: 'rgb(10, 11, 13)', borderWidth: [0, 0, 1, 0], borderColor: 'rgb(51,57,68)' },
+        children: [
+          {
+            role: 'box', tag: 'div',
+            style: { rect: { x: 80, y: 0, w: 1280, h: 900 }, maxWidth: 1280, padding: [104, 56, 84, 56], display: 'grid', gridTemplateColumns: '694.5px 513.4px', gap: [72] },
+            children: [
+              { role: 'heading', tag: 'h1', style: { rect: { x: 80, y: 104, w: 694, h: 246 }, margin: [0, 0, 26, 0] },
+                text: 'Tytuł', typography: { fontSize: 78, fontWeight: '800', fontFamily: 'Archivo', lineHeight: 1.05, color: 'rgb(244, 242, 238)', fontVariationSettings: '"wdth" 108' } },
+              { role: 'box', tag: 'div', style: { rect: { x: 80, y: 400, w: 694, h: 60 }, display: 'flex', flexDirection: 'row', gap: [14] },
+                children: [
+                  { role: 'button', tag: 'a', href: '#kontakt', text: 'Kontakt',
+                    style: { rect: { x: 80, y: 400, w: 200, h: 60 }, background: 'rgb(255, 190, 0)', padding: [16, 28, 16, 28] },
+                    typography: { fontSize: 15, fontWeight: '700', fontFamily: 'Archivo', lineHeight: 1, color: 'rgb(10, 11, 13)' } },
+                ] },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+  const specFile = path.join(dir, 'spec.json');
+  fs.writeFileSync(specFile, JSON.stringify(spec), 'utf8');
+  const out = path.join(dir, 'layout.json');
+  const reportFile = path.join(dir, 'report.json');
+
+  execFileSync(
+    process.execPath,
+    [path.join(SCRIPTS, 'spec-to-layout.mjs'), '--contract', contract, '--spec', specFile, '--out', out, '--report', reportFile],
+    { encoding: 'utf8' }
+  );
+
+  const map = JSON.parse(fs.readFileSync(out, 'utf8'));
+  const report = JSON.parse(fs.readFileSync(reportFile, 'utf8'));
+
+  const section = Object.values(map).find((n) => n.type.resolvedName === 'Section');
+  assert.ok(section, 'sekcja istnieje');
+  assert.equal(section.props.innerMaxWidth, '1280px', 'wrapper podniesiony do innerMaxWidth');
+  assert.equal(section.props.paddingTop, '104px', 'pionowy padding wrappera przeniesiony na sekcję');
+  assert.equal(section.props.gridTemplateColumns, undefined, 'brak tokenu grid w minimalnym kontrakcie — raport zamiast wyjątku');
+
+  assert.ok(
+    report.issues.some((i) => i.target === 'dropped-prop' && /borderBottomWidth/.test(i.issue)),
+    'obramowanie sekcji odrzucone z raportem'
+  );
+  assert.ok(
+    report.issues.some((i) => i.target === 'child-theme' && /font-variation-settings/.test(i.issue)),
+    'oś fontu zmiennego zgłoszona do arkusza'
+  );
+
+  const heading = Object.values(map).find((n) => n.type.resolvedName === 'Heading');
+  assert.equal(heading.props.text, 'Tytuł');
+  assert.equal(heading.props.marginTop, '0px', 'kit wyzerował margines górny');
+});
+
+test('extract-reference-spec emits a browser snippet with role classification', () => {
+  const snippet = execFileSync(
+    process.execPath,
+    [path.join(SCRIPTS, 'extract-reference-spec.mjs'), '--emit-snippet'],
+    { encoding: 'utf8' }
+  );
+  assert.match(snippet, /monteby-reference-spec/);
+  assert.match(snippet, /fontVariationSettings/);
+  assert.match(snippet, /gridTemplateColumns/);
+  // rząd samych odnośników nie może wpaść do roli text
+  assert.match(snippet, /actionable/);
+  // pasy strony zbierane z children main, nie tylko <section>
+  assert.match(snippet, /function bands\(/);
 });

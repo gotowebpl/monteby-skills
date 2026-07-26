@@ -7,133 +7,135 @@ const path = require('node:path');
 const test = require('node:test');
 
 const root = path.resolve(__dirname, '..');
+const skillPath = path.join(root, 'monteby-site-authoring', 'SKILL.md');
+const references = path.join(root, 'monteby-site-authoring', 'references');
 
-test('site-authoring guidance keeps decimal weights and safe negative tracking contract-backed', () => {
-  const guidance = [
-    path.join(root, 'README.md'),
-    path.join(root, 'monteby-site-authoring', 'SKILL.md'),
-    path.join(root, 'monteby-site-authoring', 'references', 'visual-benchmark-loop.md'),
-  ].map((file) => fs.readFileSync(file, 'utf8')).join('\n');
+function read(file) {
+  return fs.readFileSync(file, 'utf8');
+}
 
-  assert.match(guidance, /437\.5/);
-  assert.match(guidance, /-0\.045em/);
-  assert.match(guidance, /minWidth: "0px"/);
-  assert.match(guidance, /generic_responsive_divider_control_gap/);
-  assert.match(guidance, /live `FormBlock\.fields` repeater type options/);
-  assert.match(guidance, /type="button"/);
-  assert.match(guidance, /source URL is `file:\/\/`/);
-  assert.match(guidance, /Viewport-only captures remain diagnostics/);
-  assert.match(guidance, /outer surface is visually neutral/);
-  assert.match(guidance, /explicit `\/ none` must never become an opaque color/);
-  assert.match(guidance, /hsl\(\).*hsla\(\).*renderers support/is);
-  assert.match(guidance, /expectedModifiedGmt/);
-  assert.match(guidance, /A `428` response means the write precondition is missing/);
-  assert.match(guidance, /A `409` response means another editor changed the page/);
-  assert.doesNotMatch(guidance, /keep Monteby authoring on non-negative tracking/i);
-  assert.doesNotMatch(guidance, /disallowed negative tracking/i);
-  assert.doesNotMatch(guidance, /do not use negative tracking/i);
+test('site-authoring skill is a compact one-mode router with fixed verdicts', () => {
+  const skill = read(skillPath);
+  const lines = skill.split('\n');
+  const modes = [
+    'live-page-edit',
+    'owned-html-reconstruction',
+    'external-reference-benchmark',
+    'handoff',
+    'custom-widget',
+    'product-gap',
+  ];
+
+  assert.ok(lines.length < 500, `SKILL.md must stay below 500 lines, received ${lines.length}`);
+  assert.match(skill, /Choose exactly one base mode/);
+  assert.match(skill, /Do not combine modes in one run/);
+  assert.match(skill, /Modes do not stack/);
+  for (const mode of modes) {
+    assert.match(skill, new RegExp(`\\| \\\`${mode}\\\` \\|`), `router lists ${mode}`);
+  }
+
+  assert.match(skill, /execute only the `nextAction`/);
+  assert.match(skill, /references\/mechanical-workflow-protocol\.md/);
+  assert.match(skill, /`diagnostic_passed`: local\/static iteration passed; no canonical claim/);
+  assert.match(skill, /`canonical_verified_1_to_1`/);
+  assert.match(skill, /complete full-page comparison at 1440, 834, and 390 pixels/);
+  assert.match(skill, /A script exit code, static preview[\s\S]*can yield only a diagnostic verdict/);
 });
 
-test('site-authoring guidance uses the live TabsBlock interaction contract', () => {
-  const guidance = fs.readFileSync(
-    path.join(root, 'monteby-site-authoring', 'SKILL.md'),
-    'utf8',
-  );
+test('site-authoring hard stops protect secrets, source rights, legal copy, and product boundaries', () => {
+  const skill = read(skillPath);
 
-  assert.match(guidance, /use one contract-listed `TabsBlock`/);
-  assert.match(guidance, /`minItems`\/`maxItems`/);
-  assert.match(guidance, /`defaultActiveTab` as a zero-based index/);
-  assert.match(guidance, /`tabFontFamily`\/`tabLineHeight`/);
-  assert.match(guidance, /`mobileTabLayout: "scroll"`, `"wrap"`, or `"stack"`/);
-  assert.match(guidance, /Verify every active state with keyboard navigation/);
-  assert.match(guidance, /record a Builder\/Core control gap/);
-  assert.match(guidance, /`tabbed-program`/);
-  assert.match(guidance, /Default and current Preview are distinct states/);
-  assert.match(guidance, /custom 390px canvas must match the published mobile layout/);
-  assert.match(guidance, /Every repeated field needs a programmatic label/);
+  assert.match(skill, /would contain a password, application password, cookie, nonce,\s+bearer value, or authorization header value/);
+  assert.match(skill, /commands may name an environment\s+variable but never contain its value/);
+  assert.match(skill, /Ownership or reuse rights[\s\S]*Reclassify the work as `external-reference-benchmark`/);
+  assert.match(skill, /do\s+not use `--preserve-source-text`/);
+  assert.match(skill, /Third-party HTML, classes, scripts, asset URLs,\s+brand identity, contact data, legal text/);
+  assert.match(skill, /Return `blocked_product_gap`/);
+  assert.match(skill, /Return `blocked_legal_copy` for that form/);
+  assert.match(skill, /Never invent\s+legal wording, create a legal page, or expand the task's legal scope/);
+  assert.match(skill, /Residual CSS is forbidden\s+by default/);
 });
 
-test('site-authoring guidance preserves responsive composition and editor inheritance', () => {
-  const guidance = fs.readFileSync(
-    path.join(root, 'monteby-site-authoring', 'SKILL.md'),
-    'utf8',
-  );
+test('site-authoring keeps live contract, REST concurrency, and presentation canonical', () => {
+  const skill = read(skillPath);
 
-  assert.match(guidance, /hero -> about -> stats -> services -> result -> why -> work -> pricing -> testimonials -> partners -> footer/);
-  assert.match(guidance, /asymmetric three-service rhythm/);
-  assert.match(guidance, /responsive `1-2-1` testimonial mosaic/);
-  assert.match(guidance, /switch the canvas to the intended breakpoint/);
-  assert.match(guidance, /`mobile -> tablet -> desktop` cascade/);
-  assert.match(guidance, /Do not populate all three breakpoint props/);
-  assert.match(guidance, /Ordinary `Heading` owns natural wrapping/);
-  assert.match(guidance, /Use `MultilineHeading` only for deliberate semantic line breaks with staggered starts/);
-  assert.match(guidance, /live `lines` repeater `itemControls` expose every nested line prop needed at each breakpoint/);
-  assert.match(guidance, /Never invent nested keys/);
-  assert.equal((guidance.match(/Ordinary `Heading` owns natural wrapping/g) || []).length, 1);
+  assert.match(skill, /Read `references\/site-contract-compatibility\.json` before authoring/);
+  assert.match(skill, /exact-live-contract compatibility policy/);
+  assert.match(skill, /Always fetch `GET \/wp-json\/monteby\/v1\/contract` for the target site/);
+  assert.match(skill, /Never use the compatibility policy[\s\S]*as a substitute for the live response/);
+  assert.match(skill, /POST \/wp-json\/monteby\/v1\/validate/);
+  assert.match(skill, /GET \/wp-json\/monteby\/v1\/pages\/\{id\}\/layout/);
+  assert.match(skill, /PUT \/wp-json\/monteby\/v1\/pages\/\{id\}\/layout/);
+  assert.match(skill, /POST \/wp-json\/monteby\/v1\/preview/);
+  assert.match(skill, /fresh `expectedModifiedGmt`/);
+  assert.match(skill, /A save returns `428` or `409`/);
+  assert.match(skill, /Send presentation in the same versioned layout PUT/);
+  assert.match(skill, /Never call the legacy page-settings route/);
+  assert.match(skill, /never send Custom CSS\/JS\/SEO through this API/);
+  assert.match(skill, /`full-width` for edge-to-edge page bands/);
+  assert.match(skill, /`canvas` with `"disableGlobalTemplates": true`/);
 });
 
-test('site-authoring guidance keeps page presentation inside the versioned Monteby layout API', () => {
-  const guidance = [
-    path.join(root, 'monteby-site-authoring', 'SKILL.md'),
-    path.join(root, 'monteby-site-authoring', 'references', 'visual-benchmark-loop.md'),
-  ].map((file) => fs.readFileSync(file, 'utf8')).join('\n');
+test('owned HTML route uses the measured runner, deterministic plan, and canonical PHP gate', () => {
+  const skill = read(skillPath);
 
-  assert.match(guidance, /`layoutPersistence\.presentation`/);
-  assert.match(guidance, /"presentation": \{ "layout": "canvas", "disableGlobalTemplates": true \}/);
-  assert.match(guidance, /same versioned (?:layout )?PUT/);
-  assert.match(guidance, /never call the legacy page-settings route/i);
-  assert.match(guidance, /never send Custom CSS\/JS\/SEO through this API/i);
-  assert.doesNotMatch(guidance, /official Builder page-settings endpoint/);
-  assert.doesNotMatch(guidance, /disable_global_templates: true/);
+  assert.match(skill, /scripts\/run-visual-iteration\.js/);
+  assert.match(skill, /generic measured path in\s+`scripts\/draft-monteby-layout\.js`/);
+  assert.match(skill, /mechanical plan written with\s+`--plan-out`/);
+  assert.match(skill, /runner invokes the generic measured path/);
+  assert.match(skill, /do\s+not rerun the drafter after a passing runner/);
+  assert.match(skill, /Do not replace this path with a browser snippet, a hand-written `build\.mjs`/);
+  assert.match(skill, /runner's `diagnostic_passed` remains non-canonical/);
+  assert.match(skill, /saved canonical WordPress\/PHP page/);
+  assert.doesNotMatch(skill, /extract-reference-spec|spec-to-layout/);
 });
 
-test('site-authoring guidance prefers the live proportional grid and measured text margins', () => {
-  const guidance = [
-    path.join(root, 'monteby-site-authoring', 'SKILL.md'),
-    path.join(root, 'monteby-site-authoring', 'references', 'visual-benchmark-loop.md'),
-  ].map((file) => fs.readFileSync(file, 'utf8')).join('\n');
+test('custom-widget example renders and escapes every exposed image prop', () => {
+  const guidance = read(path.join(references, 'custom-widget-registration.md'));
 
-  assert.match(guidance, /Columns `Two proportional`/);
-  assert.match(guidance, /`gridTemplateColumns: "two-proportional"`/);
-  assert.match(guidance, /`gridFirstColumnPercent\*`/);
-  assert.match(guidance, /`Math\.round`.*integer range `10\.\.90`/s);
-  assert.match(guidance, /six-track.*must never survive.*implicit tracks/s);
-  assert.match(guidance, /backward-compatible fallback.*older contract/);
-  assert.match(guidance, /literal token `grid-template-columns: two-proportional` is invalid evidence/);
-  assert.match(guidance, /live `Container\.overflow` control/);
-  assert.match(guidance, /measure.*parent gap independently.*never translate text margins into wrapper padding/s);
-  assert.doesNotMatch(guidance, /fractional tracks[\s\S]{0,200}prefer `layoutDisplay: "flex"`/i);
+  assert.match(guidance, /'image' => ''/);
+  assert.match(guidance, /'imageAlt' => ''/);
+  assert.match(guidance, /\$imageMarkup = sprintf/);
+  assert.match(guidance, /esc_url\(\$image\)/);
+  assert.match(guidance, /esc_attr\(\$imageAlt\)/);
+  assert.match(guidance, /<section class="theme-client-hero">%s<h1>/);
+  assert.match(guidance, /Do not expose an editable prop that the render callback ignores/);
 });
 
-test('site-authoring guidance bounds visual evidence and preserves Layers focus ownership', () => {
-  const skill = fs.readFileSync(
-    path.join(root, 'monteby-site-authoring', 'SKILL.md'),
-    'utf8',
-  );
-  const visualLoop = fs.readFileSync(
-    path.join(root, 'monteby-site-authoring', 'references', 'visual-benchmark-loop.md'),
-    'utf8',
-  );
+test('residual CSS is opt-in site-specific debt and never completion evidence', () => {
+  const skill = read(skillPath);
+  const residuals = read(path.join(references, 'child-theme-residual-styles.md'));
+  const combined = `${skill}\n${residuals}`;
 
-  assert.match(skill, /manually collapsing that selected path must persist/);
-  assert.match(skill, /only when the tree owned focus/);
-  assert.match(skill, /must never lose focus to Layers/);
-  assert.match(visualLoop, /empty, absolutely positioned, symmetric inset surface/);
-  assert.match(visualLoop, /discard selectors, generated-content metadata, asymmetric insets, and arbitrary CSS/);
-  assert.match(visualLoop, /pure two-dimensional rotation/);
-  assert.match(visualLoop, /untransformed layout dimensions instead of the rotated bounding box/);
-  assert.match(visualLoop, /reject scale, skew, translation, perspective, or arbitrary angles/);
-  assert.match(visualLoop, /only permitted negative-margin case/);
-  assert.match(visualLoop, /marginTop \+ surfaceHeight \+ marginBottom = parent content-row height/);
-  assert.match(visualLoop, /Do not use negative margins for an ordinary stacked gap/);
-  assert.match(visualLoop, /`paintLayer: "foreground"`/);
+  assert.match(residuals, /Residual CSS is forbidden by default/);
+  assert.match(residuals, /explicitly authorizes one\s+named, genuinely site-specific behavior/);
+  assert.match(residuals, /If removing the residual makes the candidate fail the claimed match, the 1:1\s+verdict is unavailable/);
+  assert.match(residuals, /blocked_residual_not_authorized/);
+  assert.match(residuals, /scripts\/audit-reference-css\.mjs[\s\S]*does not grant authorization/);
+  assert.match(residuals, /scripts\/emit-child-theme-css\.mjs/);
+  assert.match(residuals, /Regenerate after every layout save/);
+  assert.match(residuals, /rollback/);
+  assert.doesNotMatch(combined, /residual CSS.*(?:required|prerequisite).*(?:completion|1:1)/i);
+});
+
+test('HTML and form guidance preserves contract detail without invented legal copy', () => {
+  const html = read(path.join(references, 'html-to-monteby.md'));
+
+  assert.match(html, /Decimal font weights and safe negative tracking/);
+  assert.match(html, /weight\s+`437\.5` and tracking\s+`-0\.045em`/);
+  assert.match(html, /`minWidth: "0px"`/);
+  assert.match(html, /generic measured source/);
+  assert.match(html, /`completion\.allBandsMapped: true`/);
+  assert.match(html, /`completion\.truncated: false`/);
+  assert.match(html, /A reset or\s+`type="button"` is not submit evidence/);
+  assert.match(html, /Consent\/legal copy may be authored only when the user\/project supplied or approved/);
+  assert.match(html, /Do not invent:[\s\S]*a controller or processing purpose/);
+  assert.match(html, /A `428` means\s+the precondition is absent/);
+  assert.match(html, /A `409` means another editor\s+changed\s+the page/);
 });
 
 test('widget-development guidance treats editor usability as a release contract', () => {
-  const guidance = fs.readFileSync(
-    path.join(root, 'monteby-widget-development', 'SKILL.md'),
-    'utf8',
-  );
+  const guidance = read(path.join(root, 'monteby-widget-development', 'SKILL.md'));
 
   assert.match(guidance, /Treat editor usability as part of the widget contract/);
   assert.match(guidance, /Repeaters must expose and enforce `minItems`\/`maxItems`/);
@@ -144,13 +146,9 @@ test('widget-development guidance treats editor usability as a release contract'
 });
 
 test('production-site benchmark guidance preserves site structure, SEO ownership, and release assets', () => {
-  const guidance = fs.readFileSync(
-    path.join(root, 'monteby-site-authoring', 'references', 'production-site-benchmark.md'),
-    'utf8',
-  );
-  const widgetGuidance = fs.readFileSync(
+  const guidance = read(path.join(references, 'production-site-benchmark.md'));
+  const widgetGuidance = read(
     path.join(root, 'monteby-widget-development', 'references', 'widget-development-playbook.md'),
-    'utf8',
   );
 
   assert.match(guidance, /global header, and global footer as separate Monteby resources/);
@@ -168,14 +166,8 @@ test('production-site benchmark guidance preserves site structure, SEO ownership
 });
 
 test('client-site handoff guidance keeps Codex and Claude instructions equivalent and secrets isolated', () => {
-  const skill = fs.readFileSync(
-    path.join(root, 'monteby-site-authoring', 'SKILL.md'),
-    'utf8',
-  );
-  const handoff = fs.readFileSync(
-    path.join(root, 'monteby-site-authoring', 'references', 'client-site-handoff.md'),
-    'utf8',
-  );
+  const skill = read(skillPath);
+  const handoff = read(path.join(references, 'client-site-handoff.md'));
 
   assert.match(skill, /references\/client-site-handoff\.md/);
   assert.match(skill, /`AGENTS\.md` and `CLAUDE\.md` semantically equivalent/);

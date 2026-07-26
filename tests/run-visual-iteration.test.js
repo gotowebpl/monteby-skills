@@ -10,6 +10,113 @@ const test = require('node:test');
 
 const root = path.resolve(__dirname, '..');
 const iterationScript = path.join(root, 'monteby-site-authoring', 'scripts', 'run-visual-iteration.js');
+const { buildRepairQueue, nextActionFor, validateLayoutPlan } = require(iterationScript);
+
+test('layout plan gate rejects truncation and missing section mappings', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'monteby-plan-gate-'));
+  const plan = path.join(directory, 'layout-plan.json');
+  const sourceLayout = path.join(directory, 'layout-draft.json');
+  fs.writeFileSync(sourceLayout, '{}\n');
+  fs.writeFileSync(plan, JSON.stringify({
+    schemaVersion: 1,
+    artifact: 'monteby-layout-plan',
+    sourceLayout,
+    mode: 'generic-measured-reference',
+    rootSectionIds: ['section-1'],
+    bands: [{ generatedSectionId: '' }],
+    completion: {
+      plannedBands: 1,
+      emittedSections: 1,
+      allBandsMapped: false,
+      truncated: true,
+      omittedBands: [2],
+      omittedMedia: [],
+    },
+  }));
+
+  assert.deepEqual(
+    validateLayoutPlan(plan).map((blocker) => blocker.code),
+    ['layout_plan_incomplete', 'layout_plan_band_mapping_incomplete']
+  );
+});
+
+test('repair queue maps measured geometry failures to stable section ids', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'monteby-repair-queue-'));
+  const plan = path.join(directory, 'layout-plan.json');
+  const layout = path.join(directory, 'layout.json');
+  fs.writeFileSync(layout, JSON.stringify({
+    ROOT: {
+      nodes: ['section-hero', 'section-proof', 'extra-candidate'],
+    },
+  }));
+  fs.writeFileSync(plan, JSON.stringify({
+    schemaVersion: 1,
+    artifact: 'monteby-layout-plan',
+    bands: [
+      { generatedSectionId: 'section-hero' },
+      { generatedSectionId: 'section-proof' },
+      { generatedSectionId: 'section-services' },
+    ],
+  }));
+
+  const queue = buildRepairQueue({
+    status: 'benchmark_failed',
+    files: { layoutPlan: plan, layout },
+    blockers: [],
+    benchmark: {
+      genericGeometry: {
+        stats: {
+          viewports: [{
+            label: 'mobile',
+            bands: {
+              missing: [{ index: 1, tags: ['section'], top: 0.3, height: 0.2, width: 1 }],
+              extra: [{ index: 2, tags: ['aside'], top: 0.6, height: 0.1, width: 0.8 }],
+            },
+            geometry: {
+              pairs: [
+                { referenceIndex: 0, candidateIndex: 0, topDelta: 0.02, heightDelta: 0.12, widthDelta: 0 },
+                { referenceIndex: 2, candidateIndex: 1, topDelta: 0.18, heightDelta: 0.04, widthDelta: 0.03 },
+              ],
+            },
+          }],
+        },
+      },
+    },
+  });
+
+  assert.deepEqual(
+    queue.slice(0, 2).map((item) => [item.code, item.sectionId]),
+    [
+      ['restore_measured_band', 'section-proof'],
+      ['remove_or_merge_extra_band', 'extra-candidate'],
+    ]
+  );
+  assert.deepEqual(
+    queue.filter((item) => item.code === 'match_band_geometry').map((item) => item.sectionId),
+    ['section-services', 'section-hero']
+  );
+});
+
+test('canonical next action is an exact credential-free snapshot command', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'monteby-next-action-'));
+  const action = nextActionFor({
+    status: 'diagnostic_passed',
+    label: 'unit',
+    canonicalViewportCoverage: { complete: true },
+    options: {},
+    files: {
+      outDir: directory,
+      sourceContract: path.join(directory, 'contract.json'),
+      sourceCandidateLayout: '',
+    },
+  });
+
+  assert.equal(action.id, 'snapshot_canonical_page');
+  assert.equal(path.basename(action.tool), 'wordpress-layout-client.js');
+  assert.deepEqual(Object.keys(action).sort(), ['args', 'id', 'instruction', 'requires', 'tool']);
+  assert.deepEqual(action.requires, ['MONTEBY_SITE_URL', 'MONTEBY_PAGE_ID', 'MONTEBY_AUTH_HEADER']);
+  assert.equal(JSON.stringify(action).includes('Authorization'), false);
+});
 
 test('run visual iteration documents the viewport timeout option', () => {
   const result = spawnSync(process.execPath, [iterationScript, '--help'], { encoding: 'utf8' });
@@ -21,6 +128,9 @@ test('run visual iteration documents the viewport timeout option', () => {
   assert.match(result.stdout, /--channel chrome/);
   assert.match(result.stdout, /--max-percent/);
   assert.match(result.stdout, /--max-viewport-percent/);
+  assert.match(result.stdout, /--candidate-layout/);
+  assert.match(result.stdout, /layout-plan/);
+  assert.match(result.stdout, /nextAction/);
   assert.match(result.stdout, /locally installed Chrome/);
   assert.match(result.stdout, /reference, target, candidate, and long-mobile viewport capture/);
 });
@@ -51,6 +161,7 @@ const handledScripts = new Set([
   'start-visual-benchmark.js',
   'audit-authoring-readiness.js',
   'draft-monteby-layout.js',
+  'audit-monteby-layout.js',
   'render-monteby-preview.js',
   'capture-template-reference.js',
   'run-visual-benchmark.js',
@@ -156,7 +267,28 @@ childProcess.spawnSync = function runVisualIterationHarness(command, args, optio
         nodes: [],
       },
     });
+    writeJson(optionValue(args, '--plan-out'), {
+      schemaVersion: 1,
+      artifact: 'monteby-layout-plan',
+      sourceLayout: optionValue(args, '--out'),
+      mode: 'generic-measured-reference',
+      bands: [],
+      completion: {
+        capturedBands: 0,
+        draftedRootSections: 0,
+        allBandsMapped: true,
+        plannedBands: 0,
+        emittedSections: 0,
+        truncated: false,
+        omittedBands: [],
+        omittedMedia: [],
+      },
+    });
     return success({ ok: true, stats: {}, audit: { ok: true }, qualityErrors: [] });
+  }
+
+  if (script === 'audit-monteby-layout.js') {
+    return success({ ok: true, errors: [], warnings: [] });
   }
 
   if (script === 'render-monteby-preview.js') {
@@ -226,6 +358,13 @@ childProcess.spawnSync = function runVisualIterationHarness(command, args, optio
   assert.equal(fullPageReport.options.viewportTimeoutMs, 240000);
   assert.equal(fullPageReport.options.fullPage, true);
   assert.equal(fullPageReport.options.preserveSourceText, true);
+  assert.equal(fullPageReport.schemaVersion, 1);
+  assert.equal(fullPageReport.artifact, 'monteby-visual-iteration');
+  assert.equal(fullPageReport.canonicalViewportCoverage.complete, false);
+  assert.deepEqual(fullPageReport.canonicalViewportCoverage.missingLabels.sort(), ['desktop', 'tablet']);
+  assert.equal(fullPageReport.nextAction.id, 'capture_canonical_viewports');
+  assert.equal(fullPageReport.nextAction.args.filter((arg) => arg === '--viewport').length, 3);
+  assert.equal(fs.existsSync(fullPageReport.files.layoutPlan), true);
   assert.equal(fullPageReport.longMobile.needed, false);
   assert.equal(fullPageReport.longMobile.reason, 'full_page_capture_already_covers_below_fold');
 
@@ -246,6 +385,10 @@ childProcess.spawnSync = function runVisualIterationHarness(command, args, optio
   assert.equal(fullPageStart.args.includes('--full-page'), true);
   assert.equal(argumentValue(fullPageReadiness.args, '--reference-layout'), path.join(directory, 'target-layout-mobile.json'));
   assert.equal(fullPageDraft.args.includes('--preserve-source-text'), true);
+  assert.equal(
+    argumentValue(fullPageDraft.args, '--plan-out'),
+    path.join(directory, 'candidate', 'layout-plan.json')
+  );
   assert.equal(fullPageCaptures.length, 1);
   assert.equal(fullPageCaptures[0].args.includes('--full-page'), true);
   assert.equal(timeoutValue(fullPageCaptures[0].args), '240000');

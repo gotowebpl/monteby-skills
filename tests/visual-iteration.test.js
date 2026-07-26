@@ -71,6 +71,11 @@ test('visual iteration runs target, draft, render, candidate capture, and benchm
   assert.equal(report.fidelityPassed, false);
   assert.equal(report.canonicalVerification, false);
   assert.equal(report.productReady, false);
+  assert.equal(report.schemaVersion, 1);
+  assert.equal(report.artifact, 'monteby-visual-iteration');
+  assert.equal(report.canonicalViewportCoverage.complete, false);
+  assert.deepEqual(report.canonicalViewportCoverage.missingLabels.sort(), ['desktop', 'mobile', 'tablet']);
+  assert.equal(report.nextAction.id, 'capture_canonical_viewports');
   assert.deepEqual(report.canonicalEvidence, {
     renderer: 'render-monteby-preview.js',
     staticHtmlPreview: true,
@@ -93,6 +98,7 @@ test('visual iteration runs target, draft, render, candidate capture, and benchm
   assert.equal(fs.existsSync(path.join(directory, 'target.html')), true);
   assert.equal(fs.existsSync(path.join(directory, 'target-desktop.png')), true);
   assert.equal(fs.existsSync(path.join(directory, 'candidate', 'layout-draft.json')), true);
+  assert.equal(fs.existsSync(path.join(directory, 'candidate', 'layout-plan.json')), true);
   assert.equal(fs.existsSync(path.join(directory, 'candidate', 'layout.json')), true);
   assert.equal(fs.existsSync(path.join(directory, 'candidate', 'layout-draft-preview.html')), true);
   assert.equal(fs.existsSync(path.join(directory, 'candidate', 'rendered', 'candidate-desktop.png')), true);
@@ -228,6 +234,9 @@ test('visual iteration names screenshot budget failures explicitly', () => {
   assert.equal(report.benchmark.comparison.ok, false);
   assert.equal(report.blockers[0].source, 'visual-diff');
   assert.match(report.blockers[0].code, /max_/);
+  assert.equal(report.nextAction.id, 'repair_candidate_from_queue');
+  assert.equal(report.nextAction.args.includes('--candidate-layout'), true);
+  assert.ok(report.repairQueue.length > 0);
   assert.match(fs.readFileSync(path.join(directory, 'VISUAL-ITERATION.md'), 'utf8'), /Status: FAIL/);
 });
 

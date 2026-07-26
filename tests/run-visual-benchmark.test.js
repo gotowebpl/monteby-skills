@@ -716,6 +716,8 @@ test('strict unknown-family geometry accepts a close responsive landmark layout'
   assert.equal(viewport.bands.missingCount, 0);
   assert.equal(viewport.bands.extraCount, 0);
   assert.equal(viewport.bands.reorderedBands, 0);
+  assert.ok(viewport.geometry.pairs.every((pair) => pair.referenceGeometry && pair.candidateGeometry));
+  assert.ok(viewport.geometry.pairs.every((pair) => Number.isFinite(pair.signedHeightDelta)));
 });
 
 test('strict generic geometry compares a constrained reference band with its Monteby content frame', (context) => {

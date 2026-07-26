@@ -409,6 +409,7 @@ function audit(nodeMap, contractIndex, referenceManifest, minMediaSurfaces, opti
     auditChildren(report, nodeMap, nodeId, node);
   }
 
+  auditGraphIntegrity(report, nodeMap);
   auditReferenceProvenance(report, referenceManifest, options);
   auditReferenceMedia(report, nodeMap, referenceManifest, minMediaSurfaces, options);
 
@@ -617,6 +618,10 @@ function auditParent(report, nodeMap, nodeId, node, type, contract) {
 }
 
 function auditChildren(report, nodeMap, nodeId, node) {
+  if (!Array.isArray(node.nodes)) {
+    error(report, 'invalid_children_list', `${nodeId} nodes must be an array.`);
+    return;
+  }
   const children = Array.isArray(node.nodes) ? node.nodes : [];
   for (const childId of children) {
     if (typeof childId !== 'string' || !nodeMap[childId]) {
@@ -626,6 +631,94 @@ function auditChildren(report, nodeMap, nodeId, node) {
     const child = nodeMap[childId];
     if (child && typeof child === 'object' && child.parent !== nodeId) {
       error(report, 'child_parent_mismatch', `${childId} parent is "${child.parent}" but ${nodeId} lists it as a child.`);
+    }
+  }
+}
+
+function auditGraphIntegrity(report, nodeMap) {
+  const incomingParents = new Map();
+
+  for (const [nodeId, node] of Object.entries(nodeMap)) {
+    if (!node || typeof node !== 'object' || Array.isArray(node) || !Array.isArray(node.nodes)) {
+      continue;
+    }
+
+    if (node.nodes.length > 0 && node.isCanvas !== true) {
+      error(report, 'leaf_has_children', `${nodeId} lists children but isCanvas is not true.`);
+    }
+
+    const localChildren = new Set();
+    for (const childId of node.nodes) {
+      if (typeof childId !== 'string' || !nodeMap[childId]) {
+        continue;
+      }
+      if (localChildren.has(childId)) {
+        error(report, 'duplicate_child_reference', `${nodeId} lists ${childId} more than once.`);
+        continue;
+      }
+      localChildren.add(childId);
+
+      const parents = incomingParents.get(childId) || [];
+      parents.push(nodeId);
+      incomingParents.set(childId, parents);
+    }
+  }
+
+  for (const [nodeId, parents] of incomingParents.entries()) {
+    const uniqueParents = unique(parents);
+    if (uniqueParents.length > 1) {
+      error(report, 'multiple_parent_references', `${nodeId} is listed by multiple parents: ${uniqueParents.join(', ')}.`);
+    }
+  }
+
+  const reachable = new Set();
+  const state = new Map();
+  const reportedCycles = new Set();
+
+  function visit(nodeId, stack, markReachable) {
+    if (!nodeMap[nodeId]) {
+      return;
+    }
+    if (markReachable) {
+      reachable.add(nodeId);
+    }
+
+    const currentState = state.get(nodeId);
+    if (currentState === 'visiting') {
+      const cycleStart = stack.indexOf(nodeId);
+      const cycle = (cycleStart >= 0 ? stack.slice(cycleStart) : stack).concat(nodeId);
+      const signature = [...new Set(cycle)].sort().join('|');
+      if (!reportedCycles.has(signature)) {
+        reportedCycles.add(signature);
+        error(report, 'child_cycle', `Layout child graph contains a cycle: ${cycle.join(' -> ')}.`);
+      }
+      return;
+    }
+    if (currentState === 'visited') {
+      return;
+    }
+
+    state.set(nodeId, 'visiting');
+    const node = nodeMap[nodeId];
+    const children = node && typeof node === 'object' && Array.isArray(node.nodes) ? node.nodes : [];
+    for (const childId of children) {
+      if (typeof childId === 'string' && nodeMap[childId]) {
+        visit(childId, stack.concat(nodeId), markReachable);
+      }
+    }
+    state.set(nodeId, 'visited');
+  }
+
+  visit('ROOT', [], true);
+  for (const nodeId of Object.keys(nodeMap)) {
+    if (!state.has(nodeId)) {
+      visit(nodeId, [], false);
+    }
+  }
+
+  for (const nodeId of Object.keys(nodeMap)) {
+    if (nodeId !== 'ROOT' && !reachable.has(nodeId)) {
+      error(report, 'orphan_node', `${nodeId} is not reachable from ROOT.`);
     }
   }
 }
