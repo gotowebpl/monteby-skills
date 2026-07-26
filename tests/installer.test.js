@@ -41,6 +41,7 @@ test('installer bundles screenshot comparison runtime dependencies for site auth
   assert.equal(fs.existsSync(path.join(skillDir, 'scripts', 'audit-rendered-media-parity.js')), true);
   assert.equal(fs.existsSync(path.join(skillDir, 'scripts', 'run-visual-benchmark.js')), true);
   assert.equal(fs.existsSync(path.join(skillDir, 'scripts', 'run-visual-iteration.js')), true);
+  assert.equal(fs.existsSync(path.join(skillDir, 'scripts', 'apply-layout-repair-queue.js')), true);
   assert.equal(fs.existsSync(path.join(skillDir, 'scripts', 'wordpress-layout-client.js')), true);
   assert.equal(fs.existsSync(path.join(skillDir, 'scripts', 'run-canonical-verification.js')), true);
   assert.equal(fs.existsSync(path.join(skillDir, 'scripts', 'render-monteby-preview.js')), true);
@@ -49,4 +50,11 @@ test('installer bundles screenshot comparison runtime dependencies for site auth
   assert.equal(fs.existsSync(path.join(skillDir, 'agents', 'openai.yaml')), true);
   assert.equal(fs.existsSync(path.join(skillDir, 'scripts', 'node_modules', 'pngjs', 'package.json')), true);
   assert.equal(fs.existsSync(path.join(skillDir, 'scripts', 'node_modules', 'pixelmatch', 'package.json')), true);
+  assert.equal(fs.existsSync(path.join(skillDir, 'scripts', 'compare-geometry.js')), false);
+  assert.equal(fs.existsSync(path.join(skillDir, 'scripts', 'extract-reference-spec.mjs')), false);
+  assert.equal(fs.existsSync(path.join(skillDir, 'scripts', 'spec-to-layout.mjs')), false);
+  assert.equal(
+    fs.existsSync(path.join(skillDir, 'quarantine', 'quick-start-runbook.unsafe-draft.md')),
+    false
+  );
 });

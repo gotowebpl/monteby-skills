@@ -23,9 +23,17 @@ mode.
 | `custom-widget` | registering a site-specific child-theme widget | `references/custom-widget-registration.md` |
 | `product-gap` | the contract cannot express a required, reusable behavior | `monteby-widget-development` skill |
 
-After selecting the mode, execute only the `nextAction` emitted by
-`references/mechanical-workflow-protocol.md` — one step, one artifact, one pass
-condition at a time. Do not plan past the current `nextAction`.
+For `live-page-edit` and `owned-html-reconstruction`, read
+`references/mechanical-workflow-protocol.md`. Its explicitly labeled read-only
+contract bootstrap happens before the mutation state machine; no candidate exists
+then, so do not consume the bootstrap report's `validate_candidate` action. Once
+the protocol says the state machine has started, execute only the `nextAction`
+emitted by the current report — one step, one artifact, one pass condition at a
+time. Do not plan past it.
+
+For the other four modes, follow only the primary reference or skill named in the
+router row; they do not use the page-mutation state machine unless that reference
+explicitly enters it.
 
 In `handoff` mode, keep `AGENTS.md` and `CLAUDE.md` semantically equivalent as
 required by `references/client-site-handoff.md`.
@@ -99,7 +107,8 @@ the page. Refetch, reconcile, revalidate, and issue one new explicit save action
 never retry PUT automatically. Never bypass a conflict with stale JSON, and never
 write post meta or `post_content` directly.
 
-Send presentation in the same versioned layout PUT: `full-width` for edge-to-edge page bands,
+When the live contract advertises presentation persistence, send presentation
+in the same versioned layout PUT: `full-width` for edge-to-edge page bands,
 `canvas` with `"disableGlobalTemplates": true` for standalone benchmark pages.
 Never call the legacy page-settings route for AI authoring and
 never send Custom CSS/JS/SEO through this API.
@@ -117,8 +126,12 @@ For measured references, capture with `scripts/run-visual-iteration.js`
 (full-page, 1440/834/390). The runner invokes the generic measured path in
 `scripts/draft-monteby-layout.js` with the mechanical plan written with
 `--plan-out`, then emits the exact plan and layout it benchmarked. Gate on that
-plan (`allBandsMapped`, no truncation, band counts equal, nothing omitted) and do
-not rerun the drafter after a passing runner.
+plan (`allBandsMapped`, `allSurfacesMapped`, no truncation, equal band/surface
+counts, nothing omitted) and its plan/layout/contract/manifest SHA-256 bindings.
+Do not rerun the drafter after a passing runner. When a report emits AUTHOR,
+execute its `scripts/apply-layout-repair-queue.js` action; never translate the
+queue into a manual edit. The applier changes only mechanically proven targets
+and stops on ambiguous content, identity, contract, or graph evidence.
 Do not replace this path with a browser snippet, a hand-written `build.mjs`,
 or manual node-map transcription as the primary route.
 
@@ -128,15 +141,17 @@ emitted snapshot, validation, versioned save, and PHP preview actions. Only
 may upgrade the verdict after comparing the saved canonical WordPress/PHP page
 at all three widths.
 
-## Toolbox
+## Utilities outside the reproduction state machine
+
+Never select these while a page-reproduction report chain is active; its
+`nextAction` is the only executable route. Other router modes may use a utility
+only when their primary reference explicitly calls for it.
 
 - `scripts/layout-kit.mjs` — declarative node-map builder: enforces components,
   props, blocked props, `allowedParents`; snaps values to control step/enum/type;
   repairs known renderer traps.
 - `scripts/normalize-layout.js` — pre-flight for an existing node map; reports
   every violation class at once, `--fix` writes the repaired copy.
-- `scripts/compare-geometry.js` — per-band geometry diff, heading line counts,
-  overflow checks between reference and candidate.
 - `scripts/audit-reference-css.mjs` — classifies every reference CSS declaration
   before authoring: contract-expressible, rebuild-as-node, product gap, residual.
 - `scripts/emit-child-theme-css.mjs` — generates an authorized residual

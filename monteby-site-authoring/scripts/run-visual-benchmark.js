@@ -2757,6 +2757,9 @@ function extractMajorNormalFlowBands(layout) {
       tags: [tag],
       sourceIndexes: [index],
       sourceKeys: sourceKey ? [sourceKey] : [],
+      montebyNodeIds: typeof landmark?.montebyNodeId === 'string' && landmark.montebyNodeId
+        ? [landmark.montebyNodeId]
+        : [],
       backgroundColor: String(landmark?.backgroundColor || ''),
       paintedBackground: landmark?.paintedBackground === true,
       hasFullBandMedia,
@@ -2923,6 +2926,7 @@ function mergeGeometryBands(left, right) {
     tags: [...new Set([...left.tags, ...right.tags])].sort(),
     sourceIndexes: [...left.sourceIndexes, ...right.sourceIndexes].sort((first, second) => first - second),
     sourceKeys: [...new Set([...(left.sourceKeys || []), ...(right.sourceKeys || [])])],
+    montebyNodeIds: [...new Set([...(left.montebyNodeIds || []), ...(right.montebyNodeIds || [])])],
     backgroundColor: left.backgroundColor || right.backgroundColor || '',
     paintedBackground: left.paintedBackground === true || right.paintedBackground === true,
     hasFullBandMedia: left.hasFullBandMedia === true || right.hasFullBandMedia === true,
@@ -2934,6 +2938,7 @@ function normalizeGeometryBands(bands, scrollHeight, viewportWidth, referencePag
     index,
     tags: band.tags,
     sourceIndexes: band.sourceIndexes,
+    montebyNodeIds: Array.isArray(band.montebyNodeIds) ? band.montebyNodeIds : [],
     top: band.top / scrollHeight,
     height: band.height / scrollHeight,
     width: band.width / viewportWidth,
@@ -3165,6 +3170,7 @@ function geometryBandSummary(band, index) {
   return {
     index,
     tags: band.tags,
+    montebyNodeIds: Array.isArray(band.montebyNodeIds) ? band.montebyNodeIds : [],
     top: roundGeometry(band.top, 4),
     height: roundGeometry(band.height, 4),
     width: roundGeometry(band.width, 4),

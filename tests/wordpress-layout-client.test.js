@@ -51,6 +51,7 @@ function pageSnapshot(site, pageId, data) {
     artifact: 'monteby-page-snapshot',
     site,
     pageId,
+    publicPageUrl: `${site}/page-${pageId}/`,
     capturedAt: '2026-07-26T08:00:00.000Z',
     data,
   };
@@ -73,6 +74,12 @@ function saveReport(site, pageId, layoutSha256 = LAYOUT_SHA256) {
     },
     scope: { site, pageId },
     layoutSha256,
+    evidence: {
+      site,
+      pageId,
+      publicPageUrl: `${site}/page-${pageId}/`,
+      layoutSha256,
+    },
   };
 }
 
@@ -199,6 +206,8 @@ test('snapshot fetches contract before the page and atomically records both arti
       sendJson(response, 200, contract);
     } else if (request.url === '/wp-json/monteby/v1/pages/17/layout') {
       sendJson(response, 200, before);
+    } else if (request.url === '/wp-json/wp/v2/pages/17?context=edit&_fields=id%2Clink') {
+      sendJson(response, 200, { id: 17, link: `${server.site}/page-17/` });
     } else {
       sendJson(response, 404, { code: 'not_found' });
     }
@@ -220,6 +229,7 @@ test('snapshot fetches contract before the page and atomically records both arti
     [
       'GET /wp-json/monteby/v1/contract',
       'GET /wp-json/monteby/v1/pages/17/layout',
+      'GET /wp-json/wp/v2/pages/17?context=edit&_fields=id%2Clink',
     ]
   );
   assert.ok(requests.every((request) => request.authorization === AUTH));
@@ -231,9 +241,11 @@ test('snapshot fetches contract before the page and atomically records both arti
   assert.equal(savedSnapshot.artifact, 'monteby-page-snapshot');
   assert.equal(savedSnapshot.site, server.site);
   assert.equal(savedSnapshot.pageId, 17);
+  assert.equal(savedSnapshot.publicPageUrl, `${server.site}/page-17/`);
   assert.equal(Number.isFinite(Date.parse(savedSnapshot.capturedAt)), true);
   assert.deepEqual(savedSnapshot.data, before);
   assert.equal(execution.result.artifacts.snapshot, path.join(outDir, 'layout-before.json'));
+  assert.deepEqual(execution.result.evidence, { publicPageUrl: `${server.site}/page-17/` });
   assert.equal(execution.result.nextAction.id, 'validate_candidate');
   assert.deepEqual(
     execution.result.nextAction.args.slice(0, 6),
@@ -245,6 +257,32 @@ test('snapshot fetches contract before the page and atomically records both arti
     false,
     'atomic writes leave no temporary artifacts'
   );
+  assert.deepEqual(server.errors, []);
+});
+
+test('non-retryable REST failures emit a terminal blocked action instead of looping', async (t) => {
+  const server = await startServer(t, (_request, response) => {
+    sendJson(response, 404, { code: 'rest_no_route' });
+  });
+  const outDir = tempDir(t);
+
+  const execution = await runClient([
+    'snapshot',
+    '--site', server.site,
+    '--page-id', '17',
+    '--out-dir', outDir,
+  ]);
+
+  assert.equal(execution.exitCode, 1);
+  assertEnvelope(execution.result, {
+    ok: false,
+    stage: 'snapshot',
+    code: 'REST_NOT_FOUND',
+  });
+  assert.equal(execution.result.nextAction.id, 'blocked_client_error');
+  assert.equal(execution.result.nextAction.tool, '');
+  assert.deepEqual(execution.result.nextAction.args, []);
+  assert.deepEqual(execution.result.nextAction.requires, ['EXPLICIT_ERROR_RESOLUTION']);
   assert.deepEqual(server.errors, []);
 });
 
@@ -507,8 +545,79 @@ test('save validates before PUT and preserves fresh presentation while overridin
     presentation: {
       ...freshPresentation,
       layout: 'canvas',
+      disableGlobalTemplates: true,
     },
   });
+  assert.deepEqual(server.errors, []);
+});
+
+test('save rejects an unknown presentation layout before making a request', async (t) => {
+  const directory = tempDir(t);
+  const layoutFile = path.join(directory, 'layout.json');
+  const snapshotFile = path.join(directory, 'snapshot.json');
+  writeJson(layoutFile, NODE_MAP);
+  writeJson(snapshotFile, pageSnapshot('https://site.example.test', 17, {
+    postModifiedGmt: '2026-07-26 08:00:00',
+  }));
+
+  const execution = await runClient([
+    'save',
+    '--site', 'https://site.example.test',
+    '--page-id', '17',
+    '--layout', layoutFile,
+    '--snapshot', snapshotFile,
+    '--expected-layout-sha256', LAYOUT_SHA256,
+    '--out', path.join(directory, 'save.json'),
+    '--presentation-layout', 'banana',
+  ]);
+
+  assert.equal(execution.exitCode, 1);
+  assertEnvelope(execution.result, { ok: false, stage: 'save', code: 'CLI_USAGE' });
+  assert.equal(execution.result.nextAction.id, 'blocked_client_usage');
+  assert.equal(execution.result.nextAction.tool, '');
+  assert.deepEqual(execution.result.nextAction.args, []);
+  assert.deepEqual(execution.result.nextAction.requires, ['VALID_CLIENT_ARGUMENTS']);
+});
+
+test('save blocks a presentation override when the live page exposes no presentation capability', async (t) => {
+  const directory = tempDir(t);
+  const layoutFile = path.join(directory, 'layout.json');
+  const snapshotFile = path.join(directory, 'snapshot.json');
+  writeJson(layoutFile, NODE_MAP);
+  const requests = [];
+  const server = await startServer(t, (request, response) => {
+    requests.push(`${request.method} ${request.url}`);
+    sendJson(response, 200, {
+      postModifiedGmt: 'v1',
+      nodeMap: NODE_MAP,
+    });
+  });
+  writeJson(snapshotFile, pageSnapshot(server.site, 17, {
+    postModifiedGmt: 'v1',
+    nodeMap: NODE_MAP,
+  }));
+
+  const execution = await runClient([
+    'save',
+    '--site', server.site,
+    '--page-id', '17',
+    '--layout', layoutFile,
+    '--snapshot', snapshotFile,
+    '--expected-layout-sha256', LAYOUT_SHA256,
+    '--out', path.join(directory, 'save.json'),
+    '--presentation-layout', 'canvas',
+  ]);
+
+  assert.equal(execution.exitCode, 1);
+  assertEnvelope(execution.result, {
+    ok: false,
+    stage: 'save',
+    code: 'PRESENTATION_CAPABILITY_MISSING',
+  });
+  assert.equal(execution.result.nextAction.id, 'blocked_client_error');
+  assert.equal(execution.result.nextAction.tool, '');
+  assert.deepEqual(execution.result.nextAction.args, []);
+  assert.deepEqual(requests, ['GET /wp-json/monteby/v1/pages/17/layout']);
   assert.deepEqual(server.errors, []);
 });
 
@@ -599,6 +708,7 @@ test('preview posts nodeMap and writes returned HTML atomically', async (t) => {
   assert.deepEqual(execution.result.evidence, {
     site: server.site,
     pageId: 17,
+    publicPageUrl: `${server.site}/page-17/`,
     layoutSha256: LAYOUT_SHA256,
     saveReport: saveReportFile,
   });
@@ -660,6 +770,41 @@ test('preview rejects mismatched save scope and layout digest before POST', asyn
     assert.deepEqual(JSON.parse(fs.readFileSync(reportOut, 'utf8')), execution.result);
   }
   assert.equal(requestCount, 0);
+  assert.deepEqual(server.errors, []);
+});
+
+test('preview rejects a 2xx JSON response without rendered HTML', async (t) => {
+  const directory = tempDir(t);
+  const layoutFile = path.join(directory, 'layout.json');
+  const previewFile = path.join(directory, 'preview.html');
+  const saveReportFile = path.join(directory, 'save-response.json');
+  const previewReportFile = path.join(directory, 'preview-response.json');
+  writeJson(layoutFile, NODE_MAP);
+  const server = await startServer(t, (_request, response) => {
+    sendJson(response, 200, { ok: true, previewId: 123 });
+  });
+  writeJson(saveReportFile, saveReport(server.site, 17));
+
+  const execution = await runClient([
+    'preview',
+    '--site', server.site,
+    '--layout', layoutFile,
+    '--save-report', saveReportFile,
+    '--out', previewFile,
+    '--report-out', previewReportFile,
+  ]);
+
+  assert.equal(execution.exitCode, 1);
+  assertEnvelope(execution.result, {
+    ok: false,
+    stage: 'preview',
+    code: 'PREVIEW_HTML_MISSING',
+  });
+  assert.equal(execution.result.nextAction.id, 'blocked_client_error');
+  assert.equal(execution.result.nextAction.tool, '');
+  assert.deepEqual(execution.result.nextAction.args, []);
+  assert.equal(fs.existsSync(previewFile), false);
+  assert.deepEqual(JSON.parse(fs.readFileSync(previewReportFile, 'utf8')), execution.result);
   assert.deepEqual(server.errors, []);
 });
 

@@ -1005,7 +1005,13 @@ test('strict unknown-family geometry rejects missing, extra, and reordered major
     scrollHeight: 5000,
     bands: [
       ...referenceBands,
-      { tag: 'section', top: 3200, height: 600, width: 1440 },
+      {
+        tag: 'section',
+        top: 3200,
+        height: 600,
+        width: 1440,
+        montebyNodeId: 'section-extra',
+      },
     ],
     mediaSource: 'https://cdn.example.test/candidate-hero.jpg',
   });
@@ -1014,6 +1020,10 @@ test('strict unknown-family geometry rejects missing, extra, and reordered major
   assert.equal(extraResult.status, 1, extraResult.stderr);
   const extraReport = JSON.parse(extraResult.stdout);
   assert.equal(extraReport.genericGeometry.stats.viewports[0].bands.extraCount, 1);
+  assert.deepEqual(
+    extraReport.genericGeometry.stats.viewports[0].bands.extra[0].montebyNodeIds,
+    ['section-extra']
+  );
   assert.match(extraReport.blockers.map((blocker) => blocker.code).join(' '), /generic_geometry_major_band_extra/);
 
   writeGenericGeometryLayout(fixture.candidateLayoutPath, {
@@ -2643,6 +2653,7 @@ function writeGenericGeometryLayout(file, options) {
     order: index,
     key: band.key || String(index),
     tag: band.tag,
+    ...(band.montebyNodeId ? { montebyNodeId: band.montebyNodeId } : {}),
     flowParticipation: band.flowParticipation || 'normal',
     backgroundColor: band.backgroundColor || '',
     paintedBackground: band.paintedBackground === true,

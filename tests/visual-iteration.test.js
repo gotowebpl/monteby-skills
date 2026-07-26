@@ -234,8 +234,11 @@ test('visual iteration names screenshot budget failures explicitly', () => {
   assert.equal(report.benchmark.comparison.ok, false);
   assert.equal(report.blockers[0].source, 'visual-diff');
   assert.match(report.blockers[0].code, /max_/);
-  assert.equal(report.nextAction.id, 'repair_candidate_from_queue');
-  assert.equal(report.nextAction.args.includes('--candidate-layout'), true);
+  assert.equal(report.nextAction.id, 'apply_layout_repair_queue');
+  assert.equal(path.basename(report.nextAction.tool), 'apply-layout-repair-queue.js');
+  assert.equal(report.nextAction.args.includes('--iteration-report'), true);
+  assert.equal(report.nextAction.args.includes('--out'), true);
+  assert.deepEqual(report.nextAction.requires, []);
   assert.ok(report.repairQueue.length > 0);
   assert.match(fs.readFileSync(path.join(directory, 'VISUAL-ITERATION.md'), 'utf8'), /Status: FAIL/);
 });

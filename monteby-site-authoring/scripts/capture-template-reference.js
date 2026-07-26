@@ -2742,6 +2742,9 @@ function captureRenderedLayout(
         order,
         tag: element.tagName.toLowerCase(),
         ...(layoutGroupKeyByElement.has(element) ? { key: layoutGroupKeyByElement.get(element) } : {}),
+        ...(typeof element.getAttribute === 'function' && element.getAttribute('data-monteby-node-id')
+          ? { montebyNodeId: String(element.getAttribute('data-monteby-node-id')) }
+          : {}),
         rect,
         firstViewportArea: viewportArea(rect),
         flowParticipation: elementFlowParticipation(element),

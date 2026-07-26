@@ -2531,6 +2531,7 @@ test('draft layout preserves seven ordered generic measured bands with responsiv
       const childAccent = childIndex === 0 ? 'Alpha' : 'Beta';
       measuredLayout.landmarks.push({
         tag: 'article',
+        groupKey: `${bandKey}.${childIndex + 1}`,
         rect: measuredRect(left, top, childWidth, 180),
         backgroundColor: 'rgb(255, 255, 255)',
         borderRadius: '20px',
@@ -5769,6 +5770,7 @@ test('generic measured drafting uses bounded primary font evidence and safe fall
     ['Unsafe Source', '@font-face { src: url(https://private.example/source.woff2) }', 'unknown'],
   ];
   measuredLayout.textBoxes = fontCases.map(([text, fontFamily, primaryFontEvidence], index) => ({
+    structureKey: `font-evidence.${index}`,
     tag: index < 3 ? 'h2' : 'p',
     text,
     rect: measuredRect(80, 120 + (index * 68), 520, 44),
@@ -5792,6 +5794,7 @@ test('generic measured drafting uses bounded primary font evidence and safe fall
     rect: measuredRect(80, 324, 240, 22),
   }];
   measuredLayout.textBoxes.push({
+    structureKey: 'font-evidence.legacy',
     tag: 'p',
     text: 'Legacy Evidence',
     rect: measuredRect(80, 596, 520, 44),
@@ -7632,6 +7635,7 @@ function genericMeasuredLayout({ label, width, height, bandHeights, bandTags, ba
 
   for (let index = 0; index < bandHeights.length; index += 1) {
     const bandHeight = bandHeights[index];
+    const bandKey = `band.${index}`;
     const columnCount = columns[index];
     const inset = label === 'mobile' ? 20 : label === 'tablet' ? 36 : 72;
     const gap = label === 'mobile' ? 18 : 24;
@@ -7652,6 +7656,7 @@ function genericMeasuredLayout({ label, width, height, bandHeights, bandTags, ba
       const tag = index === 1 && columnIndex === 0 ? 'h1' : columnIndex === 0 ? 'h2' : 'p';
       const textHeight = tag === 'p' ? Math.min(64, bandHeight * 0.16) : headingHeight;
       textBoxes.push({
+        structureKey: `${bandKey}.text.${columnIndex}`,
         tag,
         text: `Unknown Source Heading ${index + 1}.${columnIndex + 1}`,
         rect: measuredRect(left, textTop, columnWidth, textHeight),
@@ -7671,6 +7676,7 @@ function genericMeasuredLayout({ label, width, height, bandHeights, bandTags, ba
       const mediaTop = stacked ? textTop + headingHeight + 28 + mediaIndex * 190 : textTop;
       const mediaHeight = Math.max(150, Math.min(260, bandHeight * 0.42));
       mediaBoxes.push({
+        structureKey: `${bandKey}.media.${mediaIndex}`,
         tag: 'img',
         source: `https://captured.example.test/source-band-${index + 1}-media-${mediaIndex + 1}.jpg`,
         rect: measuredRect(mediaLeft, mediaTop, mediaWidth, mediaHeight),

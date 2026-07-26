@@ -3,6 +3,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { createHash } = require('crypto');
 const { spawnSync } = require('child_process');
 const { safeCapturedFontFamily } = require('./capture-template-reference');
 const {
@@ -62,6 +63,7 @@ const DEFAULT_REPLACEMENT_PROFILE = {
 const GENERIC_MEASURED_REFERENCE = 'generic-measured-reference';
 const MAX_GENERIC_REFERENCE_BANDS = 64;
 const MAX_GENERIC_REFERENCE_MEDIA_PER_BAND = 24;
+const MAX_GENERIC_REFERENCE_TEXT_PER_BAND = 256;
 const MAX_GENERIC_REFERENCE_MEDIA_DIMENSION = 8192;
 const MAX_GENERIC_REFERENCE_MEDIA_SCALE = 4;
 const GENERIC_GRID_TOKENS = {
@@ -2032,6 +2034,7 @@ function summarizeReferenceChildLandmarks(landmarks, band, textBoxes, mediaBoxes
     .map((landmark) => {
       const rect = normalizeReferenceRect(landmark?.rect);
       const tag = String(landmark?.tag || '').toLowerCase();
+      const structureKey = String(landmark?.groupKey || landmark?.key || '');
       if (!rect || !['article', 'aside'].includes(tag) || !referenceRectContains(band.rect, rect)) {
         return null;
       }
@@ -2039,6 +2042,8 @@ function summarizeReferenceChildLandmarks(landmarks, band, textBoxes, mediaBoxes
         return null;
       }
       return {
+        key: structureKey,
+        structureKey,
         tag,
         rect,
         backgroundColor: String(landmark.backgroundColor || ''),
@@ -2456,6 +2461,7 @@ function draftLayout(contractIndex, brief) {
     strictAuthoringContract: genericMeasuredReference,
     genericMeasuredGroupNodes: new Map(),
     genericMeasuredNodeKeys: new Map(),
+    genericMeasuredSurfaceNodes: new Map(),
     genericMeasuredOrderEntries: new Map(),
     genericMeasuredLoweredMediaKeys: new Set(),
     replacementProfile: genericMeasuredReference ? DEFAULT_REPLACEMENT_PROFILE : replacementProfileForBrief(brief),
@@ -2509,7 +2515,7 @@ function draftLayout(contractIndex, brief) {
     }
   }
 
-  const mechanicalPlan = buildMechanicalLayoutPlan(context.nodeMap, genericPlan);
+  const mechanicalPlan = buildMechanicalLayoutPlan(context, genericPlan);
 
   return {
     generatedAt: new Date().toISOString(),
@@ -2538,15 +2544,234 @@ function draftLayout(contractIndex, brief) {
   };
 }
 
-function buildMechanicalLayoutPlan(layout, genericPlan) {
+function nodeMapSha256(layout) {
+  return createHash('sha256').update(JSON.stringify(layout)).digest('hex');
+}
+
+function genericMeasuredSurfaceMapKey(kind, structureKey) {
+  return `${String(kind || '')}:${String(structureKey || '')}`;
+}
+
+function registerGenericMeasuredSurface(context, kind, structureKey, generatedNodeId, options = {}) {
+  const normalizedKind = String(kind || '');
+  const normalizedKey = String(structureKey || '');
+  const normalizedNodeId = String(generatedNodeId || '');
+  if (!normalizedKind || !normalizedKey || !normalizedNodeId || !context.nodeMap[normalizedNodeId]) {
+    return;
+  }
+
+  const mapKey = genericMeasuredSurfaceMapKey(normalizedKind, normalizedKey);
+  const candidate = {
+    kind: normalizedKind,
+    structureKey: normalizedKey,
+    generatedNodeId: normalizedNodeId,
+    ...(options.geometryNodeId && context.nodeMap[options.geometryNodeId]
+      ? { geometryNodeId: String(options.geometryNodeId) }
+      : {}),
+    strategy: String(options.strategy || 'direct'),
+    lowered: options.lowered === true,
+  };
+  const candidates = Array.isArray(context.genericMeasuredSurfaceNodes.get(mapKey))
+    ? context.genericMeasuredSurfaceNodes.get(mapKey)
+    : [];
+  const existingIndex = candidates.findIndex(
+    (entry) => entry.generatedNodeId === candidate.generatedNodeId
+  );
+  if (existingIndex >= 0) {
+    candidates[existingIndex] = candidate;
+  } else {
+    candidates.push(candidate);
+  }
+  context.genericMeasuredSurfaceNodes.set(mapKey, candidates);
+}
+
+function genericMeasuredCapturedSurfaces(measurement) {
+  const surfaces = [];
+  const seen = new Set();
+  const add = (kind, value) => {
+    const structureKey = String(
+      kind === 'group' || kind === 'child'
+        ? value?.structureKey || value?.key || ''
+        : value?.structureKey || ''
+    );
+    if (!structureKey) {
+      throw new Error(
+        `[generic_surface_key_missing] Captured ${kind} surface lacks a stable structureKey/key and cannot be bound mechanically.`
+      );
+    }
+    const mapKey = genericMeasuredSurfaceMapKey(kind, structureKey);
+    if (seen.has(mapKey)) {
+      return;
+    }
+    seen.add(mapKey);
+    surfaces.push({ kind, structureKey });
+  };
+  const walk = (current) => {
+    if (!current || typeof current !== 'object') {
+      return;
+    }
+    for (const text of Array.isArray(current.texts) ? current.texts : []) {
+      add('text', text);
+    }
+    for (const media of [
+      ...(Array.isArray(current.media) ? current.media : []),
+      ...(Array.isArray(current.overlayMedia) ? current.overlayMedia : []),
+    ]) {
+      add('media', media);
+    }
+    for (const group of Array.isArray(current.groups) ? current.groups : []) {
+      add('group', group);
+      walk(group);
+    }
+    for (const child of Array.isArray(current.children) ? current.children : []) {
+      add('child', child);
+      walk(child);
+    }
+  };
+  walk(measurement);
+  return surfaces;
+}
+
+function registerGenericMeasuredDescendantSurfaces(context, measurement, generatedNodeId, strategy) {
+  for (const surface of genericMeasuredCapturedSurfaces(measurement)) {
+    registerGenericMeasuredSurface(
+      context,
+      surface.kind,
+      surface.structureKey,
+      generatedNodeId,
+      {
+        strategy,
+        lowered: true,
+      }
+    );
+  }
+}
+
+function genericMeasuredCapturedSurfaceInventory(band) {
+  const inventory = new Map();
+  const measurements = Object.entries(
+    band?.viewportMeasurements && typeof band.viewportMeasurements === 'object'
+      ? band.viewportMeasurements
+      : {}
+  );
+  if (measurements.length === 0 && band?.desktop) {
+    measurements.push(['desktop', band.desktop]);
+  }
+
+  for (const [viewport, measurement] of measurements) {
+    for (const surface of genericMeasuredCapturedSurfaces(measurement)) {
+      const mapKey = genericMeasuredSurfaceMapKey(surface.kind, surface.structureKey);
+      const existing = inventory.get(mapKey) || {
+        kind: surface.kind,
+        structureKey: surface.structureKey,
+        viewports: [],
+      };
+      if (!existing.viewports.includes(viewport)) {
+        existing.viewports.push(viewport);
+      }
+      inventory.set(mapKey, existing);
+    }
+  }
+
+  return [...inventory.values()];
+}
+
+function genericMeasuredSurfaceParity(context, band) {
+  const captured = genericMeasuredCapturedSurfaceInventory(band);
+  const generatedSectionId = String(band.generatedSectionId || '');
+  const belongsToBand = (nodeId) => {
+    let currentId = String(nodeId || '');
+    const visited = new Set();
+    while (currentId && !visited.has(currentId)) {
+      if (currentId === generatedSectionId) {
+        return true;
+      }
+      visited.add(currentId);
+      currentId = String(context.nodeMap[currentId]?.parent || '');
+    }
+    return false;
+  };
+
+  const mappings = [];
+  const omitted = [];
+  for (const surface of captured) {
+    const mapKey = genericMeasuredSurfaceMapKey(surface.kind, surface.structureKey);
+    const candidates = (
+      Array.isArray(context.genericMeasuredSurfaceNodes.get(mapKey))
+        ? context.genericMeasuredSurfaceNodes.get(mapKey)
+        : []
+    ).filter((candidate) => (
+      context.nodeMap[candidate.generatedNodeId]
+      && belongsToBand(candidate.generatedNodeId)
+    ));
+    if (candidates.length !== 1) {
+      omitted.push({
+        ...surface,
+        reason: candidates.length === 0 ? 'mapping-missing' : 'mapping-conflict',
+      });
+      continue;
+    }
+    const [mapping] = candidates;
+    const stableNodeKey = String(
+      context.genericMeasuredNodeKeys.get(mapping.generatedNodeId) || ''
+    );
+    mappings.push({
+      kind: surface.kind,
+      structureKey: surface.structureKey,
+      viewports: surface.viewports,
+      generatedNodeId: mapping.generatedNodeId,
+      generatedComponent: String(context.nodeMap[mapping.generatedNodeId]?.type?.resolvedName || ''),
+      ...(mapping.geometryNodeId && context.nodeMap[mapping.geometryNodeId]
+        ? { geometryNodeId: mapping.geometryNodeId }
+        : {}),
+      ...(stableNodeKey ? { stableNodeKey } : {}),
+      strategy: mapping.strategy,
+      lowered: mapping.lowered === true
+        || (surface.kind === 'media'
+          && context.genericMeasuredLoweredMediaKeys.has(surface.structureKey)),
+    });
+  }
+
+  const counts = (items) => ({
+    text: items.filter((item) => item.kind === 'text').length,
+    media: items.filter((item) => item.kind === 'media').length,
+    group: items.filter((item) => item.kind === 'group').length,
+    child: items.filter((item) => item.kind === 'child').length,
+  });
+  const capturedCounts = counts(captured);
+  const authoredCounts = counts(mappings);
+  return {
+    mappings,
+    omitted,
+    parity: {
+      captured: capturedCounts,
+      authored: authoredCounts,
+      omitted: {
+        text: omitted.filter((item) => item.kind === 'text').map((item) => item.structureKey),
+        media: omitted.filter((item) => item.kind === 'media').map((item) => item.structureKey),
+        group: omitted.filter((item) => item.kind === 'group').map((item) => item.structureKey),
+        child: omitted.filter((item) => item.kind === 'child').map((item) => item.structureKey),
+      },
+      complete: Object.keys(capturedCounts).every(
+        (kind) => capturedCounts[kind] === authoredCounts[kind]
+      ),
+    },
+  };
+}
+
+function buildMechanicalLayoutPlan(context, genericPlan) {
+  const layout = context.nodeMap;
   const rootSectionIds = Array.isArray(layout?.ROOT?.nodes)
     ? layout.ROOT.nodes.filter((nodeId) => typeof nodeId === 'string' && nodeId)
     : [];
+  const sourceLayoutSha256 = nodeMapSha256(layout);
   if (!genericPlan) {
     return {
       schemaVersion: 1,
       artifact: 'monteby-layout-plan',
       mode: 'specialized-or-generated',
+      sourceLayoutSha256,
+      sourceLayoutDigestFormat: 'sha256:json-stringify-node-map',
       rootSectionIds,
       completion: {
         draftedRootSections: rootSectionIds.length,
@@ -2554,18 +2779,24 @@ function buildMechanicalLayoutPlan(layout, genericPlan) {
         truncated: false,
         omittedBands: [],
         omittedMedia: [],
+        omittedText: [],
       },
     };
   }
 
   const viewportLabels = genericPlan.viewports.map((viewport) => viewport.label);
+  const parityByBand = new Map();
   const bands = genericPlan.bands.map((band) => {
     const generatedSectionId = String(band.generatedSectionId || rootSectionIds[band.index] || '');
+    const surfaceEvidence = genericMeasuredSurfaceParity(context, band);
+    parityByBand.set(band.index, surfaceEvidence);
     return {
       order: band.index,
       sourceKey: String(band.sourceKey || ''),
       tag: String(band.tag || 'section'),
       generatedSectionId: generatedSectionId || null,
+      surfaceMappings: surfaceEvidence.mappings,
+      surfaceParity: surfaceEvidence.parity,
       viewports: Object.fromEntries(viewportLabels.map((label) => ([
         label,
         mechanicalBandViewportMeasurement(band.viewportMeasurements?.[label]),
@@ -2578,15 +2809,45 @@ function buildMechanicalLayoutPlan(layout, genericPlan) {
   const allBandsMapped = bands.length === rootSectionIds.length
     && mappedSectionIds.length === bands.length
     && new Set(mappedSectionIds).size === bands.length;
+  const allOmittedSurfaces = [...parityByBand.entries()].flatMap(([bandIndex, evidence]) => (
+    evidence.omitted.map((surface) => ({
+      bandIndex,
+      kind: surface.kind,
+      structureKey: surface.structureKey,
+      viewports: surface.viewports,
+      reason: surface.reason,
+    }))
+  ));
+  const capturedSurfaces = bands.reduce((totals, band) => ({
+    text: totals.text + Number(band.surfaceParity?.captured?.text || 0),
+    media: totals.media + Number(band.surfaceParity?.captured?.media || 0),
+    group: totals.group + Number(band.surfaceParity?.captured?.group || 0),
+    child: totals.child + Number(band.surfaceParity?.captured?.child || 0),
+  }), { text: 0, media: 0, group: 0, child: 0 });
+  const authoredSurfaces = bands.reduce((totals, band) => ({
+    text: totals.text + Number(band.surfaceParity?.authored?.text || 0),
+    media: totals.media + Number(band.surfaceParity?.authored?.media || 0),
+    group: totals.group + Number(band.surfaceParity?.authored?.group || 0),
+    child: totals.child + Number(band.surfaceParity?.authored?.child || 0),
+  }), { text: 0, media: 0, group: 0, child: 0 });
+  const omittedByKind = (kind) => allOmittedSurfaces
+    .filter((surface) => surface.kind === kind)
+    .map(({ bandIndex, structureKey, viewports }) => ({ bandIndex, structureKey, viewports }));
   const completion = {
     capturedBands: bands.length,
     draftedRootSections: rootSectionIds.length,
     allBandsMapped,
+    allSurfacesMapped: allOmittedSurfaces.length === 0,
     plannedBands: bands.length,
     emittedSections: rootSectionIds.length,
+    capturedSurfaces,
+    authoredSurfaces,
     truncated: false,
     omittedBands: [],
-    omittedMedia: [],
+    omittedMedia: omittedByKind('media'),
+    omittedText: omittedByKind('text'),
+    omittedGroups: omittedByKind('group'),
+    omittedChildren: omittedByKind('child'),
   };
   if (!allBandsMapped) {
     throw new Error(
@@ -2598,6 +2859,8 @@ function buildMechanicalLayoutPlan(layout, genericPlan) {
     schemaVersion: 1,
     artifact: 'monteby-layout-plan',
     mode: GENERIC_MEASURED_REFERENCE,
+    sourceLayoutSha256,
+    sourceLayoutDigestFormat: 'sha256:json-stringify-node-map',
     canonicalViewport: { ...genericPlan.canonicalViewport },
     viewports: genericPlan.viewports.map((viewport) => ({ ...viewport })),
     rootSectionIds,
@@ -2638,23 +2901,66 @@ function genericMeasurementEvidenceCounts(measurement) {
     return { textCount: 0, mediaCount: 0, groupCount: 0 };
   }
 
-  let textCount = Array.isArray(measurement.texts) ? measurement.texts.length : 0;
-  let mediaCount = Math.max(
-    Array.isArray(measurement.media) ? measurement.media.length : 0,
+  const seen = new Set();
+  const counts = { textCount: 0, mediaCount: 0, groupCount: 0 };
+  const identity = (kind, value) => {
+    const structureKey = String(
+      kind === 'group' || kind === 'child'
+        ? value?.structureKey || value?.key || ''
+        : value?.structureKey || ''
+    );
+    if (structureKey) {
+      return `${kind}:key:${structureKey}`;
+    }
+    const rect = value?.rect || {};
+    return `${kind}:evidence:${JSON.stringify([
+      String(value?.tag || ''),
+      String(value?.text || ''),
+      String(value?.source || value?.backgroundImage || ''),
+      finitePlanNumber(rect.left),
+      finitePlanNumber(rect.top),
+      finitePlanNumber(rect.width),
+      finitePlanNumber(rect.height),
+    ])}`;
+  };
+  const add = (kind, value) => {
+    const key = identity(kind, value);
+    if (seen.has(key)) {
+      return;
+    }
+    seen.add(key);
+    if (kind === 'text') counts.textCount += 1;
+    if (kind === 'media') counts.mediaCount += 1;
+    if (kind === 'group' || kind === 'child') counts.groupCount += 1;
+  };
+  const walk = (current) => {
+    if (!current || typeof current !== 'object') {
+      return;
+    }
+    for (const text of Array.isArray(current.texts) ? current.texts : []) {
+      add('text', text);
+    }
+    for (const media of [
+      ...(Array.isArray(current.media) ? current.media : []),
+      ...(Array.isArray(current.overlayMedia) ? current.overlayMedia : []),
+    ]) {
+      add('media', media);
+    }
+    for (const group of Array.isArray(current.groups) ? current.groups : []) {
+      add('group', group);
+      walk(group);
+    }
+    for (const child of Array.isArray(current.children) ? current.children : []) {
+      add('child', child);
+      walk(child);
+    }
+  };
+  walk(measurement);
+  counts.mediaCount = Math.max(
+    counts.mediaCount,
     Math.max(0, finitePlanNumber(measurement.mediaCount) || 0)
   );
-  let groupCount = 0;
-  for (const child of [
-    ...(Array.isArray(measurement.groups) ? measurement.groups : []),
-    ...(Array.isArray(measurement.children) ? measurement.children : []),
-  ]) {
-    const childCounts = genericMeasurementEvidenceCounts(child);
-    groupCount += 1 + childCounts.groupCount;
-    textCount += childCounts.textCount;
-    mediaCount += childCounts.mediaCount;
-  }
-
-  return { textCount, mediaCount, groupCount };
+  return counts;
 }
 
 function genericMeasurementMediaSurfaceCount(measurement) {
@@ -2730,6 +3036,12 @@ function buildGenericMeasuredSectionPlan(brief) {
       if (mediaCount > MAX_GENERIC_REFERENCE_MEDIA_PER_BAND) {
         throw new Error(
           `[generic_reference_media_limit_exceeded] Captured reference band ${band.index + 1}${band.sourceKey ? ` (${band.sourceKey})` : ''} contains ${mediaCount} meaningful media surfaces at ${viewport}; the bounded generic path supports at most ${MAX_GENERIC_REFERENCE_MEDIA_PER_BAND} per band.`
+        );
+      }
+      const textCount = genericMeasurementEvidenceCounts(measurement).textCount;
+      if (textCount > MAX_GENERIC_REFERENCE_TEXT_PER_BAND) {
+        throw new Error(
+          `[generic_reference_text_limit_exceeded] Captured reference band ${band.index + 1}${band.sourceKey ? ` (${band.sourceKey})` : ''} contains ${textCount} text surfaces at ${viewport}; the bounded generic path supports at most ${MAX_GENERIC_REFERENCE_TEXT_PER_BAND} per band.`
         );
       }
     }
@@ -2818,7 +3130,7 @@ function genericPrimaryHeadingIndex(bands) {
 
 function genericMeasurementMedia(measurement) {
   return Array.isArray(measurement?.media)
-    ? measurement.media.slice(0, MAX_GENERIC_REFERENCE_MEDIA_PER_BAND)
+    ? measurement.media
     : [];
 }
 
@@ -2912,15 +3224,14 @@ function genericMeasuredMediaBundles(band, plan, backgroundBundle = genericFullB
   const desktopMedia = genericMeasurementMedia(band.desktop)
     .filter((media) => !sameGenericMeasuredMedia(media, backgroundBundle?.desktop));
   if (desktopMedia.length === 0) {
-    const legacyCount = Math.max(0, Math.min(
-      MAX_GENERIC_REFERENCE_MEDIA_PER_BAND,
+    const legacyCount = Math.max(
+      0,
       Number(band?.desktop?.mediaCount || 0) - (backgroundBundle ? 1 : 0)
-    ));
+    );
     return Array.from({ length: legacyCount }, () => ({ desktop: null, tablet: null, mobile: null }));
   }
 
   return desktopMedia
-    .slice(0, MAX_GENERIC_REFERENCE_MEDIA_PER_BAND)
     .map((desktop, index) => ({
       desktop,
       tablet: matchedGenericMeasuredMedia(desktop, index, band.tablet),
@@ -3764,6 +4075,18 @@ function addGenericMeasuredSections(context, plan, sectionName, containerName) {
       } : {}),
     });
     band.generatedSectionId = section.id;
+    if (heroBackgroundBundle?.desktop?.structureKey) {
+      registerGenericMeasuredSurface(
+        context,
+        'media',
+        heroBackgroundBundle.desktop.structureKey,
+        section.id,
+        {
+          strategy: 'section-background',
+          lowered: true,
+        }
+      );
+    }
     if (topDividerProps && edgeDividerComponent) {
       createLeafNode(context, edgeDividerComponent.name, section.id, topDividerProps);
     }
@@ -3773,9 +4096,20 @@ function addGenericMeasuredSections(context, plan, sectionName, containerName) {
         throw new Error('Generic measured reference contract gaps:\n- [generic_semantic_navbar_widget_missing] Navbar is required to reproduce measured navigation without raw HTML.');
       }
       const navigationHost = createCanvasNode(context, containerName, section.id, navigationProps.hostProps);
-      createLeafNode(context, navbarComponent.name, navigationHost.id, navigationProps.navbarProps);
+      const navbarNode = createLeafNode(
+        context,
+        navbarComponent.name,
+        navigationHost.id,
+        navigationProps.navbarProps
+      );
       const navigationKey = String(plan.navigation?.desktop?.key || '');
       if (navigationKey && navigationKey === String(desktop?.key || '')) {
+        registerGenericMeasuredDescendantSurfaces(
+          context,
+          desktop,
+          navbarNode.id,
+          'semantic-navbar'
+        );
         if (bottomDividerProps && edgeDividerComponent) {
           createLeafNode(context, edgeDividerComponent.name, section.id, bottomDividerProps);
         }
@@ -3927,6 +4261,16 @@ function addGenericMeasuredMediaSurfaces(context, fallbackParentId, band, plan, 
         context.nodeMap[hostNodeId].props,
         filterAllowedProps(context, containerName, mediaBackgroundProps)
       );
+      registerGenericMeasuredSurface(
+        context,
+        'media',
+        desktop?.structureKey,
+        hostNodeId,
+        {
+          strategy: 'group-background',
+          lowered: true,
+        }
+      );
       renderedMedia += 1;
       continue;
     }
@@ -3987,6 +4331,13 @@ function addGenericMeasuredMediaSurfaces(context, fallbackParentId, band, plan, 
     if (desktop?.structureKey) {
       const stackingIndex = safeReferenceStackingIndex(desktop.stackingIndex);
       context.genericMeasuredNodeKeys.set(mediaNode.id, desktop.structureKey);
+      registerGenericMeasuredSurface(
+        context,
+        'media',
+        desktop.structureKey,
+        mediaNode.id,
+        { strategy: 'container-background' }
+      );
       orderGenericMeasuredChildren(
         context,
         parentId,
@@ -4779,6 +5130,17 @@ function addGenericMeasuredBandItems(context, parentId, band, plan, fallbackText
       ...backgroundProps(context, containerName, surfaceColor),
       ...gradientProps,
     });
+    registerGenericMeasuredSurface(
+      context,
+      'child',
+      desktop?.structureKey || desktop?.key,
+      child.id,
+      { strategy: 'child-container' }
+    );
+    const childStructureKey = String(desktop?.structureKey || desktop?.key || '');
+    if (childStructureKey) {
+      context.genericMeasuredNodeKeys.set(child.id, childStructureKey);
+    }
     const childTextColor = genericTextColor(gradientProps.gradientColor1 || surfaceColor, fallbackTextColor);
     created += 1 + addGenericMeasuredTextItems(
       context,
@@ -5004,6 +5366,13 @@ function addGenericMeasuredGroups(context, parentId, desktopParent, tabletParent
     if (desktop.key) {
       context.genericMeasuredGroupNodes.set(desktop.key, group.id);
       context.genericMeasuredNodeKeys.set(group.id, desktop.key);
+      registerGenericMeasuredSurface(
+        context,
+        'group',
+        desktop.key,
+        group.id,
+        { strategy: 'group-container' }
+      );
     }
     if (Array.isArray(orderEntries)) {
       orderEntries.push({
@@ -5060,10 +5429,16 @@ function addGenericMeasuredGroups(context, parentId, desktopParent, tabletParent
         contentIndex,
         index
       );
-      createLeafNode(context, formComponent.name, contentParentId, {
+      const formNode = createLeafNode(context, formComponent.name, contentParentId, {
         ...(desktop.props || {}),
         submitLabel,
       });
+      registerGenericMeasuredDescendantSurfaces(
+        context,
+        desktop,
+        formNode.id,
+        'semantic-form'
+      );
       created += 1;
       continue;
     }
@@ -5220,7 +5595,7 @@ function addGenericMeasuredGroups(context, parentId, desktopParent, tabletParent
           } : {}),
         };
       });
-      createLeafNode(context, tabsComponent.name, contentParentId, {
+      const tabsNode = createLeafNode(context, tabsComponent.name, contentParentId, {
         ...(desktop.props || {}),
         ...responsiveTabProps,
         panelStackAt: tabletRequiresPanelStack ? 'tablet' : undefined,
@@ -5229,6 +5604,12 @@ function addGenericMeasuredGroups(context, parentId, desktopParent, tabletParent
         defaultActiveTab: Math.max(0, Math.min(activeIndex, authoredTabs.length - 1)),
         tabs: authoredTabs,
       });
+      registerGenericMeasuredDescendantSurfaces(
+        context,
+        desktop,
+        tabsNode.id,
+        'semantic-tabs'
+      );
       created += 1;
       continue;
     }
@@ -5313,8 +5694,13 @@ function addGenericMeasuredOverlayItems(context, parentId, desktopParent, tablet
       || referenceBoxTop(left.value) - referenceBoxTop(right.value)
       || Number(left.value?.rect?.left || 0) - Number(right.value?.rect?.left || 0)
     ));
-  if (desktopItems.length === 0 || desktopItems.length > 4) {
+  if (desktopItems.length === 0) {
     return 0;
+  }
+  if (desktopItems.length > 4) {
+    throw new Error(
+      `[generic_overlay_surface_limit_exceeded] Captured measured surface ${String(desktopParent?.key || '(unkeyed)')} contains ${desktopItems.length} overlay items; the bounded overlay lowering path supports at most 4 and will not omit the remainder.`
+    );
   }
 
   const matchedItems = desktopItems.map((item) => {
@@ -5547,7 +5933,7 @@ function addGenericMeasuredOverlayItems(context, parentId, desktopParent, tablet
         ...genericMeasuredShadowProps(context, containerName, [desktop, tablet, mobile]),
         ...backgroundProps(context, containerName, shellColor),
       });
-      createCanvasNode(context, containerName, shell.id, {
+      const mediaNode = createCanvasNode(context, containerName, shell.id, {
         backgroundImage: mediaSource,
         backgroundSize: genericMeasuredMediaFit({ desktop, tablet, mobile }),
         ...genericMeasuredMediaPositionProps({ desktop, tablet, mobile }, plan),
@@ -5557,7 +5943,21 @@ function addGenericMeasuredOverlayItems(context, parentId, desktopParent, tablet
         minHeightMobile: plan.hasMobile ? `${Math.max(1, Math.round((mobileRect.height - mobileBorder * 2) * 100) / 100)}px` : undefined,
         borderRadius: scalePxLength(desktop.borderRadius, 0.5, '0px'),
       });
-      context.genericMeasuredLoweredMediaKeys.add(String(desktop.structureKey || ''));
+      const loweredMediaKey = String(desktop.structureKey || '');
+      context.genericMeasuredLoweredMediaKeys.add(loweredMediaKey);
+      if (loweredMediaKey) {
+        context.genericMeasuredNodeKeys.set(mediaNode.id, loweredMediaKey);
+        registerGenericMeasuredSurface(
+          context,
+          'media',
+          loweredMediaKey,
+          mediaNode.id,
+          {
+            strategy: 'lowered-overlay-media',
+            lowered: true,
+          }
+        );
+      }
       created += 2;
       continue;
     }
@@ -5597,6 +5997,20 @@ function addGenericMeasuredOverlayItems(context, parentId, desktopParent, tablet
       ...backgroundProps(context, containerName, surfaceColor),
       ...gradientProps,
     });
+    registerGenericMeasuredSurface(
+      context,
+      'group',
+      desktop?.structureKey || desktop?.key,
+      surface.id,
+      {
+        strategy: 'lowered-overlay-group',
+        lowered: true,
+      }
+    );
+    const overlayGroupKey = String(desktop?.structureKey || desktop?.key || '');
+    if (overlayGroupKey) {
+      context.genericMeasuredNodeKeys.set(surface.id, overlayGroupKey);
+    }
     const overlayTextColor = genericTextColor(gradientProps.gradientColor1 || surfaceColor, fallbackTextColor);
     const overlayOrderEntries = [];
     created += 1 + addGenericMeasuredGroups(
@@ -5728,7 +6142,7 @@ function genericMeasuredResponsiveDisplay(tablet, mobile, plan) {
 }
 
 function addGenericMeasuredTextItems(context, parentId, desktopMeasurement, tabletMeasurement, mobileMeasurement, plan, fallbackTextColor, containerName, contentIndex, orderEntries = null) {
-  const desktopTexts = Array.isArray(desktopMeasurement?.texts) ? desktopMeasurement.texts.slice(0, 32) : [];
+  const desktopTexts = Array.isArray(desktopMeasurement?.texts) ? desktopMeasurement.texts : [];
   let created = 0;
 
   for (let index = 0; index < desktopTexts.length; index += 1) {
@@ -5819,7 +6233,7 @@ function addGenericMeasuredTextItems(context, parentId, desktopMeasurement, tabl
     if (desktop?.structureKey) {
       context.genericMeasuredNodeKeys.set(wrapper.id, desktop.structureKey);
     }
-    addGenericMeasuredTextNode(
+    const textNode = addGenericMeasuredTextNode(
       context,
       wrapper.id,
       desktop,
@@ -5831,6 +6245,19 @@ function addGenericMeasuredTextItems(context, parentId, desktopMeasurement, tabl
       index,
       marginProps
     );
+    if (desktop?.structureKey && textNode?.id) {
+      context.genericMeasuredNodeKeys.set(textNode.id, desktop.structureKey);
+      registerGenericMeasuredSurface(
+        context,
+        'text',
+        desktop.structureKey,
+        textNode.id,
+        {
+          strategy: 'text-leaf',
+          geometryNodeId: wrapper.id,
+        }
+      );
+    }
     created += 2;
   }
 
@@ -5859,7 +6286,7 @@ function addGenericMeasuredTextNode(context, parentId, desktop, tablet, mobile, 
   };
 
   if (tag === 'a' || tag === 'button') {
-    addButton(context, parentId, text, '#', {
+    return addButton(context, parentId, text, '#', {
       ...props,
       paddingTop: '0px',
       paddingRight: '0px',
@@ -5868,7 +6295,6 @@ function addGenericMeasuredTextNode(context, parentId, desktop, tablet, mobile, 
       borderRadius: '0px',
       backgroundColor: 'transparent',
     });
-    return;
   }
   if (/^h[1-4]$/.test(tag)) {
     const multilineProps = genericMeasuredMultilineHeadingProps(
@@ -5883,15 +6309,13 @@ function addGenericMeasuredTextNode(context, parentId, desktop, tablet, mobile, 
       props
     );
     if (multilineProps) {
-      createLeafNode(context, multilineProps.componentName, parentId, multilineProps.props);
-      return;
+      return createLeafNode(context, multilineProps.componentName, parentId, multilineProps.props);
     }
     assertGenericMeasuredTextMarginContract(context, 'Heading', marginProps);
-    addHeading(context, parentId, text, tag, props);
-    return;
+    return addHeading(context, parentId, text, tag, props);
   }
   assertGenericMeasuredTextMarginContract(context, 'Text', marginProps);
-  addText(context, parentId, text, props);
+  return addText(context, parentId, text, props);
 }
 
 function genericMeasuredMultilineHeadingProps(context, desktop, tablet, mobile, plan, fallbackTextColor, contentIndex, textIndex, headingProps) {
@@ -13585,10 +14009,10 @@ function addHeading(context, parentId, text, tag, props = {}) {
   const component = findComponent(context.contractIndex, ['Heading']);
   if (!component) {
     context.warnings.push('Missing Heading component.');
-    return;
+    return null;
   }
 
-  createLeafNode(context, component.name, parentId, {
+  return createLeafNode(context, component.name, parentId, {
     text,
     content: text,
     children: text,
@@ -13601,10 +14025,10 @@ function addText(context, parentId, text, props = {}) {
   const component = findComponent(context.contractIndex, ['Text']);
   if (!component) {
     context.warnings.push('Missing Text component.');
-    return;
+    return null;
   }
 
-  createLeafNode(context, component.name, parentId, {
+  return createLeafNode(context, component.name, parentId, {
     text,
     content: text,
     children: text,
@@ -13615,11 +14039,11 @@ function addText(context, parentId, text, props = {}) {
 function addButton(context, parentId, label, url, props = {}) {
   const component = findComponent(context.contractIndex, ['ButtonBlock', 'Button']);
   if (!component || !label) {
-    return;
+    return null;
   }
   const style = context.styleProfile;
 
-  createLeafNode(context, component.name, parentId, {
+  return createLeafNode(context, component.name, parentId, {
     label,
     text: label,
     url,

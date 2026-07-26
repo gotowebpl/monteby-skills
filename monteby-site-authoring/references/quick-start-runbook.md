@@ -13,6 +13,11 @@ For an arg token exactly equal to `$NAME`, resolve `NAME` from `requires` and
 substitute the approved value directly, without shell expansion. An unresolved
 required token is a hard stop.
 
+An action with `id: "complete"`, empty `tool`, and empty `args` is terminal
+success. An action whose `id` starts with `blocked_`, or whose `tool` and `args`
+are both empty, is terminal stop: report its blockers/requirements and do not
+try to execute it.
+
 ## Inputs
 
 Resolve these before phase 1:
@@ -37,13 +42,13 @@ Require a current backup/rollback path before the first write.
 |---|---|---|---|---|---|---|
 | 0. Rights and target | Ownership/license evidence, site/page/public URL, HTML path, rollback owner | Recorded mode and rights decision | No authoring command | Source may be reused; target and rollback are exact | Unknown rights → stop and use external-reference mode. Unknown target/rollback → stop | `continue`, `blocked_source_rights`, or `blocked_target` |
 | 1. Discover exact live target | Phase 0, approved auth environment | `contract.json`; page-scoped discovery `layout-before.json`; snapshot report | `wordpress-layout-client.js snapshot` | Contract exposes components/layout persistence; snapshot has `artifact: "monteby-page-snapshot"` and this exact site/page | Missing contract or scope mismatch → stop; never substitute a policy file, fixture, remembered contract, or another page's snapshot | `continue` or `blocked_live_contract_unavailable` |
-| 2. Full measured iteration and plan | Live contract, owned HTML | Complete reference captures/layouts; `visual-iteration-report.json`; exact `files.layout`; exact `files.layoutPlan` | `run-visual-iteration.js --full-page` at all three viewports; runner internally invokes `draft-monteby-layout.js --plan-out` | Capture is complete; plan uses `generic-measured-reference`, maps every band, is untruncated, and omits nothing; report ends `diagnostic_passed` | Consume the report's blocker/queue; never redraft manually or relax evidence with a tolerance shortcut | `diagnostic_passed`, `blocked_incomplete_evidence`, `blocked_product_gap`, or `failed` |
-| 3. Bounded AUTHOR loop, only if emitted | Iteration report with non-empty `repairQueue` | Updated candidate plus rerun report | Apply only named `sectionId` edits; execute the emitted `run-visual-iteration.js` action | Queue gate is satisfied and the rerun reaches `diagnostic_passed` without regressing passing sections | Missing reusable capability → separate `product-gap` run; otherwise repair only reported sections and rerun the exact action | `diagnostic_passed`, `blocked_product_gap`, or `failed` |
+| 2. Full measured iteration and plan | Live contract, owned HTML | Complete reference captures/layouts; `visual-iteration-report.json`; exact `files.layout`; exact `files.layoutPlan` | `run-visual-iteration.js --full-page` at all three viewports; runner internally invokes `draft-monteby-layout.js --plan-out` | Capture is complete; plan uses `generic-measured-reference`, maps every band and captured surface, is untruncated, omits nothing, and its source/plan/candidate SHA-256 bindings verify; report ends `diagnostic_passed` | Consume the report's blocker/queue; never redraft manually or relax evidence with a tolerance shortcut | `diagnostic_passed`, `blocked_incomplete_evidence`, `blocked_product_gap`, or `failed` |
+| 3. Deterministic AUTHOR loop, only if emitted | Iteration report with non-empty `repairQueue` | Applier report; repaired candidate; input/output layout SHA-256; preserved-root subtree proofs; rerun report | Execute the emitted `apply-layout-repair-queue.js` action, then its emitted rerun action | The complete queue is applied atomically, unrelated roots are unchanged, and the exact repaired candidate reruns to `diagnostic_passed` | Identity ambiguity → `CONTENT_SCOPE_DECISION_REQUIRED`; collision, unsupported geometry, unknown repair, or reusable-capability gap → stop on the emitted blocker/action | `diagnostic_passed`, `CONTENT_SCOPE_DECISION_REQUIRED`, `blocked_product_gap`, or `failed` |
 | 4. Fresh canonical snapshot | Passing iteration report, its exact layout, approved auth environment | Fresh `contract.json`; page-scoped `layout-before.json`; snapshot report | Execute emitted `snapshot_canonical_page` action | Snapshot matches the exact site/page and its next action is `validate_candidate` | Scope/version evidence missing → stop; do not reuse discovery evidence from another page or run | `continue` or `blocked_live_contract_unavailable` |
 | 5. Live validation | Exact `files.layout` from phase 2/3 | `validate-response.json` containing `layoutSha256` | Resolve `MONTEBY_LAYOUT_PATH` in emitted `validate_candidate`; execute ordered argv | Server accepts that exact node map; `nextAction.id` is `save_validated_candidate` and carries the same hash | Repair from live errors, rerun the local path, and snapshot again; never save rejected or different JSON | `continue` or `failed` |
 | 6. Versioned save | Validated layout, matching fresh snapshot, validation hash | Required `save-response.json`, before/after version evidence | Execute emitted `save_validated_candidate` with `--snapshot`, `--expected-layout-sha256`, and `--out` | Save succeeds with snapshot `postModifiedGmt`; presentation is preserved/explicit; next action is `preview_saved_candidate` | `428`/`409` → execute `resnapshot_and_reconcile`, manually reconcile, revalidate; never auto-retry PUT | `continue`, `blocked_concurrent_edit`, or `failed` |
 | 7. PHP preview | Saved candidate and successful save report | `preview.html`; required `preview-response.json` | Execute emitted `preview_saved_candidate` with `--save-report` and `--report-out` | Preview is bound to the successful save; `nextAction.id` is `verify_canonical_page` | Return through repair/validation/save; preview cannot prove 1:1 | `continue` or `failed` |
-| 8. Canonical capture + comparison | Passing iteration report, successful preview report, confirmed saved public URL | Complete canonical screenshots/layouts/manifest at 1440, 834, 390; benchmark/diffs; canonical report | Resolve the emitted `verify_canonical_page` action, including `--preview-report`; execute ordered argv | `status: "DONE"`, `ok`, `fidelityPassed`, and `canonicalVerification` are true; direct review finds no mismatch | Consume blockers and section-addressed queue; make a bounded AUTHOR edit; then repeat validation, save, preview, and canonical verification through emitted actions | `canonical_verified_1_to_1`, `blocked_incomplete_evidence`, `blocked_product_gap`, or `failed` |
+| 8. Canonical capture + comparison | Passing iteration report, successful preview report, confirmed saved public URL | Complete canonical screenshots/layouts/manifest at 1440, 834, 390; benchmark/diffs; canonical report | Resolve the emitted `verify_canonical_page` action, including `--preview-report`; execute ordered argv | `status: "DONE"`, `ok`, `fidelityPassed`, and `canonicalVerification` are true; aggregate and every viewport diff are exactly zero | Consume blockers and the complete section-addressed queue; execute the emitted deterministic applier, then repeat validation, save, preview, and canonical verification through emitted actions | `canonical_verified_1_to_1`, `CONTENT_SCOPE_DECISION_REQUIRED`, `blocked_incomplete_evidence`, `blocked_product_gap`, or `failed` |
 
 ## Commands and gates
 
@@ -76,10 +81,11 @@ Require `$WORK/contract.json` and `$WORK/layout-before.json`. The snapshot shape
 
 Never reuse the envelope for another site or page.
 
-The discovery snapshot's `validate_candidate` action initially lacks
-`MONTEBY_LAYOUT_PATH`. Phase 2 exists solely to produce that required artifact.
-Do not substitute an older or hand-authored layout. Once the runner emits its
-fresh `snapshot_canonical_page` action, that newer action and snapshot govern the
+This read-only discovery snapshot is bootstrap input acquisition outside the
+mutation state machine. No candidate exists yet, so do not execute its
+`validate_candidate` action and do not substitute an older or hand-authored
+layout. Phase 2 starts the state machine. Once the runner emits its fresh
+`snapshot_canonical_page` action, that newer action and snapshot govern the
 canonical chain.
 
 ### 2 — Run the measured generic loop
@@ -115,9 +121,21 @@ Do not replace this route with:
 - hand-transcribed Craft JSON;
 - `--viewport-only`.
 
-When `repairQueue` is non-empty, AUTHOR is a bounded manual edit: change only the
-named `sectionId` values, preserve passing sections, and rerun the emitted action.
-It is not an automatic mutator and not permission to rewrite the page.
+When `repairQueue` is non-empty, execute the emitted
+`apply-layout-repair-queue.js` action exactly. It consumes the complete ordered
+queue without per-viewport or total truncation and writes the repaired candidate
+atomically. It recursively restores full planned subtrees, sets only
+contract-supported responsive Section geometry props, and removes an extra root
+only when a unique `montebyNodeId` and recursive subtree evidence mechanically
+prove duplication. It never uses benchmark `candidateIndex` as root identity and
+never merges or deletes ambiguous content.
+
+Require the applier's canonical `inputLayoutSha256`, `outputLayoutSha256`, and
+`preservedRootSections` before executing its emitted rerun action. A restore ID
+collision, unrelated-root SHA change, unsupported geometry prop, or unknown
+repair code is hard failure. Unproven extra identity stops with
+`CONTENT_SCOPE_DECISION_REQUIRED` / `EXTRA_BAND_IDENTITY_UNPROVEN`. No separate
+queue-applied gate exists.
 
 ### 3 — Consume the runner's exact plan and layout
 
@@ -126,9 +144,20 @@ For generic measured mode require:
 - `artifact: "monteby-layout-plan"`;
 - `mode: "generic-measured-reference"`;
 - `completion.allBandsMapped: true`;
+- `completion.allSurfacesMapped: true`;
 - `completion.truncated: false`;
 - `capturedBands === draftedRootSections` (equivalently planned/emitted counts);
-- `omittedBands` and `omittedMedia` are empty.
+- `omittedBands` and `omittedMedia` are empty;
+- `omittedText`, `omittedGroups`, and `omittedChildren` are empty;
+- `artifactBindings.layoutPlanSha256`,
+  `artifactBindings.candidateLayoutSha256`, and
+  `artifactBindings.plannedSourceLayoutSha256` are present and verify the exact
+  plan, candidate node map, and `plan.sourceLayout`;
+- `artifactBindings.sourceContractSha256`, `contractSha256`,
+  `referenceManifestSha256`, and `targetManifestSha256` verify the exact
+  contract and capture inputs used by that passing candidate;
+- `artifactBindings.rootOrderMatches` and
+  `artifactBindings.surfaceMappingsResolve` are true.
 
 Read the paths from `files.layoutPlan` and `files.layout` in the passing iteration
 report. Those are the exact artifacts the runner audited and benchmarked. Do not
@@ -180,9 +209,10 @@ Resolve `VALIDATION_LAYOUT_SHA256` directly from the validate report's
 `layoutSha256` without shell expansion or recomputation. The report's emitted argv
 remains authoritative.
 
-Preserve presentation by default. A deliberate shell change may use only a value
-from `contract.layoutPersistence.presentation` through
-`--presentation-layout`; presentation belongs to this same versioned save.
+Preserve presentation by default. Change it only when the user explicitly
+supplied an approved value from `contract.layoutPersistence.presentation`;
+pass that value as one direct `--presentation-layout` argv token. Presentation
+belongs to this same versioned save.
 
 On `428`/`409`, execute `resnapshot_and_reconcile`. Reconcile remote changes,
 revalidate, and wait for a newly emitted save action. Never auto-retry PUT.
@@ -218,9 +248,13 @@ This wrapper captures the saved WordPress/PHP page at 1440, 834, and 390 pixels
 and runs the final strict benchmark. It is the only site-authoring script allowed
 to emit `status: "DONE"`.
 
-Inspect its contact sheet. A green JSON audit cannot override a visible mismatch.
-On failure, consume its blockers, bounded `repairQueue`, and emitted action; do not
-run capture or benchmark ad hoc.
+The contact sheet is retained as audit evidence, not as a subjective completion
+gate. `DONE` requires the machine report to prove zero aggregate and
+per-viewport diff plus every structural, interaction, media, scope, and hash
+gate. On failure, consume all blockers, the complete `repairQueue`, and the
+emitted action; do not run capture or benchmark ad hoc. Aggregate visual-budget
+summary blockers may be deferred while actionable repair items exist; all
+non-summary blockers remain hard and the exact rerun recomputes the aggregate.
 
 ## Content and forms
 

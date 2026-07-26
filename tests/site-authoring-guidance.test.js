@@ -36,6 +36,9 @@ test('site-authoring skill is a compact one-mode router with fixed verdicts', ()
 
   assert.match(skill, /execute only the `nextAction`/);
   assert.match(skill, /references\/mechanical-workflow-protocol\.md/);
+  assert.match(skill, /For `live-page-edit` and `owned-html-reconstruction`/);
+  assert.match(skill, /read-only\s+contract bootstrap happens before the mutation state machine/);
+  assert.match(skill, /other four modes[\s\S]*do not use the page-mutation state machine/);
   assert.match(skill, /`diagnostic_passed`: local\/static iteration passed; no canonical claim/);
   assert.match(skill, /`canonical_verified_1_to_1`/);
   assert.match(skill, /complete full-page comparison at 1440, 834, and 390 pixels/);
@@ -69,7 +72,8 @@ test('site-authoring keeps live contract, REST concurrency, and presentation can
   assert.match(skill, /POST \/wp-json\/monteby\/v1\/preview/);
   assert.match(skill, /fresh `expectedModifiedGmt`/);
   assert.match(skill, /A save returns `428` or `409`/);
-  assert.match(skill, /Send presentation in the same versioned layout PUT/);
+  assert.match(skill, /send presentation\s+in the same versioned layout PUT/i);
+  assert.match(skill, /live contract advertises presentation persistence/);
   assert.match(skill, /Never call the legacy page-settings route/);
   assert.match(skill, /never send Custom CSS\/JS\/SEO through this API/);
   assert.match(skill, /`full-width` for edge-to-edge page bands/);
@@ -78,15 +82,25 @@ test('site-authoring keeps live contract, REST concurrency, and presentation can
 
 test('owned HTML route uses the measured runner, deterministic plan, and canonical PHP gate', () => {
   const skill = read(skillPath);
+  const protocol = read(path.join(references, 'mechanical-workflow-protocol.md'));
 
   assert.match(skill, /scripts\/run-visual-iteration\.js/);
   assert.match(skill, /generic measured path in\s+`scripts\/draft-monteby-layout\.js`/);
   assert.match(skill, /mechanical plan written with\s+`--plan-out`/);
+  assert.match(skill, /`allSurfacesMapped`/);
+  assert.match(skill, /plan\/layout\/contract\/manifest SHA-256 bindings/);
+  assert.match(skill, /scripts\/apply-layout-repair-queue\.js/);
+  assert.match(skill, /never translate the\s+queue into a manual edit/);
   assert.match(skill, /runner invokes the generic measured path/);
-  assert.match(skill, /do\s+not rerun the drafter after a passing runner/);
+  assert.match(skill, /[Dd]o\s+not rerun the drafter after a passing runner/);
   assert.match(skill, /Do not replace this path with a browser snippet, a hand-written `build\.mjs`/);
   assert.match(skill, /runner's `diagnostic_passed` remains non-canonical/);
   assert.match(skill, /saved canonical WordPress\/PHP page/);
+  assert.match(skill, /Never select these while a page-reproduction report chain is active/);
+  assert.match(protocol, /at\s+most 64 normal-flow bands, 24 meaningful media surfaces per band, 256 text\s+surfaces per band, and 3200 CSS pixels per band/);
+  assert.match(protocol, /never samples or truncates the reference/);
+  assert.match(protocol, /both contract files, and both manifests/);
+  assert.match(protocol, /zero mismatched pixels, zero aggregate percent/);
   assert.doesNotMatch(skill, /extract-reference-spec|spec-to-layout/);
 });
 

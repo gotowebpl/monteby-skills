@@ -332,7 +332,13 @@ function renderSection(nodeMap, nodeId, props) {
   ].filter(Boolean);
   const children = `<div style="${innerStyles.join(';')}">${renderChildren(nodeMap, nodeId)}</div>`;
 
-  return renderElement(tag, outerProps, children, '', true);
+  return renderElement(
+    tag,
+    outerProps,
+    children,
+    ` data-monteby-node-id="${escapeAttr(nodeId)}"`,
+    true
+  );
 }
 
 function renderButton(props) {
@@ -386,7 +392,7 @@ function renderDivider(props) {
 
 function renderMultilineHeading(props) {
   const tag = ['h1', 'h2', 'h3'].includes(props.tag) ? props.tag : 'h2';
-  const lines = Array.isArray(props.lines) ? props.lines.slice(0, 12) : [];
+  const lines = Array.isArray(props.lines) ? props.lines : [];
   const fallbackColor = cssColorValue(props.textColor || props.color) || '#1f1d1b';
   const content = lines.map((rawLine) => {
     const line = rawLine && typeof rawLine === 'object' && !Array.isArray(rawLine) ? rawLine : {};

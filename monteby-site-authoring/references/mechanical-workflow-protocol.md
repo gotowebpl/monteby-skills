@@ -68,15 +68,15 @@ Every artifact is JSON unless its name says otherwise.
 | `contract.json` | site contract endpoint or supplied fixture | exact components, `aiProps`, controls, allowed parents, defaults |
 | `benchmark-start-report.json` | `start-visual-benchmark.js` | source classification and complete capture paths |
 | `reference-manifest.json` | `capture-template-reference.js` | all canonical viewports and complete layout evidence |
-| `layout-plan.json` | `draft-monteby-layout.js --plan-out` | every measured band, stable generated section ID, no truncation |
+| `layout-plan.json` | `draft-monteby-layout.js --plan-out` | every measured band and text/media/group/child surface, stable generated IDs, source node-map SHA-256, no truncation |
 | `layout-draft.json` | `draft-monteby-layout.js` | contract-valid generated node map |
 | `layout.json` | iteration runner | current candidate under repair |
-| `visual-iteration-report.json` | `run-visual-iteration.js` | blockers, section-addressed repair queue, exactly one next action |
+| `visual-iteration-report.json` | `run-visual-iteration.js` | complete repair queue, exactly one next action, SHA-256 bindings for plan, candidate, both contract files, and both manifests |
 | `layout-before.json` | `wordpress-layout-client.js snapshot` | scoped site/page envelope, node map, presentation, and `postModifiedGmt` |
 | validation report | `wordpress-layout-client.js validate` | server accepted the exact candidate SHA-256 |
 | save report | `wordpress-layout-client.js save` | scoped site/page, same SHA-256, conflict check, successful save |
 | PHP preview + report | `wordpress-layout-client.js preview` | scoped `PREVIEW_OK`, same save report and SHA-256 |
-| final screenshots/diffs | capture and benchmark scripts | all canonical viewports after the canonical save |
+| final screenshots/diffs | capture and benchmark scripts | all canonical viewports after the canonical save; zero aggregate and per-viewport mismatch |
 
 An artifact is not optional because a later step appears possible without it.
 Missing, malformed, or incomplete artifacts are blockers.
@@ -130,7 +130,8 @@ normal-flow band in source order and must report:
   "completion": {
     "truncated": false,
     "omittedBands": [],
-    "omittedMedia": []
+    "omittedMedia": [],
+    "omittedText": []
   }
 }
 ```
@@ -138,10 +139,18 @@ normal-flow band in source order and must report:
 Any truncation or omission is a hard failure. A long page is not permission to
 drop sections, media, text, repeated items, or responsive measurements.
 
+The generic path is complete only inside its declared resource envelope: at
+most 64 normal-flow bands, 24 meaningful media surfaces per band, 256 text
+surfaces per band, and 3200 CSS pixels per band at any captured viewport.
+Crossing a bound stops before layout/plan publication with a stable error; it
+never samples or truncates the reference.
+
 ### AUTHOR
 
-Use the generated draft for the first pass. On later passes edit only section
-IDs named by `repairQueue`; preserve unrelated passing sections.
+Use the generated draft for the first pass. On later passes execute the emitted
+`apply-layout-repair-queue.js` action exactly. The applier may change only root
+sections named by the complete, ordered `repairQueue`; it cryptographically
+proves that every unrelated root subtree is unchanged.
 
 Allowed values come from `aiProps`, typed controls, and allowed-parent rules in
 the contract. Unknown components, props, enum values, invalid repeater shapes,
@@ -176,25 +185,37 @@ On failure, consume `repairQueue` in order. Each item identifies evidence and,
 when available, `sectionId`. Do not rewrite the entire layout when a mapped
 section is named.
 
-For an `AUTHOR` action, `REPAIR_QUEUE_APPLIED` is a hard gate, not a shell
-variable. Apply the queue before running the action:
+The queue is never truncated per viewport or in total. The deterministic applier
+implements these operations:
 
-1. `restore_measured_band`: restore the plan's `generatedSectionId` in
-   `ROOT.nodes` at its recorded `order`.
-2. `remove_or_merge_extra_band`: remove only the extra root band, or merge its
-   content into the mapped planned section when removing it would lose owned
-   content.
+1. `restore_measured_band`: recursively copy the complete planned subtree from
+   `plan.sourceLayout` and insert its root in `ROOT.nodes` at the plan's recorded
+   `order`. A source node ID that collides with a node reachable from an unrelated
+   candidate root is a hard `RESTORE_NODE_ID_COLLISION` blocker.
+2. `remove_or_merge_extra_band`: despite the legacy repair-code name, removal is
+   allowed only when a unique extra `montebyNodeId` maps to one candidate root and
+   recursive subtree evidence mechanically proves it is a duplicate. The
+   benchmark's filtered/merged `candidateIndex` is never root identity. The
+   applier never guesses, merges content, or deletes an ambiguous extra; it stops
+   with `CONTENT_SCOPE_DECISION_REQUIRED` and
+   `EXTRA_BAND_IDENTITY_UNPROVEN` when identity is not proven.
 3. `match_band_geometry`: use `evidence.target` from the plan. Map desktop
    height/inset to `minHeight`/`innerPaddingX`, tablet to
    `minHeightTablet`/`innerPaddingXTablet`, and mobile to
-   `minHeightMobile`/`innerPaddingXMobile`, but only when those props are in the
-   live contract. Preserve every prop not named by the queue.
-4. Contract, media, interaction, and screenshot blockers remain hard blockers;
-   never hide or delete content merely to reduce a pixel diff.
+   `minHeightMobile`/`innerPaddingXMobile`. Set only responsive Section props
+   explicitly authorable by the live contract. An absent required prop is a hard
+   blocker; do not guess another prop.
+4. Unknown repair codes and non-summary contract, media, interaction, and
+   screenshot blockers remain hard blockers. Aggregate visual-budget summaries
+   may be deferred while actionable queue items exist, because the exact rerun
+   recomputes them. Never hide or delete content merely to reduce a pixel diff.
 
-After the queue is applied, mark the gate satisfied and run the exact tool/args
-from `nextAction`. If the required responsive prop is absent, transition to
-`PRODUCT_GAP` instead of guessing another prop.
+The applier report records canonical `inputLayoutSha256` and
+`outputLayoutSha256`, plus before/after subtree SHA-256 proofs in
+`preservedRootSections` for every root section not named by an applied queue
+item. It fails if any such subtree changes. A successful report emits one exact
+`run-visual-iteration.js` action whose `--candidate-layout` is the repaired
+output. Execute that action directly; no separate queue-applied gate exists.
 
 ### CANONICAL_SNAPSHOT
 
@@ -240,10 +261,14 @@ mismatch into a pass.
 - the server validates the exact node map;
 - save succeeds without a concurrency conflict;
 - validate, save, and preview bind the same node-map SHA-256 and site/page;
+- the plan, candidate, source/copied contract, and reference/target manifests
+  still match the SHA-256 bindings recorded by the passing local report;
 - the confirmed public URL shares the saved site's origin and is not the remote
   reference URL;
 - the PHP-rendered public page is captured;
-- the final canonical comparison passes;
+- the final canonical comparison contains non-empty desktop/tablet/mobile
+  results with zero mismatched pixels, zero aggregate percent, and zero maximum
+  viewport percent;
 - no required interaction or media is missing;
 - no unsupported CSS/HTML/theme workaround was used.
 
@@ -257,18 +282,23 @@ Use this algorithm verbatim:
 2. Verify `schemaVersion` is supported.
 3. If `ok` is false, read every blocker and the ordered `repairQueue`.
 4. Read `nextAction`.
-5. Resolve `nextAction.requires`. A requirement used as an argument appears as
+5. Treat an action with `id: "complete"`, empty `tool`, and empty `args` as a
+   successful terminal action. Treat an action whose `id` begins with
+   `blocked_`, or whose `tool` and `args` are both empty, as a stopped terminal
+   action: report its blockers/requirements and never execute it. Any other
+   action with an empty tool is malformed and a hard stop.
+6. Resolve `nextAction.requires`. A requirement used as an argument appears as
    one whole token named `$REQUIREMENT`. Replace that token with the value
    directly in the argv array; never invoke a shell and never perform partial
    string interpolation. A requirement without a matching `$...` token is a
    gate condition that must be satisfied before execution.
-6. If a value or gate is missing, request or complete only that requirement.
+7. If a value or gate is missing, request or complete only that requirement.
    An unresolved `$...` token is a hard stop.
-7. Execute `nextAction.tool` with `nextAction.args` in the given order.
-8. Require the next command to return a JSON envelope with `schemaVersion`,
+8. Execute `nextAction.tool` with `nextAction.args` in the given order.
+9. Require the next command to return a JSON envelope with `schemaVersion`,
    `ok`, and `nextAction`.
-9. Do not run a second action in parallel.
-10. Repeat from step 1.
+10. Do not run a second action in parallel.
+11. Repeat from step 1.
 
 If `nextAction.tool` is `monteby-widget-development`, stop page authoring and
 resolve the product gap in that workflow.

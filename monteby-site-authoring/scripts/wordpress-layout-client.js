@@ -9,7 +9,9 @@ const SCHEMA_VERSION = 1;
 const DEFAULT_AUTH_HEADER_ENV = 'MONTEBY_AUTH_HEADER';
 const DEFAULT_TIMEOUT_MS = 30_000;
 const API_ROOT = '/wp-json/monteby/v1';
+const WORDPRESS_CORE_API_ROOT = '/wp-json/wp/v2';
 const COMMANDS = new Set(['snapshot', 'validate', 'save', 'preview']);
+const PRESENTATION_LAYOUTS = new Set(['default', 'full-width', 'canvas']);
 const CLIENT_TOOL = path.resolve(__filename);
 const CANONICAL_VERIFICATION_TOOL = path.join(__dirname, 'run-canonical-verification.js');
 
@@ -211,6 +213,13 @@ function validateOptions(options) {
       nextAction: 'Provide the layoutSha256 emitted by a successful validate report.',
     });
   }
+  if (options.presentationLayout && !PRESENTATION_LAYOUTS.has(options.presentationLayout)) {
+    throw new ClientError('--presentation-layout must be default, full-width, or canvas.', {
+      code: 'CLI_USAGE',
+      stage: options.command,
+      nextAction: 'Use one presentation layout exposed by the Monteby persistence contract.',
+    });
+  }
 
   if (options.command === 'snapshot') {
     requireOption(options, 'pageId', '--page-id');
@@ -371,11 +380,11 @@ function materializeNextAction(report, options) {
   const authRequirement = options?.authHeaderEnv || DEFAULT_AUTH_HEADER_ENV;
   if (!options?.command) {
     return nextAction(
-      'show_client_help',
-      CLIENT_TOOL,
-      ['--help'],
+      'blocked_client_usage',
+      '',
       [],
-      instruction
+      ['VALID_CLIENT_ARGUMENTS'],
+      `${instruction} Stop; help output is not a state-machine report.`
     );
   }
 
@@ -501,11 +510,11 @@ function materializeNextAction(report, options) {
 
   if (report.code === 'CLI_USAGE') {
     return nextAction(
-      'show_client_help',
-      CLIENT_TOOL,
-      ['--help'],
+      'blocked_client_usage',
+      '',
       [],
-      instruction
+      ['VALID_CLIENT_ARGUMENTS'],
+      `${instruction} Stop; help output is not a state-machine report.`
     );
   }
 
@@ -575,11 +584,11 @@ function materializeNextAction(report, options) {
   }
 
   return nextAction(
-    'resolve_error_and_retry',
-    CLIENT_TOOL,
-    commandArgs(options),
-    [authRequirement],
-    instruction
+    'blocked_client_error',
+    '',
+    [],
+    ['EXPLICIT_ERROR_RESOLUTION'],
+    `${instruction} Stop: this error has no mechanically safe retry action.`
   );
 }
 
@@ -666,8 +675,8 @@ function resolveAuthHeader(options) {
   return value.trim();
 }
 
-function endpointUrl(options, endpoint) {
-  return `${options.site}${API_ROOT}${endpoint}`;
+function endpointUrl(options, endpoint, apiRoot = API_ROOT) {
+  return `${options.site}${apiRoot}${endpoint}`;
 }
 
 function responseForReport(data, text) {
@@ -684,6 +693,7 @@ async function request(options, authHeader, {
   endpoint,
   body,
   expectJson = true,
+  apiRoot = API_ROOT,
 }) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), options.timeoutMs);
@@ -691,7 +701,7 @@ async function request(options, authHeader, {
 
   let response;
   try {
-    response = await fetch(endpointUrl(options, endpoint), {
+    response = await fetch(endpointUrl(options, endpoint, apiRoot), {
       method,
       redirect: 'manual',
       signal: controller.signal,
@@ -958,11 +968,33 @@ async function runSnapshot(options, authHeader) {
     return httpFailureResult('snapshot', layoutResponse, artifacts);
   }
 
+  const pageIdentityResponse = await request(options, authHeader, {
+    method: 'GET',
+    apiRoot: WORDPRESS_CORE_API_ROOT,
+    endpoint: `/pages/${options.pageId}?context=edit&_fields=id%2Clink`,
+  });
+  if (!pageIdentityResponse.ok) {
+    return httpFailureResult('snapshot', pageIdentityResponse, artifacts);
+  }
+  const publicPageUrl = normalizePublicPageUrl(pageIdentityResponse.data?.link, options.site);
+  if (Number(pageIdentityResponse.data?.id) !== options.pageId || !publicPageUrl) {
+    return createResult({
+      ok: false,
+      stage: 'snapshot',
+      code: 'PAGE_IDENTITY_INVALID',
+      artifacts,
+      nextAction: 'Fix the WordPress core page endpoint so this page ID resolves to one same-site public link.',
+      message: 'The WordPress core page response did not bind the requested page ID to a valid same-site public URL.',
+      response: pageIdentityResponse.data,
+    });
+  }
+
   const pageSnapshot = {
     schemaVersion: SCHEMA_VERSION,
     artifact: 'monteby-page-snapshot',
     site: options.site,
     pageId: options.pageId,
+    publicPageUrl,
     capturedAt: new Date().toISOString(),
     data: redact(layoutResponse.data, authHeader),
   };
@@ -983,7 +1015,34 @@ async function runSnapshot(options, authHeader) {
     code: 'SNAPSHOT_OK',
     artifacts,
     nextAction: 'Build the candidate from contract.json, then run validate before save.',
+    scope: {
+      site: options.site,
+      pageId: options.pageId,
+    },
+    evidence: {
+      publicPageUrl,
+    },
   });
+}
+
+function normalizePublicPageUrl(value, site) {
+  if (typeof value !== 'string' || !value.trim()) return '';
+  try {
+    const url = new URL(value);
+    const siteUrl = new URL(site);
+    if (
+      !['http:', 'https:'].includes(url.protocol)
+      || url.username
+      || url.password
+      || url.origin !== siteUrl.origin
+    ) {
+      return '';
+    }
+    url.hash = '';
+    return url.toString();
+  } catch {
+    return '';
+  }
 }
 
 async function validateNodeMap(options, authHeader, nodeMap, artifacts) {
@@ -1039,6 +1098,7 @@ function snapshotScopeFailure(snapshot, options, artifacts) {
     && snapshot.artifact === 'monteby-page-snapshot'
     && typeof snapshot.site === 'string'
     && Number.isSafeInteger(snapshot.pageId)
+    && normalizePublicPageUrl(snapshot.publicPageUrl, snapshot.site) === snapshot.publicPageUrl
     && typeof snapshot.capturedAt === 'string'
     && Number.isFinite(Date.parse(snapshot.capturedAt))
     && isObject(snapshot.data);
@@ -1146,6 +1206,22 @@ async function runSave(options, authHeader) {
     });
   }
 
+  if (options.presentationLayout && !isObject(freshDocument?.presentation)) {
+    return createResult({
+      ok: false,
+      stage: 'save',
+      code: 'PRESENTATION_CAPABILITY_MISSING',
+      artifacts,
+      nextAction: 'Use a presentation override only when the exact live layout document and contract expose presentation persistence.',
+      message: 'The live page does not expose presentation persistence; no validation or PUT request was sent.',
+      scope: {
+        site: options.site,
+        pageId: options.pageId,
+      },
+      layoutSha256: candidateSha256,
+    });
+  }
+
   const validation = await validateNodeMap(options, authHeader, candidate, artifacts);
   if (!validation.ok) {
     return {
@@ -1161,10 +1237,16 @@ async function runSave(options, authHeader) {
   if (options.presentationLayout) {
     if (presentation) {
       presentation.layout = options.presentationLayout;
+      if (options.presentationLayout === 'canvas') {
+        presentation.disableGlobalTemplates = true;
+      }
     }
   }
   const effectivePresentation = options.presentationLayout && !presentation
-    ? { layout: options.presentationLayout }
+    ? {
+      layout: options.presentationLayout,
+      ...(options.presentationLayout === 'canvas' ? { disableGlobalTemplates: true } : {}),
+    }
     : presentation;
   const payload = {
     expectedModifiedGmt: freshVersion,
@@ -1198,6 +1280,12 @@ async function runSave(options, authHeader) {
       pageId: options.pageId,
     },
     layoutSha256: candidateSha256,
+    evidence: {
+      site: options.site,
+      pageId: options.pageId,
+      publicPageUrl: snapshotValue.publicPageUrl,
+      layoutSha256: candidateSha256,
+    },
   });
 }
 
@@ -1213,6 +1301,11 @@ function findHtml(value) {
     if (typeof candidate === 'string') return candidate;
   }
   return '';
+}
+
+function isRenderedHtml(value) {
+  return typeof value === 'string'
+    && /<(?:!doctype\s+html|html|body|main|header|footer|section|article|div|form)\b/i.test(value);
 }
 
 function previewSaveEvidence(saveReport, options, candidateSha256, artifacts) {
@@ -1274,10 +1367,26 @@ function previewSaveEvidence(saveReport, options, candidateSha256, artifacts) {
       }),
     };
   }
+  const publicPageUrl = normalizePublicPageUrl(saveReport.evidence?.publicPageUrl, options.site);
+  if (!publicPageUrl || publicPageUrl !== saveReport.evidence?.publicPageUrl) {
+    return {
+      failure: createResult({
+        ok: false,
+        stage: 'preview',
+        code: 'SAVE_REPORT_PAGE_IDENTITY_MISSING',
+        artifacts,
+        nextAction: 'Create a fresh page-scoped snapshot and repeat validate/save before preview.',
+        message: 'Save report does not bind the page ID to its WordPress public URL.',
+        scope: saveReport.scope,
+        layoutSha256: candidateSha256,
+      }),
+    };
+  }
   return {
     evidence: {
       site: saveReport.scope.site,
       pageId: saveReport.scope.pageId,
+      publicPageUrl,
       layoutSha256: candidateSha256,
       saveReport: options.saveReport,
     },
@@ -1320,7 +1429,7 @@ async function runPreview(options, authHeader) {
   const jsonHtml = findHtml(previewResponse.data);
   const html = jsonHtml || (previewResponse.data === undefined ? previewResponse.text : '');
   let result;
-  if (html) {
+  if (isRenderedHtml(html)) {
     artifacts.format = 'html';
     result = createResult({
       ok: true,
@@ -1335,24 +1444,20 @@ async function runPreview(options, authHeader) {
     });
     await atomicWriteMany([{ target: options.out, content: redact(html, authHeader) }], 'preview');
   } else {
-    artifacts.format = 'json';
+    artifacts.format = 'missing-html';
     result = createResult({
-      ok: true,
+      ok: false,
       stage: 'preview',
-      code: 'PREVIEW_OK',
+      code: 'PREVIEW_HTML_MISSING',
       artifacts,
-      nextAction: 'Inspect the preview response artifact before browser comparison.',
+      nextAction: 'Fix the preview endpoint so it returns rendered WordPress/PHP HTML, then repeat preview.',
+      message: 'The preview endpoint returned 2xx without a rendered HTML document or fragment.',
       httpStatus: previewResponse.status,
       response: previewResponse.data,
       scope: savedEvidence.scope,
       layoutSha256: candidateSha256,
       evidence: savedEvidence.evidence,
     });
-    await atomicWriteJson(
-      options.out,
-      redact(previewResponse.data ?? { body: previewResponse.text }, authHeader),
-      'preview'
-    );
   }
   return result;
 }
@@ -1445,11 +1550,11 @@ if (require.main === module) {
         retryable: false,
         artifacts: {},
         nextAction: nextAction(
-          'show_client_help',
-          CLIENT_TOOL,
-          ['--help'],
+          'blocked_unexpected_client_error',
+          '',
           [],
-          'Inspect the local Node.js runtime, then read the client help before running another command.'
+          ['CLIENT_RUNTIME_REPAIRED'],
+          'Stop. Inspect and repair the local Node.js runtime before starting a new client command.'
         ),
         message: 'The client stopped because of an unexpected local error.',
       }), null, 2)}\n`);

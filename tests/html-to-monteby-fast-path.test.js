@@ -110,6 +110,51 @@ test('layout-kit rejects contract violations and the ListBlock object trap', asy
   assert.throws(() => kit.section({}, [kit.section({})]), /niedozwolony/);
 });
 
+test('layout-kit accepts only an environment-variable name for live-site authentication', async () => {
+  const { Kit } = await import(path.join(SCRIPTS, 'layout-kit.mjs'));
+  const originalFetch = global.fetch;
+  const originalAuth = process.env.MONTEBY_TEST_AUTH;
+  const directCredential = `fixture-${process.pid}-${Date.now()}`;
+  let request = null;
+
+  global.fetch = async (url, options) => {
+    request = { url, options };
+    return {
+      ok: true,
+      async json() {
+        return CONTRACT;
+      },
+    };
+  };
+  process.env.MONTEBY_TEST_AUTH = directCredential;
+
+  try {
+    await assert.rejects(
+      Kit.fromSite('https://example.test', directCredential),
+      /blocked_secrets/
+    );
+    await assert.rejects(
+      Kit.fromSite('https://example.test', { authEnv: directCredential }),
+      /blocked_secrets/
+    );
+
+    const kit = await Kit.fromSite('https://example.test/', { authEnv: 'MONTEBY_TEST_AUTH' });
+    assert.equal(kit.contract, CONTRACT);
+    assert.equal(request.url, 'https://example.test/wp-json/monteby/v1/contract');
+    assert.equal(
+      request.options.headers.Authorization,
+      `Basic ${Buffer.from(process.env.MONTEBY_TEST_AUTH).toString('base64')}`
+    );
+  } finally {
+    global.fetch = originalFetch;
+    if (originalAuth === undefined) {
+      delete process.env.MONTEBY_TEST_AUTH;
+    } else {
+      process.env.MONTEBY_TEST_AUTH = originalAuth;
+    }
+  }
+});
+
 test('normalize-layout reports value shapes and renderer traps at once', () => {
   const dir = tempDir();
   const contract = writeContract(dir);
@@ -306,83 +351,16 @@ test('form guidance requires approved legal copy without expanding scope', () =>
   assert.match(guidance, /blocked_legal_copy/);
 });
 
-test('spec-to-layout compiles a measured spec into a valid scaffold with a report', () => {
-  const dir = tempDir();
-  const contract = writeContract(dir);
-  const spec = {
-    kind: 'monteby-reference-spec',
-    version: 2,
-    viewport: 1440,
-    pageHeight: 2000,
-    contentWidth: 1280,
-    sections: [
-      {
-        role: 'box', tag: 'section', index: 0,
-        style: { rect: { x: 0, y: 0, w: 1440, h: 900 }, background: 'rgb(10, 11, 13)', borderWidth: [0, 0, 1, 0], borderColor: 'rgb(51,57,68)' },
-        children: [
-          {
-            role: 'box', tag: 'div',
-            style: { rect: { x: 80, y: 0, w: 1280, h: 900 }, maxWidth: 1280, padding: [104, 56, 84, 56], display: 'grid', gridTemplateColumns: '694.5px 513.4px', gap: [72] },
-            children: [
-              { role: 'heading', tag: 'h1', style: { rect: { x: 80, y: 104, w: 694, h: 246 }, margin: [0, 0, 26, 0] },
-                text: 'Tytuł', typography: { fontSize: 78, fontWeight: '800', fontFamily: 'Archivo', lineHeight: 1.05, color: 'rgb(244, 242, 238)', fontVariationSettings: '"wdth" 108' } },
-              { role: 'box', tag: 'div', style: { rect: { x: 80, y: 400, w: 694, h: 60 }, display: 'flex', flexDirection: 'row', gap: [14] },
-                children: [
-                  { role: 'button', tag: 'a', href: '#kontakt', text: 'Kontakt',
-                    style: { rect: { x: 80, y: 400, w: 200, h: 60 }, background: 'rgb(255, 190, 0)', padding: [16, 28, 16, 28] },
-                    typography: { fontSize: 15, fontWeight: '700', fontFamily: 'Archivo', lineHeight: 1, color: 'rgb(10, 11, 13)' } },
-                ] },
-            ],
-          },
-        ],
-      },
-    ],
-  };
-  const specFile = path.join(dir, 'spec.json');
-  fs.writeFileSync(specFile, JSON.stringify(spec), 'utf8');
-  const out = path.join(dir, 'layout.json');
-  const reportFile = path.join(dir, 'report.json');
-
-  execFileSync(
-    process.execPath,
-    [path.join(SCRIPTS, 'spec-to-layout.mjs'), '--contract', contract, '--spec', specFile, '--out', out, '--report', reportFile],
-    { encoding: 'utf8' }
-  );
-
-  const map = JSON.parse(fs.readFileSync(out, 'utf8'));
-  const report = JSON.parse(fs.readFileSync(reportFile, 'utf8'));
-
-  const section = Object.values(map).find((n) => n.type.resolvedName === 'Section');
-  assert.ok(section, 'sekcja istnieje');
-  assert.equal(section.props.innerMaxWidth, '1280px', 'wrapper podniesiony do innerMaxWidth');
-  assert.equal(section.props.paddingTop, '104px', 'pionowy padding wrappera przeniesiony na sekcję');
-  assert.equal(section.props.gridTemplateColumns, undefined, 'brak tokenu grid w minimalnym kontrakcie — raport zamiast wyjątku');
-
-  assert.ok(
-    report.issues.some((i) => i.target === 'dropped-prop' && /borderBottomWidth/.test(i.issue)),
-    'obramowanie sekcji odrzucone z raportem'
-  );
-  assert.ok(
-    report.issues.some((i) => i.target === 'child-theme' && /font-variation-settings/.test(i.issue)),
-    'oś fontu zmiennego zgłoszona do arkusza'
-  );
-
-  const heading = Object.values(map).find((n) => n.type.resolvedName === 'Heading');
-  assert.equal(heading.props.text, 'Tytuł');
-  assert.equal(heading.props.marginTop, '0px', 'kit wyzerował margines górny');
-});
-
-test('extract-reference-spec emits a browser snippet with role classification', () => {
+test('extractor role rules keep structured content out of flattened text', () => {
   const snippet = execFileSync(
     process.execPath,
     [path.join(SCRIPTS, 'extract-reference-spec.mjs'), '--emit-snippet'],
     { encoding: 'utf8' }
   );
-  assert.match(snippet, /monteby-reference-spec/);
-  assert.match(snippet, /fontVariationSettings/);
-  assert.match(snippet, /gridTemplateColumns/);
-  // rząd samych odnośników nie może wpaść do roli text
-  assert.match(snippet, /actionable/);
-  // pasy strony zbierane z children main, nie tylko <section>
-  assert.match(snippet, /function bands\(/);
+  // pozycja listy z dziećmi blokowymi to pudełko, nie tekst listy (checklista)
+  assert.match(snippet, /tagName === 'LI' && !textOnly/);
+  // odnośnik z blokowymi dziećmi (callout) to kontener, nie przycisk
+  assert.match(snippet, /display === 'block' \|\| bcs\.display === 'flex' \|\| bcs\.display === 'grid'/);
+  // span z display:block łamie textOnly (wiersze karty kontaktu)
+  assert.match(snippet, /d === 'block' \|\| d === 'flex' \|\| d === 'grid'/);
 });

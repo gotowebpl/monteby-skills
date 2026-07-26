@@ -62,9 +62,15 @@ test('canonical comparison failure returns to local repair and cannot emit DONE'
   assert.equal(report.fidelityPassed, false);
   assert.equal(report.canonicalVerification, false);
   assert.equal(report.productReady, false);
-  assert.equal(report.nextAction.id, 'repair_candidate_from_queue');
-  assert.equal(path.basename(report.nextAction.tool), 'run-visual-iteration.js');
-  assert.equal(report.nextAction.args.includes('--candidate-layout'), true);
+  assert.equal(report.nextAction.id, 'apply_layout_repair_queue');
+  assert.equal(path.basename(report.nextAction.tool), 'apply-layout-repair-queue.js');
+  assert.equal(report.nextAction.args.includes('--iteration-report'), true);
+  assert.equal(
+    report.nextAction.args[report.nextAction.args.indexOf('--iteration-report') + 1],
+    path.join(fixture.outDir, 'canonical-verification-report.json')
+  );
+  assert.equal(report.nextAction.args.includes('--out'), true);
+  assert.deepEqual(report.nextAction.requires, []);
   assert.ok(report.repairQueue.some((item) => item.sectionId === 'section-hero'));
 });
 
@@ -82,6 +88,9 @@ test('canonical verification refuses DONE without scoped SAVE_OK and PREVIEW_OK 
   assert.equal(report.ok, false);
   assert.equal(report.canonicalVerification, false);
   assert.equal(report.blockers.some((blocker) => blocker.code === 'save_evidence_missing'), true);
+  assert.equal(report.nextAction.id, 'blocked_canonical_evidence');
+  assert.equal(report.nextAction.tool, '');
+  assert.deepEqual(report.nextAction.args, []);
   assert.equal(fs.existsSync(fixture.spawnLog), false, 'no browser or benchmark action runs');
 });
 
@@ -96,6 +105,101 @@ test('canonical verification treats screenshot budgets as hard even when structu
   assert.equal(report.blockers.some((blocker) => blocker.code === 'max_percent_exceeded'), true);
 });
 
+test('canonical verification refuses DONE without complete zero-diff viewport evidence', () => {
+  const fixture = createFixture();
+  const result = runFixture(
+    fixture,
+    false,
+    false,
+    'https://site.example.test/page/',
+    true
+  );
+
+  assert.equal(result.status, 1, result.stderr || result.stdout);
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.status, 'CANONICAL_COMPARE_FAILED');
+  assert.equal(report.ok, false);
+  assert.equal(
+    report.blockers.some((blocker) => blocker.code === 'canonical_zero_diff_evidence_missing'),
+    true
+  );
+});
+
+test('canonical verification rejects a forged complete report with nonzero visual budgets', () => {
+  const fixture = createFixture();
+  const iteration = JSON.parse(fs.readFileSync(fixture.files.iteration, 'utf8'));
+  iteration.options.maxPercent = '0.01';
+  fs.writeFileSync(fixture.files.iteration, JSON.stringify(iteration));
+
+  const result = runFixture(fixture, false);
+
+  assert.equal(result.status, 1, result.stderr || result.stdout);
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.status, 'INPUT_BLOCKED');
+  assert.equal(
+    report.blockers.some((blocker) => blocker.code === 'canonical_visual_budget_not_zero'),
+    true
+  );
+  assert.equal(fs.existsSync(fixture.spawnLog), false, 'no browser or benchmark action runs');
+});
+
+test('canonical verification revalidates the mechanical plan before DONE', () => {
+  const fixture = createFixture();
+  const plan = JSON.parse(fs.readFileSync(fixture.files.plan, 'utf8'));
+  delete plan.completion;
+  fs.writeFileSync(fixture.files.plan, JSON.stringify(plan));
+
+  const result = runFixture(fixture, false);
+
+  assert.equal(result.status, 1, result.stderr || result.stdout);
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.status, 'INPUT_BLOCKED');
+  assert.equal(
+    report.blockers.some((blocker) => blocker.code === 'layout_plan_completion_missing'),
+    true
+  );
+  assert.equal(fs.existsSync(fixture.spawnLog), false, 'no browser or benchmark action runs');
+});
+
+test('canonical verification rejects an input artifact changed after diagnostic_passed', () => {
+  const fixture = createFixture();
+  fs.appendFileSync(fixture.files.contract, '\n');
+
+  const result = runFixture(fixture, false);
+
+  assert.equal(result.status, 1, result.stderr || result.stdout);
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.status, 'INPUT_BLOCKED');
+  assert.equal(
+    report.blockers.some((blocker) => (
+      blocker.code === 'iteration_artifact_binding_mismatch'
+      && blocker.message.includes('sourceContract')
+      && blocker.message.includes('contract')
+    )),
+    true
+  );
+  assert.equal(fs.existsSync(fixture.spawnLog), false, 'no browser or benchmark action runs');
+});
+
+test('canonical verification rejects a same-origin URL for a different page', () => {
+  const fixture = createFixture();
+  const result = runFixture(
+    fixture,
+    false,
+    false,
+    'https://site.example.test/different-page/'
+  );
+
+  assert.equal(result.status, 1, result.stderr || result.stdout);
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.status, 'INPUT_BLOCKED');
+  assert.equal(
+    report.blockers.some((blocker) => blocker.code === 'public_page_scope_mismatch'),
+    true
+  );
+  assert.equal(fs.existsSync(fixture.spawnLog), false, 'no browser or benchmark action runs');
+});
+
 function createFixture() {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'monteby-canonical-verification-'));
   const files = {
@@ -108,17 +212,73 @@ function createFixture() {
     saveReport: path.join(directory, 'save-response.json'),
     previewReport: path.join(directory, 'preview-response.json'),
   };
-  const nodeMap = { ROOT: { nodes: [] } };
+  const nodeMap = {
+    ROOT: {
+      type: { resolvedName: 'RootCanvas' },
+      isCanvas: true,
+      props: {},
+      nodes: ['section-hero'],
+    },
+    'section-hero': {
+      type: { resolvedName: 'Section' },
+      isCanvas: true,
+      props: {},
+      parent: 'ROOT',
+      nodes: [],
+    },
+  };
   const layoutSha256 = createHash('sha256').update(JSON.stringify(nodeMap)).digest('hex');
   fs.writeFileSync(files.layout, JSON.stringify(nodeMap));
   fs.writeFileSync(files.contract, JSON.stringify({ components: [] }));
   fs.writeFileSync(files.plan, JSON.stringify({
     schemaVersion: 1,
     artifact: 'monteby-layout-plan',
-    bands: [{ generatedSectionId: 'section-hero' }],
+    sourceLayout: files.layout,
+    sourceLayoutSha256: layoutSha256,
+    sourceLayoutDigestFormat: 'sha256:json-stringify-node-map',
+    mode: 'generic-measured-reference',
+    rootSectionIds: ['section-hero'],
+    bands: [{
+      order: 0,
+      generatedSectionId: 'section-hero',
+      viewports: {
+        mobile: {
+          top: 0,
+          height: 844,
+          width: 390,
+          contentInset: 20,
+        },
+      },
+      surfaceMappings: [],
+      surfaceParity: {
+        captured: { text: 0, media: 0, group: 0, child: 0 },
+        authored: { text: 0, media: 0, group: 0, child: 0 },
+        omitted: { text: [], media: [], group: [], child: [] },
+        complete: true,
+      },
+    }],
+    completion: {
+      capturedBands: 1,
+      draftedRootSections: 1,
+      allBandsMapped: true,
+      allSurfacesMapped: true,
+      plannedBands: 1,
+      emittedSections: 1,
+      capturedSurfaces: { text: 0, media: 0, group: 0, child: 0 },
+      authoredSurfaces: { text: 0, media: 0, group: 0, child: 0 },
+      truncated: false,
+      omittedBands: [],
+      omittedMedia: [],
+      omittedText: [],
+      omittedGroups: [],
+      omittedChildren: [],
+    },
   }));
   fs.writeFileSync(files.reference, JSON.stringify({ sourceUrl: 'file:///owned-reference.html' }));
   fs.writeFileSync(files.target, JSON.stringify({ sourceUrl: 'file:///owned-reference.html' }));
+  const fileSha256 = (file) => createHash('sha256')
+    .update(fs.readFileSync(file))
+    .digest('hex');
   fs.writeFileSync(files.saveReport, JSON.stringify({
     schemaVersion: 1,
     ok: true,
@@ -131,6 +291,12 @@ function createFixture() {
     layoutSha256,
     artifacts: {
       layout: files.layout,
+      layoutSha256,
+    },
+    evidence: {
+      site: 'https://site.example.test',
+      pageId: 17,
+      publicPageUrl: 'https://site.example.test/page/',
       layoutSha256,
     },
   }));
@@ -152,6 +318,7 @@ function createFixture() {
     evidence: {
       site: 'https://site.example.test',
       pageId: 17,
+      publicPageUrl: 'https://site.example.test/page/',
       layoutSha256,
       saveReport: files.saveReport,
     },
@@ -165,6 +332,20 @@ function createFixture() {
     canonicalViewportCoverage: { complete: true },
     referenceManifest: files.reference,
     targetManifest: files.target,
+    artifactBindings: {
+      layoutPlanSha256: fileSha256(files.plan),
+      layoutPlanDigestFormat: 'sha256:file-bytes',
+      candidateLayoutSha256: layoutSha256,
+      candidateLayoutDigestFormat: 'sha256:json-stringify-node-map',
+      plannedSourceLayoutSha256: layoutSha256,
+      inputFileDigestFormat: 'sha256:file-bytes',
+      sourceContractSha256: fileSha256(files.contract),
+      contractSha256: fileSha256(files.contract),
+      referenceManifestSha256: fileSha256(files.reference),
+      targetManifestSha256: fileSha256(files.target),
+      rootOrderMatches: true,
+      surfaceMappingsResolve: true,
+    },
     files: {
       outDir: directory,
       sourceContract: files.contract,
@@ -227,6 +408,7 @@ childProcess.spawnSync = function canonicalHarness(command, args, options) {
   }
   const failed = process.env.MONTEBY_CANONICAL_FAIL === '1';
   const budgetFailed = process.env.MONTEBY_CANONICAL_BUDGET_FAIL === '1';
+  const incompleteZero = process.env.MONTEBY_CANONICAL_INCOMPLETE_ZERO === '1';
   const report = failed ? {
     ok: false,
     blockers: [{
@@ -263,10 +445,28 @@ childProcess.spawnSync = function canonicalHarness(command, args, options) {
       }],
     },
     genericGeometry: { ok: true, stats: { viewports: [] } },
+  } : incompleteZero ? {
+    ok: true,
+    blockers: [],
+    comparison: { ok: true, budgetErrors: [], percent: 0, maxPercent: 0 },
+    genericGeometry: { ok: true, stats: { viewports: [] } },
   } : {
     ok: true,
     blockers: [],
-    comparison: { ok: true, budgetErrors: [] },
+    comparison: {
+      ok: true,
+      budgetErrors: [],
+      count: 3,
+      mismatched: 0,
+      total: 3,
+      percent: 0,
+      maxPercent: 0,
+      results: [
+        { label: 'desktop', mismatched: 0, total: 1, percent: 0 },
+        { label: 'tablet', mismatched: 0, total: 1, percent: 0 },
+        { label: 'mobile', mismatched: 0, total: 1, percent: 0 },
+      ],
+    },
     genericGeometry: { ok: true, stats: { viewports: [] } },
   };
   const out = value(args, '--out');
@@ -285,12 +485,18 @@ childProcess.spawnSync = function canonicalHarness(command, args, options) {
   };
 }
 
-function runFixture(fixture, fail, budgetFail = false) {
+function runFixture(
+  fixture,
+  fail,
+  budgetFail = false,
+  publicPageUrl = 'https://site.example.test/page/',
+  incompleteZero = false
+) {
   return spawnSync(process.execPath, [
     script,
     '--iteration-report', fixture.files.iteration,
     '--preview-report', fixture.files.previewReport,
-    '--public-page-url', 'https://site.example.test/page/',
+    '--public-page-url', publicPageUrl,
     '--out-dir', fixture.outDir,
     '--playwright-package', 'fake',
     '--wait-ms', '0',
@@ -304,6 +510,7 @@ function runFixture(fixture, fail, budgetFail = false) {
       MONTEBY_CANONICAL_SPAWN_LOG: fixture.spawnLog,
       MONTEBY_CANONICAL_FAIL: fail ? '1' : '0',
       MONTEBY_CANONICAL_BUDGET_FAIL: budgetFail ? '1' : '0',
+      MONTEBY_CANONICAL_INCOMPLETE_ZERO: incompleteZero ? '1' : '0',
     },
   });
 }

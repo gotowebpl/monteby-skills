@@ -4,6 +4,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { createHash } = require('crypto');
 const { spawnSync } = require('child_process');
 const { fileURLToPath, pathToFileURL } = require('url');
 
@@ -173,6 +174,9 @@ function parseArgs(argv) {
   if (options.referenceUrls.length === 0 && !options.referenceHtmlFile) {
     options.preserveSourceText = true;
   }
+  if (options.referenceUrls.length > 0 && options.preserveSourceText) {
+    throw new Error('--preserve-source-text is only allowed for owned local HTML or generated targets; it cannot be combined with --reference-url');
+  }
   if (!options.help && !options.contract) {
     throw new Error('--contract is required');
   }
@@ -257,6 +261,48 @@ function parseJsonOrNull(stdout) {
 
 function readJson(file) {
   return JSON.parse(fs.readFileSync(file, 'utf8'));
+}
+
+function isObject(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function extractNodeMap(value) {
+  if (isObject(value) && isObject(value.ROOT)) return value;
+  if (isObject(value?.nodeMap) && isObject(value.nodeMap.ROOT)) return value.nodeMap;
+  if (isObject(value?.layout) && isObject(value.layout.ROOT)) return value.layout;
+  return null;
+}
+
+function nodeMapSha256(value) {
+  const nodeMap = extractNodeMap(value);
+  return nodeMap
+    ? createHash('sha256').update(JSON.stringify(nodeMap)).digest('hex')
+    : '';
+}
+
+function fileSha256(file) {
+  return createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+}
+
+function sameStringOrder(left, right) {
+  return Array.isArray(left)
+    && Array.isArray(right)
+    && left.length === right.length
+    && left.every((value, index) => typeof value === 'string' && value === right[index]);
+}
+
+function resolvedPlanSourceLayout(planFile, sourceLayout) {
+  if (typeof sourceLayout !== 'string' || !sourceLayout) {
+    return '';
+  }
+  if (path.isAbsolute(sourceLayout)) {
+    return sourceLayout;
+  }
+  const fromCwd = path.resolve(sourceLayout);
+  return fs.existsSync(fromCwd)
+    ? fromCwd
+    : path.resolve(path.dirname(planFile), sourceLayout);
 }
 
 function copyFile(source, destination) {
@@ -800,9 +846,13 @@ function initialReport(options) {
       missingLabels: missingViewportLabels,
       fullPage: options.fullPage,
       strictVisualBudget: options.allowStructuralVerdict !== true,
+      zeroDiffBudget: Number(options.maxPercent) === 0
+        && Number(options.maxViewportPercent) === 0,
       complete: options.fullPage
         && missingViewportLabels.length === 0
-        && options.allowStructuralVerdict !== true,
+        && options.allowStructuralVerdict !== true
+        && Number(options.maxPercent) === 0
+        && Number(options.maxViewportPercent) === 0,
     },
     canonicalEvidence: {
       renderer: 'render-monteby-preview.js',
@@ -810,6 +860,20 @@ function initialReport(options) {
       wordpressRestValidated: false,
       wordpressRestSaved: false,
       wordpressPhpPreviewed: false,
+    },
+    artifactBindings: {
+      layoutPlanSha256: '',
+      layoutPlanDigestFormat: 'sha256:file-bytes',
+      candidateLayoutSha256: '',
+      candidateLayoutDigestFormat: 'sha256:json-stringify-node-map',
+      plannedSourceLayoutSha256: '',
+      inputFileDigestFormat: 'sha256:file-bytes',
+      sourceContractSha256: '',
+      contractSha256: '',
+      referenceManifestSha256: '',
+      targetManifestSha256: '',
+      rootOrderMatches: false,
+      surfaceMappingsResolve: false,
     },
     files: {
       outDir: options.outDir,
@@ -981,6 +1045,33 @@ function loadLayoutPlan(report) {
   }
 }
 
+const LAYOUT_SURFACE_KINDS = ['text', 'media', 'group', 'child'];
+
+function validSurfaceCounts(value) {
+  return isObject(value) && LAYOUT_SURFACE_KINDS.every(
+    (kind) => Number.isInteger(value[kind]) && value[kind] >= 0
+  );
+}
+
+function sameSurfaceCounts(left, right) {
+  return validSurfaceCounts(left)
+    && validSurfaceCounts(right)
+    && LAYOUT_SURFACE_KINDS.every((kind) => left[kind] === right[kind]);
+}
+
+function nodeBelongsToRoot(nodeMap, nodeId, rootId) {
+  let currentId = String(nodeId || '');
+  const visited = new Set();
+  while (currentId && !visited.has(currentId)) {
+    if (currentId === rootId) {
+      return true;
+    }
+    visited.add(currentId);
+    currentId = String(nodeMap?.[currentId]?.parent || '');
+  }
+  return false;
+}
+
 function validateLayoutPlan(file) {
   let plan;
   try {
@@ -994,6 +1085,7 @@ function validateLayoutPlan(file) {
   }
 
   const blockers = [];
+  let sourceNodeMap = null;
   if (plan.schemaVersion !== 1 || plan.artifact !== 'monteby-layout-plan') {
     blockers.push({
       source: 'draft',
@@ -1001,12 +1093,32 @@ function validateLayoutPlan(file) {
       message: 'The layout plan must use schemaVersion 1 and artifact "monteby-layout-plan".',
     });
   }
-  if (typeof plan.sourceLayout !== 'string' || !plan.sourceLayout || !fs.existsSync(plan.sourceLayout)) {
+  const sourceLayout = resolvedPlanSourceLayout(file, plan.sourceLayout);
+  if (!sourceLayout || !fs.existsSync(sourceLayout)) {
     blockers.push({
       source: 'draft',
       code: 'layout_plan_source_missing',
       message: 'The layout plan must retain the original generated layout used to restore mapped subtrees.',
     });
+  } else {
+    try {
+      sourceNodeMap = extractNodeMap(readJson(sourceLayout));
+    } catch {
+      sourceNodeMap = null;
+    }
+    const sourceDigest = sourceNodeMap ? nodeMapSha256(sourceNodeMap) : '';
+    if (
+      !/^[a-f0-9]{64}$/.test(String(plan.sourceLayoutSha256 || ''))
+      || plan.sourceLayoutDigestFormat !== 'sha256:json-stringify-node-map'
+      || !sourceDigest
+      || sourceDigest !== plan.sourceLayoutSha256
+    ) {
+      blockers.push({
+        source: 'draft',
+        code: 'layout_plan_source_digest_mismatch',
+        message: 'The layout plan source digest does not bind the exact generated node map.',
+      });
+    }
   }
   if (!plan.completion || typeof plan.completion !== 'object' || Array.isArray(plan.completion)) {
     blockers.push({
@@ -1019,17 +1131,31 @@ function validateLayoutPlan(file) {
 
   const omittedBands = Array.isArray(plan.completion.omittedBands) ? plan.completion.omittedBands : null;
   const omittedMedia = Array.isArray(plan.completion.omittedMedia) ? plan.completion.omittedMedia : null;
+  const omittedText = Array.isArray(plan.completion.omittedText) ? plan.completion.omittedText : null;
+  const omittedGroups = plan.mode === 'generic-measured-reference'
+    ? (Array.isArray(plan.completion.omittedGroups) ? plan.completion.omittedGroups : null)
+    : [];
+  const omittedChildren = plan.mode === 'generic-measured-reference'
+    ? (Array.isArray(plan.completion.omittedChildren) ? plan.completion.omittedChildren : null)
+    : [];
   if (
     plan.completion.truncated !== false
     || omittedBands === null
     || omittedMedia === null
+    || omittedText === null
+    || omittedGroups === null
+    || omittedChildren === null
     || omittedBands.length > 0
     || omittedMedia.length > 0
+    || omittedText.length > 0
+    || omittedGroups.length > 0
+    || omittedChildren.length > 0
+    || (plan.mode === 'generic-measured-reference' && plan.completion.allSurfacesMapped !== true)
   ) {
     blockers.push({
       source: 'draft',
       code: 'layout_plan_incomplete',
-      message: 'The layout plan is truncated or reports omitted bands/media; no later stage may continue.',
+      message: 'The layout plan is truncated, reports omitted measured surfaces, or lacks complete surface parity; no later stage may continue.',
     });
   }
 
@@ -1039,6 +1165,16 @@ function validateLayoutPlan(file) {
       source: 'draft',
       code: 'layout_plan_section_count_mismatch',
       message: 'The layout plan emittedSections count does not match rootSectionIds.',
+    });
+  }
+  if (
+    sourceNodeMap
+    && !sameStringOrder(rootSectionIds, sourceNodeMap?.ROOT?.nodes)
+  ) {
+    blockers.push({
+      source: 'draft',
+      code: 'layout_plan_source_root_order_mismatch',
+      message: 'The planned root IDs/order do not match the exact generated source layout.',
     });
   }
 
@@ -1055,9 +1191,202 @@ function validateLayoutPlan(file) {
         message: 'Every measured generic band must map to one stable generated section ID.',
       });
     }
+
+    const completionCountsValid = validSurfaceCounts(plan.completion.capturedSurfaces)
+      && validSurfaceCounts(plan.completion.authoredSurfaces)
+      && sameSurfaceCounts(
+        plan.completion.capturedSurfaces,
+        plan.completion.authoredSurfaces
+      );
+    const summedCaptured = Object.fromEntries(LAYOUT_SURFACE_KINDS.map((kind) => [kind, 0]));
+    const summedAuthored = Object.fromEntries(LAYOUT_SURFACE_KINDS.map((kind) => [kind, 0]));
+    let surfaceEvidenceValid = completionCountsValid;
+
+    for (const band of bands) {
+      const mappings = Array.isArray(band?.surfaceMappings) ? band.surfaceMappings : null;
+      const parity = isObject(band?.surfaceParity) ? band.surfaceParity : null;
+      const omitted = isObject(parity?.omitted) ? parity.omitted : null;
+      const captured = parity?.captured;
+      const authored = parity?.authored;
+      if (
+        !mappings
+        || !parity
+        || !validSurfaceCounts(captured)
+        || !validSurfaceCounts(authored)
+        || !sameSurfaceCounts(captured, authored)
+        || parity.complete !== true
+        || !omitted
+        || !LAYOUT_SURFACE_KINDS.every(
+          (kind) => Array.isArray(omitted[kind]) && omitted[kind].length === 0
+        )
+      ) {
+        surfaceEvidenceValid = false;
+        continue;
+      }
+
+      for (const kind of LAYOUT_SURFACE_KINDS) {
+        summedCaptured[kind] += captured[kind];
+        summedAuthored[kind] += authored[kind];
+      }
+
+      const seen = new Set();
+      const mappedCounts = Object.fromEntries(LAYOUT_SURFACE_KINDS.map((kind) => [kind, 0]));
+      for (const mapping of mappings) {
+        const mappingKey = `${String(mapping?.kind || '')}:${String(mapping?.structureKey || '')}`;
+        const nodeId = String(mapping?.generatedNodeId || '');
+        const geometryNodeId = String(mapping?.geometryNodeId || '');
+        if (
+          !LAYOUT_SURFACE_KINDS.includes(mapping?.kind)
+          || !mapping?.structureKey
+          || !nodeId
+          || !mapping?.generatedComponent
+          || typeof mapping?.strategy !== 'string'
+          || !mapping.strategy
+          || typeof mapping?.lowered !== 'boolean'
+          || !Array.isArray(mapping?.viewports)
+          || mapping.viewports.length === 0
+          || mapping.viewports.some((viewport) => typeof viewport !== 'string' || !viewport)
+          || seen.has(mappingKey)
+          || !sourceNodeMap?.[nodeId]
+          || !nodeBelongsToRoot(sourceNodeMap, nodeId, band.generatedSectionId)
+          || (geometryNodeId && (
+            !sourceNodeMap?.[geometryNodeId]
+            || !nodeBelongsToRoot(sourceNodeMap, geometryNodeId, band.generatedSectionId)
+          ))
+        ) {
+          surfaceEvidenceValid = false;
+          continue;
+        }
+        seen.add(mappingKey);
+        mappedCounts[mapping.kind] += 1;
+      }
+      if (!sameSurfaceCounts(mappedCounts, authored)) {
+        surfaceEvidenceValid = false;
+      }
+    }
+
+    if (
+      !surfaceEvidenceValid
+      || !sameSurfaceCounts(summedCaptured, plan.completion.capturedSurfaces)
+      || !sameSurfaceCounts(summedAuthored, plan.completion.authoredSurfaces)
+    ) {
+      blockers.push({
+        source: 'draft',
+        code: 'layout_plan_surface_mapping_incomplete',
+        message: 'Every captured text/media/group/child surface must bind once to an existing node below its planned root section.',
+      });
+    }
   }
 
   return blockers;
+}
+
+function validateCandidatePlanBinding(planFile, candidateFile) {
+  const blockers = [];
+  const evidence = {
+    layoutPlanSha256: '',
+    layoutPlanDigestFormat: 'sha256:file-bytes',
+    candidateLayoutSha256: '',
+    candidateLayoutDigestFormat: 'sha256:json-stringify-node-map',
+    plannedSourceLayoutSha256: '',
+    rootOrderMatches: false,
+    surfaceMappingsResolve: false,
+  };
+  let plan;
+  let candidateNodeMap;
+  try {
+    plan = readJson(planFile);
+    evidence.layoutPlanSha256 = fileSha256(planFile);
+    evidence.plannedSourceLayoutSha256 = String(plan.sourceLayoutSha256 || '');
+  } catch {
+    blockers.push({
+      source: 'iteration',
+      code: 'layout_plan_binding_invalid',
+      message: 'The passing candidate cannot be bound because the layout plan is unreadable.',
+    });
+    return { blockers, evidence };
+  }
+  try {
+    candidateNodeMap = extractNodeMap(readJson(candidateFile));
+    evidence.candidateLayoutSha256 = candidateNodeMap
+      ? nodeMapSha256(candidateNodeMap)
+      : '';
+  } catch {
+    candidateNodeMap = null;
+  }
+  if (!candidateNodeMap || !evidence.candidateLayoutSha256) {
+    blockers.push({
+      source: 'iteration',
+      code: 'candidate_layout_binding_invalid',
+      message: 'The actual candidate does not contain a valid ROOT node map to hash and bind.',
+    });
+    return { blockers, evidence };
+  }
+
+  const plannedRoots = Array.isArray(plan.rootSectionIds) ? plan.rootSectionIds : [];
+  const candidateRoots = Array.isArray(candidateNodeMap?.ROOT?.nodes)
+    ? candidateNodeMap.ROOT.nodes
+    : [];
+  evidence.rootOrderMatches = sameStringOrder(plannedRoots, candidateRoots);
+  if (!evidence.rootOrderMatches) {
+    blockers.push({
+      source: 'iteration',
+      code: 'candidate_layout_root_order_mismatch',
+      message: 'The actual candidate ROOT.nodes IDs/order differ from the mechanically planned roots.',
+    });
+  }
+
+  const missingMappings = [];
+  for (const band of Array.isArray(plan.bands) ? plan.bands : []) {
+    for (const mapping of Array.isArray(band?.surfaceMappings) ? band.surfaceMappings : []) {
+      const generatedNodeId = String(mapping?.generatedNodeId || '');
+      const geometryNodeId = String(mapping?.geometryNodeId || '');
+      if (
+        !candidateNodeMap[generatedNodeId]
+        || !nodeBelongsToRoot(candidateNodeMap, generatedNodeId, band.generatedSectionId)
+        || (geometryNodeId && (
+          !candidateNodeMap[geometryNodeId]
+          || !nodeBelongsToRoot(candidateNodeMap, geometryNodeId, band.generatedSectionId)
+        ))
+      ) {
+        missingMappings.push(`${String(mapping?.kind || '')}:${String(mapping?.structureKey || '')}`);
+      }
+    }
+  }
+  evidence.surfaceMappingsResolve = missingMappings.length === 0;
+  if (!evidence.surfaceMappingsResolve) {
+    blockers.push({
+      source: 'iteration',
+      code: 'candidate_layout_surface_mapping_missing',
+      message: `The actual candidate no longer contains planned surface mappings: ${missingMappings.join(', ')}.`,
+    });
+  }
+  return { blockers, evidence };
+}
+
+function bindIterationInputFiles(files) {
+  const blockers = [];
+  const evidence = {
+    inputFileDigestFormat: 'sha256:file-bytes',
+  };
+  for (const [field, file] of Object.entries({
+    sourceContractSha256: files?.sourceContract,
+    contractSha256: files?.contract,
+    referenceManifestSha256: files?.referenceManifest,
+    targetManifestSha256: files?.targetManifest,
+  })) {
+    if (typeof file !== 'string' || !file || !fs.existsSync(file)) {
+      evidence[field] = '';
+      blockers.push({
+        source: 'iteration',
+        code: 'iteration_artifact_binding_missing',
+        message: `Cannot bind required diagnostic input for ${field}.`,
+      });
+      continue;
+    }
+    evidence[field] = fileSha256(file);
+  }
+  return { blockers, evidence };
 }
 
 function buildRepairQueue(report) {
@@ -1111,7 +1440,10 @@ function buildRepairQueue(report) {
     }
 
     for (const extra of Array.isArray(viewport?.bands?.extra) ? viewport.bands.extra : []) {
-      const candidateRootId = candidateRootIds[Number(extra.index)] || '';
+      const measuredNodeIds = Array.isArray(extra?.montebyNodeIds)
+        ? extra.montebyNodeIds.filter((nodeId) => candidateRootIds.includes(nodeId))
+        : [];
+      const candidateRootId = measuredNodeIds.length === 1 ? measuredNodeIds[0] : '';
       queue.push({
         code: 'remove_or_merge_extra_band',
         viewport: label,
@@ -1123,8 +1455,9 @@ function buildRepairQueue(report) {
           height: extra.height,
           width: extra.width,
           candidateRootId,
+          measuredNodeIds,
         },
-        instruction: `Remove or merge candidate band #${Number(extra.index) + 1}; it has no ordered reference counterpart.`,
+        instruction: `Remove candidate band #${Number(extra.index) + 1} only if the repair applier proves it is a duplicate; otherwise require an explicit content-scope decision.`,
       });
     }
 
@@ -1139,8 +1472,7 @@ function buildRepairQueue(report) {
         ),
       }))
       .filter((pair) => pair.severity > 0)
-      .sort((left, right) => right.severity - left.severity)
-      .slice(0, 12);
+      .sort((left, right) => right.severity - left.severity);
 
     for (const pair of rankedPairs) {
       const band = planBands[Number(pair.referenceIndex)] || null;
@@ -1171,11 +1503,30 @@ function buildRepairQueue(report) {
   }
 
   for (const blocker of Array.isArray(report.blockers) ? report.blockers : []) {
-    const duplicate = queue.some((item) => item.code === blocker.code && item.viewport === blocker.label);
-    if (!duplicate) {
+    const viewport = blocker.label || '';
+    const code = String(blocker.code || '');
+    const representedRepairCode = /^generic_geometry_band_(?:top|height|width)_mismatch$/.test(code)
+      ? 'match_band_geometry'
+      : code === 'generic_geometry_major_band_missing'
+        ? 'restore_measured_band'
+        : code === 'generic_geometry_major_band_extra'
+          ? 'remove_or_merge_extra_band'
+          : '';
+    const represented = representedRepairCode
+      && queue.some((item) => item.code === representedRepairCode && item.viewport === viewport);
+    const deferredVisualSummary = queue.length > 0
+      && blocker.source === 'visual-diff'
+      && [
+        'max_percent_exceeded',
+        'max_viewport_percent_exceeded',
+        'visual_budget_failed',
+        'canonical_visual_budget_failed',
+      ].includes(code);
+    const duplicate = queue.some((item) => item.code === blocker.code && item.viewport === viewport);
+    if (!duplicate && !represented && !deferredVisualSummary) {
       queue.push({
         code: blocker.code || 'resolve_blocker',
-        viewport: blocker.label || '',
+        viewport,
         sectionId: '',
         evidence: blocker,
         instruction: blocker.message || 'Resolve the reported blocker without bypassing the contract.',
@@ -1183,7 +1534,7 @@ function buildRepairQueue(report) {
     }
   }
 
-  return queue.slice(0, 24);
+  return queue;
 }
 
 function iterationArgsFor(report, candidateLayout = '', overrides = {}) {
@@ -1285,19 +1636,37 @@ function nextActionFor(report) {
     || report.status === 'benchmark_failed'
     || report.status === 'candidate_audit_failed'
   ) {
-    const repairLayout = report.status === 'candidate_audit_failed'
-      ? report.files.sourceCandidateLayout
-      : report.files.layout;
+    const repairReport = report.repairReportPath
+      || report.files.iterationReport
+      || path.join(report.files.outDir, 'visual-iteration-report.json');
+    const candidateLayout = report.files.layout
+      || report.files.sourceCandidateLayout
+      || path.join(report.files.outDir, 'candidate', 'layout.json');
+    const repairedLayout = path.join(path.dirname(candidateLayout), 'layout-repaired.json');
     return {
-      id: 'repair_candidate_from_queue',
-      tool: retry.tool,
-      args: iterationArgsFor(report, repairLayout),
-      requires: ['REPAIR_QUEUE_APPLIED'],
-      instruction: 'Edit only the section IDs named in repairQueue, then run this exact command to re-audit the candidate.',
+      id: 'apply_layout_repair_queue',
+      tool: scriptPath('apply-layout-repair-queue.js'),
+      args: [
+        '--iteration-report', repairReport,
+        '--out', repairedLayout,
+        '--json',
+      ],
+      requires: [],
+      instruction: 'Apply the complete repairQueue deterministically; ambiguous content scope and unknown blockers remain hard stops.',
     };
   }
 
-  if (report.status === 'readiness_failed' || report.status === 'draft_failed') {
+  const blockers = Array.isArray(report.blockers) ? report.blockers : [];
+  const productGapBlocker = (blocker) => {
+    const code = String(blocker?.code || '');
+    return /(?:^|_)(?:product|capability|control)_gap(?:_|$)/i.test(code)
+      || /^missing_(?:component|authoring_prop|media_capability|.*(?:control|controls))$/i.test(code);
+  };
+  if (
+    (report.status === 'readiness_failed' || report.status === 'draft_failed')
+    && blockers.length > 0
+    && blockers.every(productGapBlocker)
+  ) {
     return {
       id: 'resolve_product_gap',
       tool: 'monteby-widget-development',
@@ -1307,18 +1676,31 @@ function nextActionFor(report) {
     };
   }
 
+  if (report.status === 'readiness_failed' || report.status === 'draft_failed') {
+    return {
+      id: 'blocked_iteration_inputs',
+      tool: '',
+      args: [],
+      requires: ['VALID_ITERATION_INPUTS'],
+      instruction: 'Stop. Repair or recapture the explicit input/plan evidence, then start a new iteration; this is not automatically a product gap.',
+    };
+  }
+
   if (report.status === 'render_failed' || report.status === 'candidate_capture_failed') {
     return {
       id: 'retry_render_or_capture',
       ...retry,
+      requires: ['RENDER_OR_CAPTURE_FAILURE_RESOLVED'],
       instruction: 'Resolve the reported renderer or capture failure, then run this exact command without changing the measured plan.',
     };
   }
 
   return {
-    id: 'retry_failed_stage',
-    ...retry,
-    instruction: 'Resolve the explicit blocker and run this exact command again.',
+    id: 'blocked_iteration_stage',
+    tool: '',
+    args: [],
+    requires: ['ITERATION_BLOCKERS_RESOLVED'],
+    instruction: 'Stop. The current failure has no mechanically safe automatic transition; resolve its explicit blockers before starting a new run.',
   };
 }
 
@@ -1682,6 +2064,29 @@ function main() {
       copyFile(layoutDraftPath(options), layoutPath(options));
     }
 
+    const candidateBinding = validateCandidatePlanBinding(
+      layoutPlanPath(options),
+      layoutPath(options)
+    );
+    const inputBindings = bindIterationInputFiles({
+      sourceContract: report.files.sourceContract,
+      contract: report.files.contract,
+      referenceManifest: report.referenceManifest,
+      targetManifest: report.targetManifest,
+    });
+    candidateBinding.blockers.push(...inputBindings.blockers);
+    report.artifactBindings = {
+      ...candidateBinding.evidence,
+      ...inputBindings.evidence,
+    };
+    persist(report);
+    if (candidateBinding.blockers.length > 0) {
+      report = finish(report, 'candidate_audit_failed', candidateBinding.blockers);
+      output(report, options);
+      process.exitCode = 1;
+      return;
+    }
+
     const renderRun = runNodeScript('render-monteby-preview.js', renderArgs(options));
     report.steps.render = stepSummary(renderRun);
     persist(report);
@@ -1787,5 +2192,6 @@ module.exports = {
   iterationArgsFor,
   nextActionFor,
   parseArgs,
+  validateCandidatePlanBinding,
   validateLayoutPlan,
 };

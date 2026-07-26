@@ -44,6 +44,20 @@ test('site contract compatibility manifest ships in the npm package', () => {
     packResult[0].files.some((file) => file.path === manifestRelativePath),
     true,
   );
+  const packedPaths = packResult[0].files.map((file) => file.path);
+  assert.equal(
+    packedPaths.some((file) => file.startsWith('audit-evidence/')),
+    false,
+    'rejected audit prototypes must stay outside the published package'
+  );
+  for (const rejected of [
+    'monteby-site-authoring/scripts/compare-geometry.js',
+    'monteby-site-authoring/scripts/extract-reference-spec.mjs',
+    'monteby-site-authoring/scripts/spec-to-layout.mjs',
+    'monteby-site-authoring/quarantine/quick-start-runbook.unsafe-draft.md',
+  ]) {
+    assert.equal(packedPaths.includes(rejected), false, `${rejected} must not ship`);
+  }
 });
 
 test('site authoring requires the compatibility policy and keeps the live contract authoritative', () => {

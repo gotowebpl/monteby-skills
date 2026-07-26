@@ -5,7 +5,12 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { createHash } = require('node:crypto');
 const { spawnSync } = require('node:child_process');
-const { buildRepairQueue, nextActionFor, CANONICAL_VIEWPORTS } = require('./run-visual-iteration.js');
+const {
+  buildRepairQueue,
+  nextActionFor,
+  validateLayoutPlan,
+  CANONICAL_VIEWPORTS,
+} = require('./run-visual-iteration.js');
 
 function requiredValue(argv, index, option) {
   const value = argv[index];
@@ -107,6 +112,10 @@ function nodeMapSha256(value) {
   return createHash('sha256').update(JSON.stringify(nodeMap)).digest('hex');
 }
 
+function fileSha256(file) {
+  return createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+}
+
 function scriptPath(name) {
   return path.join(__dirname, name);
 }
@@ -154,8 +163,18 @@ function validateIteration(iteration) {
       message: 'The local diagnostic must cover all three canonical full-page viewports.',
     });
   }
+  if (
+    Number(iteration?.options?.maxPercent) !== 0
+    || Number(iteration?.options?.maxViewportPercent) !== 0
+  ) {
+    blockers.push({
+      code: 'canonical_visual_budget_not_zero',
+      message: 'Canonical verification requires zero aggregate and per-viewport screenshot-difference budgets.',
+    });
+  }
   for (const [key, file] of Object.entries({
     layout: iteration?.files?.layout,
+    sourceContract: iteration?.files?.sourceContract,
     contract: iteration?.files?.contract,
     layoutPlan: iteration?.files?.layoutPlan,
     referenceManifest: iteration?.referenceManifest,
@@ -165,6 +184,86 @@ function validateIteration(iteration) {
       blockers.push({
         code: `missing_${key}`,
         message: `Required ${key} artifact is missing.`,
+      });
+    }
+  }
+  const bindings = iteration?.artifactBindings;
+  if (!isObject(bindings)) {
+    blockers.push({
+      code: 'iteration_artifact_bindings_missing',
+      message: 'The passing diagnostic must persist immutable hashes for every canonical input artifact.',
+    });
+  } else {
+    const mismatches = [];
+    const recordMismatch = (name) => {
+      if (!mismatches.includes(name)) mismatches.push(name);
+    };
+    if (
+      bindings.layoutPlanDigestFormat !== 'sha256:file-bytes'
+      || bindings.candidateLayoutDigestFormat !== 'sha256:json-stringify-node-map'
+      || bindings.inputFileDigestFormat !== 'sha256:file-bytes'
+      || bindings.rootOrderMatches !== true
+      || bindings.surfaceMappingsResolve !== true
+    ) {
+      recordMismatch('binding-metadata');
+    }
+    for (const [name, expected, file, digest] of [
+      ['layoutPlan', bindings.layoutPlanSha256, iteration?.files?.layoutPlan, fileSha256],
+      ['sourceContract', bindings.sourceContractSha256, iteration?.files?.sourceContract, fileSha256],
+      ['contract', bindings.contractSha256, iteration?.files?.contract, fileSha256],
+      ['referenceManifest', bindings.referenceManifestSha256, iteration?.referenceManifest, fileSha256],
+      ['targetManifest', bindings.targetManifestSha256, iteration?.targetManifest, fileSha256],
+    ]) {
+      if (!/^[a-f0-9]{64}$/.test(String(expected || ''))) {
+        recordMismatch(name);
+        continue;
+      }
+      try {
+        if (!file || digest(file) !== expected) {
+          recordMismatch(name);
+        }
+      } catch {
+        recordMismatch(name);
+      }
+    }
+    if (!/^[a-f0-9]{64}$/.test(String(bindings.candidateLayoutSha256 || ''))) {
+      recordMismatch('candidateLayout');
+    } else {
+      try {
+        if (
+          nodeMapSha256(readJson(iteration?.files?.layout))
+          !== bindings.candidateLayoutSha256
+        ) {
+          recordMismatch('candidateLayout');
+        }
+      } catch {
+        recordMismatch('candidateLayout');
+      }
+    }
+    try {
+      const plan = readJson(iteration?.files?.layoutPlan);
+      if (
+        !/^[a-f0-9]{64}$/.test(String(bindings.plannedSourceLayoutSha256 || ''))
+        || plan.sourceLayoutSha256 !== bindings.plannedSourceLayoutSha256
+      ) {
+        recordMismatch('plannedSourceLayout');
+      }
+    } catch {
+      recordMismatch('plannedSourceLayout');
+    }
+    if (mismatches.length > 0) {
+      blockers.push({
+        code: 'iteration_artifact_binding_mismatch',
+        message: `Artifacts changed after diagnostic_passed or lack exact bindings: ${mismatches.join(', ')}.`,
+      });
+    }
+  }
+  const layoutPlanFile = iteration?.files?.layoutPlan;
+  if (typeof layoutPlanFile === 'string' && layoutPlanFile && fs.existsSync(layoutPlanFile)) {
+    for (const blocker of validateLayoutPlan(layoutPlanFile)) {
+      blockers.push({
+        code: blocker.code,
+        message: blocker.message,
       });
     }
   }
@@ -245,6 +344,20 @@ function validateCanonicalEvidence(options, iteration, previewReport) {
     blockers.push({
       code: 'canonical_digest_chain_mismatch',
       message: 'SAVE_OK and PREVIEW_OK evidence do not bind the same node-map digest.',
+    });
+  }
+
+  const savedPublicPageUrl = normalizeComparableUrl(saveReport.evidence?.publicPageUrl);
+  const previewPublicPageUrl = normalizeComparableUrl(previewReport.evidence?.publicPageUrl);
+  const requestedPublicPageUrl = normalizeComparableUrl(options.publicPageUrl);
+  if (
+    !savedPublicPageUrl
+    || savedPublicPageUrl !== previewPublicPageUrl
+    || savedPublicPageUrl !== requestedPublicPageUrl
+  ) {
+    blockers.push({
+      code: 'public_page_scope_mismatch',
+      message: 'SAVE_OK, PREVIEW_OK, and canonical capture must bind the exact public URL resolved for this WordPress page ID.',
     });
   }
 
@@ -346,8 +459,8 @@ function benchmarkArgs(options, iteration, startReport) {
     '--diff-dir', path.join(options.outDir, 'diffs'),
     '--out', path.join(options.outDir, 'benchmark-report.json'),
     '--markdown', path.join(options.outDir, 'BENCHMARK.md'),
-    '--max-percent', String(iteration.options?.maxPercent ?? '0'),
-    '--max-viewport-percent', String(iteration.options?.maxViewportPercent ?? '0'),
+    '--max-percent', '0',
+    '--max-viewport-percent', '0',
     '--pad-to-largest',
     '--json',
   ];
@@ -372,6 +485,41 @@ function benchmarkArgs(options, iteration, startReport) {
     args.push('--rendered-min-coverage-ratio', String(iteration.options.renderedMinCoverageRatio));
   }
   return args;
+}
+
+function canonicalZeroDiffBlockers(benchmarkReport) {
+  const comparison = benchmarkReport?.comparison;
+  const expectedLabels = CANONICAL_VIEWPORTS.map((viewport) => viewport.split(':')[0]);
+  const results = Array.isArray(comparison?.results) ? comparison.results : [];
+  const labels = results.map((result) => String(result?.label || ''));
+  const aggregateExact = comparison?.ok === true
+    && Number(comparison?.mismatched) === 0
+    && Number(comparison?.percent) === 0
+    && Number(comparison?.maxPercent) === 0
+    && Number(comparison?.total) > 0;
+  const viewportsExact = results.length === expectedLabels.length
+    && expectedLabels.every((label, index) => labels[index] === label)
+    && results.every((result) => (
+      Number(result?.mismatched) === 0
+      && Number(result?.percent) === 0
+      && Number(result?.total) > 0
+    ));
+  if (aggregateExact && viewportsExact) {
+    return [];
+  }
+  return [{
+    source: 'visual-diff',
+    code: 'canonical_zero_diff_evidence_missing',
+    message: 'Canonical DONE requires an exact zero-difference aggregate and one non-empty zero-difference result for desktop, tablet, and mobile in canonical order.',
+    expectedLabels,
+    actualLabels: labels,
+    aggregate: {
+      mismatched: comparison?.mismatched,
+      total: comparison?.total,
+      percent: comparison?.percent,
+      maxPercent: comparison?.maxPercent,
+    },
+  }];
 }
 
 function nextAction(id, tool, args, requires, instruction) {
@@ -418,7 +566,7 @@ function retryAction(options) {
       ...(options.channel ? ['--channel', options.channel] : []),
       '--json',
     ],
-    [],
+    ['CANONICAL_FAILURE_RESOLVED'],
     'Resolve the explicit blocker, then run this exact canonical verification command.'
   );
 }
@@ -457,11 +605,11 @@ function main() {
       report.status = 'INPUT_BLOCKED';
       report.blockers = inputBlockers;
       report.nextAction = nextAction(
-        'restore_canonical_evidence_chain',
-        scriptPath('wordpress-layout-client.js'),
+        'blocked_canonical_evidence',
+        '',
         [],
         ['PASSING_LOCAL_REPORT', 'SCOPED_SAVE_OK_REPORT', 'SCOPED_PREVIEW_OK_REPORT'],
-        'Recreate the exact validate → save → preview evidence chain before canonical verification.'
+        'Stop. Recreate the exact local-pass → validate → save → preview evidence chain, then start a new canonical verification run from its emitted action.'
       );
       persist(report);
       output(report, options);
@@ -502,7 +650,8 @@ function main() {
     };
     report.benchmark = benchmark.report;
 
-    const visualBudgetFailed = benchmark.report?.comparison?.ok === false;
+    const zeroDiffBlockers = canonicalZeroDiffBlockers(benchmark.report);
+    const visualBudgetFailed = zeroDiffBlockers.length > 0;
     if (benchmark.status !== 0 || benchmark.report?.ok !== true || visualBudgetFailed) {
       report.status = 'CANONICAL_COMPARE_FAILED';
       const benchmarkBlockers = Array.isArray(benchmark.report?.blockers)
@@ -515,11 +664,7 @@ function main() {
             ...blocker,
             source: blocker.source || 'visual-diff',
           }))
-          : [{
-            source: 'visual-diff',
-            code: 'canonical_visual_budget_failed',
-            message: 'Canonical screenshot comparison exceeded the configured budget.',
-          }])
+          : zeroDiffBlockers)
         : [];
       report.blockers = benchmarkBlockers.concat(budgetBlockers).length > 0
         ? benchmarkBlockers.concat(budgetBlockers)
@@ -538,6 +683,7 @@ function main() {
       report.nextAction = nextActionFor({
         ...iteration,
         status: 'benchmark_failed',
+        repairReportPath: report.files.report,
         blockers: report.blockers,
         benchmark: {
           genericGeometry: benchmark.report?.genericGeometry,

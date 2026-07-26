@@ -56,8 +56,31 @@ export class Kit {
     return new Kit(JSON.parse(await readFile(path, 'utf8')));
   }
 
-  /** Świeży kontrakt z działającej instalacji — zawsze preferowany. */
-  static async fromSite(baseUrl, auth) {
+  /**
+   * Świeży kontrakt z działającej instalacji — zawsze preferowany.
+   * Uwierzytelnienie może wskazać wyłącznie nazwę zmiennej środowiskowej:
+   * Kit.fromSite(url, { authEnv: 'MONTEBY_WP_AUTH' }).
+   */
+  static async fromSite(baseUrl, options = {}) {
+    if (!options || Array.isArray(options) || typeof options !== 'object') {
+      throw new Error(
+        'blocked_secrets: nie przekazuj poświadczeń jako argumentu; wskaż wyłącznie { authEnv: "NAZWA_ZMIENNEJ" }'
+      );
+    }
+    const unknownOptions = Object.keys(options).filter((key) => key !== 'authEnv');
+    if (unknownOptions.length > 0) {
+      throw new Error(
+        `blocked_secrets: niedozwolone opcje uwierzytelnienia: ${unknownOptions.join(', ')}; dozwolone jest tylko authEnv`
+      );
+    }
+    const authEnv = options.authEnv;
+    if (authEnv !== undefined && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(authEnv)) {
+      throw new Error('blocked_secrets: authEnv musi być nazwą zmiennej środowiskowej, nie wartością poświadczeń');
+    }
+    const auth = authEnv === undefined ? '' : process.env[authEnv];
+    if (authEnv !== undefined && !auth) {
+      throw new Error(`blocked_secrets: zmienna środowiskowa ${authEnv} nie jest ustawiona`);
+    }
     const response = await fetch(`${baseUrl.replace(/\/$/, '')}/wp-json/monteby/v1/contract`, {
       headers: auth ? { Authorization: `Basic ${Buffer.from(auth).toString('base64')}` } : {},
     });

@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+// REJECTED AUDIT EVIDENCE: non-canonical 95%-depth diagnostic; never install or execute as a completion gate.
 /**
  * compare-geometry.js
  *

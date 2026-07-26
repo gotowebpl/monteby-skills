@@ -242,6 +242,7 @@ test('preview renderer writes safe static HTML from a Monteby node map', () => {
   assert.match(html, /family=Plus\+Jakarta\+Sans:wght@100;200;300;400;500;600;700;800;900&amp;family=Poppins:wght@100;200;300;400;500;600;700;800;900&amp;display=swap/);
   assert.doesNotMatch(html, /family=Inter:/);
   assert.match(html, /<header/);
+  assert.match(html, /<header[^>]*data-monteby-node-id="section-1"/);
   assert.match(html, /max-width:1200px/);
   assert.match(html, /radial-gradient\(circle at 70% 24%,#ffdd67 0,rgba\(255,221,103,0\) 34%\)/);
   assert.match(html, /linear-gradient\(rgba\(0,0,0,\.18\),rgba\(0,0,0,\.18\)\)/);
@@ -320,6 +321,7 @@ test('preview renderer writes safe static HTML from a Monteby node map', () => {
   assert.doesNotMatch(html, /Maidy <Fresh>/);
   assert.match(html, /href="#contact"/);
   assert.match(fragment, /^<header/);
+  assert.match(fragment, /^<header[^>]*data-monteby-node-id="section-1"/);
 });
 
 test('preview renderer keeps Section and Container padding inside authored dimensions', () => {
@@ -437,6 +439,10 @@ test('preview renderer keeps MultilineHeading semantic and sanitizes responsive 
             marginLeft: '12.5%',
             marginLeftMobile: '-3vw',
           },
+          ...Array.from({ length: 10 }, (_, index) => ({
+            text: `Preserved line ${index + 4}.`,
+            color: '#18332d',
+          })),
         ],
       },
       parent: 'ROOT',
@@ -450,6 +456,7 @@ test('preview renderer keeps MultilineHeading semantic and sanitizes responsive 
   assert.match(html, /Clear &lt;Vision&gt;\.<\/span><\/span><br><span style="color:#1f1d1b">Unsafe offsets stay inert\.<\/span>/u);
   assert.match(html, /margin-left:-1\.25rem;--gotoweb-margin-left-base:-1\.25rem;--gotoweb-margin-left-tablet:120px;--gotoweb-margin-left-mobile:120px/u);
   assert.match(html, /margin-left:12\.5%;--gotoweb-margin-left-base:12\.5%;--gotoweb-margin-left-tablet:12\.5%;--gotoweb-margin-left-mobile:-3vw/u);
+  assert.match(html, /Preserved line 13\./u);
   assert.match(html, /@media \(max-width:900px\)\{\.gotoweb-margin-left--responsive\{margin-left:var\(--gotoweb-margin-left-tablet,var\(--gotoweb-margin-left-base\)\)!important\}\}/u);
   assert.match(html, /@media \(max-width:767px\)\{\.gotoweb-margin-left--responsive\{margin-left:var\(--gotoweb-margin-left-mobile,var\(--gotoweb-margin-left-tablet,var\(--gotoweb-margin-left-base\)\)\)!important\}\}/u);
   assert.doesNotMatch(html, /monteby-multiline-heading__line|--monteby-multiline-line-margin-left/u);
@@ -978,7 +985,7 @@ test('preview renderer applies Section overflow to the outer semantic element', 
     },
   }, 'monteby-preview-section-overflow-');
 
-  assert.match(html, /<section style="box-sizing:border-box;[^"]*overflow:hidden[^"]*"><div style="box-sizing:border-box;max-width:1200px;margin-left:auto;margin-right:auto;padding-left:24px;padding-right:24px">/);
+  assert.match(html, /<section[^>]*style="box-sizing:border-box;[^"]*overflow:hidden[^"]*"[^>]*><div style="box-sizing:border-box;max-width:1200px;margin-left:auto;margin-right:auto;padding-left:24px;padding-right:24px">/);
 });
 
 test('preview renderer rejects unsafe Navbar and FormBlock structured values', () => {

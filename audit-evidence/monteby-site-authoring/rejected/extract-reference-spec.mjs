@@ -43,10 +43,7 @@ const SNIPPET = String.raw`(function () {
   function textOnly(el) {
     for (var i = 0; i < el.children.length; i++) {
       var c = el.children[i];
-      if (!visible(c)) continue;
-      if (!INLINE[c.tagName]) return false;
-      var d = getComputedStyle(c).display;
-      if (d === 'block' || d === 'flex' || d === 'grid') return false;
+      if (!INLINE[c.tagName] && visible(c)) return false;
     }
     return true;
   }
@@ -57,18 +54,8 @@ const SNIPPET = String.raw`(function () {
     if (t === 'IMG') return 'image';
     if (t === 'SVG' || t === 'svg') return 'asset';
     if (t === 'FORM') return 'form';
-    if (t === 'UL' || t === 'OL') {
-      for (var li = 0; li < el.children.length; li++) {
-        if (el.children[li].tagName === 'LI' && !textOnly(el.children[li])) return 'box';
-      }
-      return 'list';
-    }
-    if (t === 'LI') { if (!textOnly(el)) return 'box'; }
+    if (t === 'UL' || t === 'OL') return 'list';
     if (t === 'A' || t === 'BUTTON') {
-      for (var bc = 0; bc < el.children.length; bc++) {
-        var bcs = getComputedStyle(el.children[bc]);
-        if (bcs.display === 'block' || bcs.display === 'flex' || bcs.display === 'grid') return 'box';
-      }
       var cs = getComputedStyle(el);
       var hasBg = cs.backgroundColor !== 'rgba(0, 0, 0, 0)' && cs.backgroundColor !== 'transparent';
       var hasBorder = px(cs.borderTopWidth) > 0;
