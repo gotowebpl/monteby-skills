@@ -376,3 +376,14 @@ test('compiler pins typography and keeps marker rows from stacking', async () =>
   // R3: tekst ze zmierzoną miarą dostaje Container maxWidth
   assert.match(source, /st\.maxWidth && st\.rect/);
 });
+
+
+test('compiler guarantees section gutters and runbook documents narrow-capture artifact', () => {
+  const source = fs.readFileSync(path.join(SCRIPTS, 'spec-to-layout.mjs'), 'utf8');
+  // F1: brak zmierzonego bocznego paddingu nie oznacza pełnego bleedu treści
+  assert.match(source, /innerPaddingXMobile = '20px'/);
+  assert.match(source, /isDecorBand/);
+  const runbook = fs.readFileSync(path.join(REFERENCES, 'quick-start-runbook.md'), 'utf8');
+  assert.match(runbook, /minimum window width/);
+  assert.match(runbook, /iframe harness|fixed-width iframe/);
+});

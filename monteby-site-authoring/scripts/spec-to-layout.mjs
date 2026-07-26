@@ -551,6 +551,15 @@ class Compiler {
       }
     }
 
+    const isDecorBand = (style.rect?.h || 0) < 90 && !children.length;
+    if (!isDecorBand && props.innerWidth !== '100%') {
+      if (!props.innerMaxWidth && this.spec.contentWidth) props.innerMaxWidth = px(this.spec.contentWidth);
+      if (!props.innerPaddingX) {
+        props.innerPaddingX = '56px';
+        props.innerPaddingXTablet = '40px';
+        props.innerPaddingXMobile = '20px';
+      }
+    }
     const childIds = children.map((child, i) => this.node(child, `${path}.${i}`));
     return this.kit.section(this.fit('Section', props, path), childIds);
   }
