@@ -1,13 +1,13 @@
 ---
 name: monteby-site-authoring
-description: Use when authoring or modifying Monteby Builder layouts on any live WordPress site with Monteby Builder + Monteby Theme, or when stress-testing Monteby authoring fidelity by recreating HTML/screenshot targets as clean Monteby JSON. Fetch the site's live contract, generate valid control-backed JSON, validate through REST, save through REST, preview through WordPress/PHP, and handle child-theme custom widgets declared by the site contract.
+description: Use when authoring or modifying Monteby Builder layouts on any live WordPress site with Monteby Builder + Monteby Theme, when taking over or handing off a Docker-backed Monteby client site, or when stress-testing Monteby authoring fidelity by recreating HTML/screenshot targets as clean Monteby JSON. Discover the real environment, fetch the site's live contract, generate valid control-backed JSON, validate through REST, save through REST, preview through WordPress/PHP, and handle child-theme custom widgets declared by the site contract.
 ---
 
 # Monteby Site Authoring
 
 ## Overview
 
-Use this skill for site-level AI authoring on an existing WordPress installation. The live site contract is the source of truth; do not rely on a local repo, static widget memories, or pasted HTML-to-JSON conversion.
+Use this skill for site-level AI authoring on an existing WordPress installation. The live site contract is the source of truth for the authoring surface: widgets, props, controls, placement, global styles, templates, host choices, and layout persistence. It is not the source of truth for Compose topology, repository code, mounted paths, deployment configuration, or secrets; discover those from the real project and its runtime before a takeover or handoff. Do not rely on static widget memories or pasted HTML-to-JSON conversion.
 
 The canonical storage is Monteby JSON in WordPress post meta, and canonical rendering is the WordPress/PHP renderer. Do not introduce Astro, Node, React server rendering, static export, raw HTML authoring, or a separate frontend runtime for this workflow.
 
@@ -83,6 +83,10 @@ For a measured hero proof card, portrait, or media panel that visibly protrudes 
 8. Run the production-site gate.
 
    For a complete client site, multipage build, SEO-enabled installation, or release smoke, read `references/production-site-benchmark.md`. It covers global templates, WordPress media, control ownership, responsive/a11y states, gallery behavior, SEO ownership, generated assets, and admin-page smoke checks.
+
+9. Preserve a reproducible project handoff.
+
+   When taking over, documenting, or handing off a complete client installation, read `references/client-site-handoff.md`. Discover the actual Compose services, mounts, volumes, local URLs, WordPress inventory, source-of-truth boundaries, repository states, test commands, and deployment separation before writing project instructions. Keep `AGENTS.md` and `CLAUDE.md` semantically equivalent through one canonical instruction body, and never place credentials or environment-specific secrets in either file.
 
 ## Editor UX Acceptance
 
