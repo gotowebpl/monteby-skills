@@ -53,6 +53,13 @@ const CONTRACT = {
       ],
     },
     {
+      name: 'ButtonBlock',
+      isCanvas: false,
+      allowedParents: ['Section', 'Container'],
+      props: ['label', 'href', 'fontSize', 'backgroundColor', 'textColor'],
+      controls: [{ type: 'css-value', props: ['fontSize'], step: 1, units: ['px'] }],
+    },
+    {
       name: 'ListBlock',
       isCanvas: false,
       allowedParents: ['Section', 'Container'],
@@ -386,4 +393,69 @@ test('compiler guarantees section gutters and runbook documents narrow-capture a
   const runbook = fs.readFileSync(path.join(REFERENCES, 'quick-start-runbook.md'), 'utf8');
   assert.match(runbook, /minimum window width/);
   assert.match(runbook, /iframe harness|fixed-width iframe/);
+});
+
+test('kit surfaces silent snaps and renderer traps discovered by the 10-agent audit', async () => {
+  const dir = tempDir();
+  const contract = writeContract(dir);
+  const { Kit } = await import(path.join(SCRIPTS, 'layout-kit.mjs'));
+  const kit = await Kit.fromContract(contract);
+
+  // B: docięcie do kroku kontrolki musi zostawić ślad w uwagach
+  kit.heading('T', { tag: 'h2', fontSize: '36px', lineHeight: '1.25' });
+  assert.ok(
+    kit.notes.some((n) => /dociągnięte do kroku/.test(n) && /1\.25/.test(n)),
+    'snap wartości jest raportowany'
+  );
+
+  // C: rozmiar od 30px bez wariantów responsywnych
+  assert.ok(
+    kit.notes.some((n) => /clamp\(\)/.test(n)),
+    'próg clamp jest raportowany'
+  );
+
+  // H: brak lineHeight dziedziczy interlinię motywu
+  const k2 = await Kit.fromContract(contract);
+  k2.heading('x', { tag: 'h3', fontSize: '19px' });
+  assert.ok(
+    k2.notes.some((n) => /bez lineHeight/.test(n)),
+    'brak interlinii jest raportowany'
+  );
+
+  // D: komponent bez wariantów responsywnych mówi to wprost
+  assert.throws(
+    () => k2.button('x', '#', { fontSizeTablet: '14px' }),
+    /nie wystawia wariantu responsywnego/,
+    'ButtonBlock tłumaczy brak wariantu zamiast ogólnego „prop spoza kontraktu”'
+  );
+});
+
+test('brief mode is routed, scoped and documented', () => {
+  const skill = fs.readFileSync(path.join(REPO, 'monteby-site-authoring', 'SKILL.md'), 'utf8');
+  const brief = fs.readFileSync(path.join(REFERENCES, 'brief-to-monteby.md'), 'utf8');
+  const html = fs.readFileSync(path.join(REFERENCES, 'html-to-monteby.md'), 'utf8');
+
+  // A: tryb istnieje w routerze i ma własną referencję
+  assert.match(skill, /\| `content-brief-authoring` \|/);
+  assert.match(skill, /references\/brief-to-monteby\.md/);
+  // A: zakaz ręcznego buildera ograniczony do trybu z referencją
+  assert.match(skill, /applies only in `owned-html-reconstruction`/);
+  assert.match(html, /applies only in `owned-html-reconstruction`/);
+
+  // I: artefakty per strona
+  assert.match(brief, /payload-<slug>\.json/);
+  assert.match(brief, /wyścig/);
+  // spójność między stronami serwisu
+  assert.match(brief, /lineHeight` na \*\*każdym\*\*/);
+  assert.match(brief, /heightTablet`\/`heightMobile/);
+  assert.match(brief, /wielokrotnością liczby kolumn/);
+  // uwagi kitu jako bramka
+  assert.match(brief, /Uwagi kitu są bramką/);
+
+  // C/G/H/J/K w tablicy wiedzy
+  assert.match(html, /Fluid font size/);
+  assert.match(html, /Interlinia dziedziczona z motywu/);
+  assert.match(html, /height: auto` dla obrazów poniżej 768px/);
+  assert.match(html, /Siatka hairline z nieparzystą liczbą kafli/);
+  assert.match(html, /nikt tego nie waliduje/);
 });

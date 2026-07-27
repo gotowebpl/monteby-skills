@@ -110,7 +110,7 @@ Do not replace this route with:
 
 - `compare-geometry.js --emit-snippet`;
 - `extract-reference-spec.mjs` or `spec-to-layout.mjs`;
-- a hand-written `build.mjs`;
+- a hand-written `build.mjs`;  <!-- zakaz dotyczy tego trybu; z briefu bez referencji patrz references/brief-to-monteby.md -->
 - direct/manual `layout-kit.mjs`;
 - hand-transcribed Craft JSON;
 - `--viewport-only`.

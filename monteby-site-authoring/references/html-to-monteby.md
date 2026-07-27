@@ -25,6 +25,8 @@ Use this path:
    the saved WordPress/PHP page.
 6. Compare complete canonical captures at all three widths.
 
+This prohibition applies only in `owned-html-reconstruction`, where a measurable reference exists. In `content-brief-authoring` there is no reference to measure, and the canonical route is `layout-kit.mjs` — see `references/brief-to-monteby.md`.
+
 Do not make a browser snippet, hand-written `build.mjs`, direct `layout-kit.mjs`
 generator, or manual node-map transcription the primary route. Those are not
 substitutes for complete captured geometry and the generic measured drafter.
@@ -110,6 +112,7 @@ have different schemas on different widgets.
 | `number` | Send a finite JSON number within min/max | `"1"` is a string, not `1` |
 | `select` / `segment` | Use only a listed option | CSS `none` may be invalid when the control uses an empty token |
 | token control | Use the listed token, not raw CSS | A CSS width string may be rejected even if it looks equivalent |
+| `custom` / `spacing` / `color` / `font-picker` / `media` | Kształt wartości nieopisany; **nikt tego nie waliduje** — ani Kit, ani `normalize-layout.js`, ani `/validate` | „0 błędów" nie obejmuje tych propów; nie autoryzuj zbiorczego `Container.padding`, składaj odstęp z czterech krawędzi |
 | one-value gap | Author one value | `26px 44px` is not a legal single gap |
 | repeater | Use only exposed item keys and cardinality | Invented nested keys can render server-side but break the editor |
 
@@ -145,6 +148,37 @@ multi-layer CSS background string.
 with `itemControls`/`itemFields` use objects containing exactly those keys. An
 object passed to a string list can produce React error #31 even when PHP appears to
 render it.
+
+### Fluid font size (renderer)
+
+Renderer przepisuje **każdy** inline `font-size ≥ 30px` na
+`clamp(round(0.46·px)px, round(px/12, 2)cqw, px)`. Warianty `fontSizeTablet` /
+`fontSizeMobile` nadpisują to wyłącznie wewnątrz swoich breakpointów, więc
+wartość „co do piksela" obowiązuje dokładnie na 1440 / 768 / 390, a pomiędzy
+nimi rozmiar płynie. Zawsze podawaj oba warianty dla rozmiarów od 30px wzwyż;
+poniżej progu clamp nie jest nakładany.
+
+### Interlinia dziedziczona z motywu
+
+`Heading` i `Text` bez własnego `lineHeight` dziedziczą interlinię z `body`
+motywu (typowo 1.5–1.6), a nie wartość typograficzną nagłówka. Mechanizm jest
+ten sam co przy marginesach tekstu. Ustaw `lineHeight` na każdym węźle
+tekstowym, nawet gdy brief go nie podaje — inaczej bliźniacze strony jednego
+serwisu rozjadą się wizualnie.
+
+### Wysokość obrazu na wąskich ekranach
+
+Motyw wymusza `height: auto` dla obrazów poniżej 768px selektorem o wyższej
+specyficzności niż klasa węzła. Każdy `ImageBlock` z `height` musi mieć również
+`heightTablet` i `heightMobile`. Jeśli rogi mają być ostre, ustaw jawnie
+`borderRadius: '0px'` — motyw domyślnie zaokrągla.
+
+### Siatka hairline z nieparzystą liczbą kafli
+
+Wzorzec „`gap: 1px` + tło w kolorze linii" maluje także **puste** komórki
+siatki. Liczba kafli musi być wielokrotnością liczby kolumn; gdy nie jest,
+ostatniemu kaflowi nadaj `gridColumnSpan` równy liczbie kolumn oraz
+`gridColumnSpanTablet/Mobile: 1`.
 
 ### Media sizing
 

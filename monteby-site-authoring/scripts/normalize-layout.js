@@ -179,6 +179,32 @@ function rendererTraps(componentName, props, contract) {
     });
   }
 
+  if (componentName === 'ImageBlock' && 'height' in props
+      && (!('heightTablet' in props) || !('heightMobile' in props))) {
+    notes.push({
+      level: 'warning',
+      message: 'ImageBlock z height bez heightTablet/heightMobile — motyw wymusza height:auto poniżej 768px',
+    });
+  }
+
+  if (['Heading', 'Text', 'MultilineHeading'].includes(componentName) && !('lineHeight' in props)) {
+    notes.push({
+      level: 'warning',
+      message: 'brak lineHeight — nagłówek/akapit dziedziczy interlinię z motywu (typowo 1.5–1.6)',
+    });
+  }
+
+  if (['Heading', 'Text', 'MultilineHeading'].includes(componentName) && 'fontSize' in props) {
+    const size = parseFloat(props.fontSize);
+    if (Number.isFinite(size) && size >= 30
+        && (!('fontSizeTablet' in props) || !('fontSizeMobile' in props))) {
+      notes.push({
+        level: 'warning',
+        message: `fontSize ${props.fontSize} bez obu wariantów responsywnych — renderer nakłada clamp() na rozmiary od 30px`,
+      });
+    }
+  }
+
   return notes;
 }
 
@@ -283,6 +309,8 @@ function main() {
     console.log(JSON.stringify(report, null, 2));
   } else {
     console.log(`Węzły: ${report.nodes}`);
+    console.log('NIE SPRAWDZAM kształtu wartości dla kontrolek typu: spacing, color, font-picker, media, custom '
+      + '(m.in. Heading.tag, ImageBlock.src, ButtonBlock.href, Container.padding) — „0 błędów” ich nie obejmuje.');
     console.log(`Błędy: ${errors.length} | naprawy wartości: ${repairs.length} | ostrzeżenia renderera: ${warnings.length}`);
     for (const item of errors.slice(0, 40)) {
       console.log(`  BŁĄD  ${item.node}${item.prop ? '.' + item.prop : ''}: ${item.message}`);

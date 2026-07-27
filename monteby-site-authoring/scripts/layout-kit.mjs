@@ -124,7 +124,14 @@ export class Kit {
       let out = snap(Number(match[1]), step);
       if (typeof min === 'number') out = Math.max(min, out);
       if (typeof max === 'number') out = Math.min(max, out);
-      return `${out}${match[2] || ''}`;
+      const snapped = `${out}${match[2] || ''}`;
+      if (snapped !== value.trim()) {
+        // Docięcie do kroku kontrolki jest rozbieżnością z referencją/briefem,
+        // więc musi zostawić ślad — inaczej pre-flight widzi już czystą wartość
+        // i raportuje „0 napraw”, a autor sądzi, że ma 1:1.
+        this.notes.push(`${component}.${prop}: dociągnięte do kroku ${step}: ${value} → ${snapped}`);
+      }
+      return snapped;
     }
 
     return value;
@@ -140,7 +147,15 @@ export class Kit {
     for (const [prop, raw] of Object.entries(props)) {
       if (raw === undefined || raw === null || raw === '') continue;
       if (this.blocked.has(prop)) throw new Error(`Prop zablokowany przez kontrakt: ${component}.${prop}`);
-      if (!allowed.has(prop)) throw new Error(`Prop spoza kontraktu: ${component}.${prop}`);
+      if (!allowed.has(prop)) {
+        if (/^(fontSize|lineHeight|letterSpacing|textAlign|marginTop|marginBottom)(Tablet|Mobile)$/.test(prop)) {
+          throw new Error(
+            `${component} nie wystawia wariantu responsywnego ${prop} — ten komponent ma tylko wartość bazową. `
+            + 'Reguła „zawsze podawaj warianty” dotyczy wyłącznie komponentów, które je mają (Heading, Text, Container).'
+          );
+        }
+        throw new Error(`Prop spoza kontraktu: ${component}.${prop}`);
+      }
       const value = this.#normalize(component, prop, raw);
       if (value !== undefined) out[prop] = value;
     }
@@ -156,8 +171,27 @@ export class Kit {
     if (component === 'FormBlock' && out.formBackgroundColor === undefined) {
       this.notes.push('FormBlock bez formBackgroundColor maluje własne białe tło <form>');
     }
-    if (component === 'ImageBlock' && out.height === undefined && out.aspectRatio === undefined) {
-      this.notes.push('ImageBlock bez height ma zerową wysokość do czasu wczytania obrazu');
+    if (component === 'ImageBlock') {
+      if (out.height === undefined && out.aspectRatio === undefined) {
+        this.notes.push('ImageBlock bez height ma zerową wysokość do czasu wczytania obrazu');
+      } else if (out.height !== undefined && (out.heightTablet === undefined || out.heightMobile === undefined)) {
+        // Motyw wymusza height:auto poniżej 768px selektorem o wyższej
+        // specyficzności niż klasa węzła.
+        this.notes.push('ImageBlock z height bez heightTablet/heightMobile — motyw wymusi height:auto poniżej 768px');
+      }
+    }
+    if (TEXT_NODES.has(component) && out.lineHeight === undefined) {
+      // Nagłówek bez własnej interlinii dziedziczy wartość z body motywu.
+      this.notes.push(`${component} bez lineHeight dziedziczy interlinię z motywu — podaj ją jawnie`);
+    }
+    if (TEXT_NODES.has(component) && out.fontSize !== undefined) {
+      const size = parseFloat(out.fontSize);
+      if (Number.isFinite(size) && size >= 30
+          && (out.fontSizeTablet === undefined || out.fontSizeMobile === undefined)) {
+        // Renderer przepisuje każdy font-size >= 30px na clamp() i bez jawnych
+        // wariantów rozmiar płynie między breakpointami.
+        this.notes.push(`${component} fontSize ${out.fontSize} bez wariantów responsywnych — renderer nałoży clamp()`);
+      }
     }
     if (out.backgroundType === 'image' && out.background !== undefined) {
       this.notes.push(`${component}: backgroundType "image" pomija kolor tła`);

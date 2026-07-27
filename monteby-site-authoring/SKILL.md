@@ -18,6 +18,7 @@ mode.
 |---|---|---|
 | `live-page-edit` | editing or extending pages on a working Monteby site | `references/mechanical-workflow-protocol.md` |
 | `owned-html-reconstruction` | reproducing an owned/licensed HTML mockup as a Monteby page | `references/quick-start-runbook.md`, `references/html-to-monteby.md` |
+| `content-brief-authoring` | building a page from a written brief / content JSON, with no reference HTML to measure | `references/brief-to-monteby.md` |
 | `external-reference-benchmark` | third-party demo/template fidelity benchmarks | `references/visual-benchmark-loop.md` |
 | `handoff` | takeover/handoff of a Docker-backed client installation | `references/client-site-handoff.md` |
 | `custom-widget` | registering a site-specific child-theme widget | `references/custom-widget-registration.md` |
@@ -132,6 +133,8 @@ Do not rerun the drafter after a passing runner. When a report emits AUTHOR,
 execute its `scripts/apply-layout-repair-queue.js` action; never translate the
 queue into a manual edit. The applier changes only mechanically proven targets
 and stops on ambiguous content, identity, contract, or graph evidence.
+This prohibition applies only in `owned-html-reconstruction`, where a measurable reference exists. In `content-brief-authoring` there is no reference to measure, and the canonical route is `layout-kit.mjs` — see `references/brief-to-monteby.md`.
+
 Do not replace this path with a browser snippet, a hand-written `build.mjs`,
 or manual node-map transcription as the primary route.
 
