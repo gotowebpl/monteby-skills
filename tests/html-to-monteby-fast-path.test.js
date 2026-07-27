@@ -372,6 +372,44 @@ test('extractor role rules keep structured content out of flattened text', () =>
   assert.match(snippet, /d === 'block' \|\| d === 'flex' \|\| d === 'grid'/);
 });
 
+test('extractor reads motion from the reference sheets', () => {
+  const snippet = execFileSync(
+    process.execPath,
+    [path.join(SCRIPTS, 'extract-reference-spec.mjs'), '--emit-snippet'],
+    { encoding: 'utf8' }
+  );
+  // stan po najechaniu i animacja są mierzone, nie zgadywane
+  assert.match(snippet, /function motionOf/);
+  assert.match(snippet, /hover\|focus-visible\|focus\|active/);
+  assert.match(snippet, /if \(motion\) out\.motion = motion/);
+  // zwykła reguła stylu też wystawia cssRules (zagnieżdżanie) — selektor sprawdzany pierwszy
+  const selectorCheck = snippet.indexOf('rule.selectorText && STATE_RE.test');
+  const nestedWalk = snippet.indexOf('rule.cssRules && rule.cssRules.length');
+  assert.ok(selectorCheck > 0 && nestedWalk > selectorCheck);
+  // skrót ze zmienną nie ma longhandów — czytany jest oryginalny zapis deklaracji
+  assert.match(snippet, /rule\.style\.cssText \|\| ''/);
+  // globalny reset fokusu pasuje do każdego węzła i musi wypaść
+  assert.match(snippet, /universal/);
+  assert.match(snippet, /reducedMotionHonored/);
+});
+
+test('compiler routes measured motion to the residual plan', () => {
+  const source = fs.readFileSync(path.join(SCRIPTS, 'spec-to-layout.mjs'), 'utf8');
+  assert.match(source, /function collectMotion/);
+  assert.match(source, /motion: collectMotion\(spec\)/);
+  // ruch nie trafia do node mapy — kontrakt nie ma dla niego kontrolek
+  assert.match(source, /residual-plan\.json, nie do node mapy/);
+
+  const guidance = fs.readFileSync(path.join(REFERENCES, 'html-to-monteby.md'), 'utf8');
+  assert.match(guidance, /report\.motion\.entries/);
+  // pułapki mechanizmu wejść, każda potwierdzona zachowaniem przeglądarki
+  assert.match(guidance, /Stan początkowy bez tranzycji/);
+  assert.match(guidance, /Wejście animacją, nie tranzycją/);
+  assert.match(guidance, /Zegar, nie klatka animacji/);
+  assert.match(guidance, /document\.visibilityState === 'visible'/);
+  assert.match(guidance, /Bez skryptu strona jest w pełni widoczna/);
+});
+
 test('compiler pins typography and keeps marker rows from stacking', async () => {
   const source = fs.readFileSync(path.join(SCRIPTS, 'spec-to-layout.mjs'), 'utf8');
   // R1: renderer nakłada płynny clamp bez jawnych wariantów — kompilator przypina rozmiary

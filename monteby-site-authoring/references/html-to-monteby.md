@@ -256,6 +256,67 @@ that exact text and destination URL. Do not invent:
 Missing approved legal copy blocks that form only; it does not authorize expanding
 the project scope.
 
+## Ruch: przejścia, stany, wejścia
+
+Ruch jest częścią pomiaru, nie dodatkiem po fakcie. `extract-reference-spec.mjs`
+czyta go ze źródła i zapisuje w dwóch miejscach:
+
+- `node.motion` — `transition` i `animation` z policzonego stylu, użyte
+  `@keyframes` oraz reguły stanów (`:hover`, `:focus-visible`, `:active`), które
+  pasują do tego węzła, wraz z deklaracjami;
+- `spec.motion` — liczba reguł stanów, nazwy klatek, `scrollBehavior` oraz
+  `reducedMotionHonored`.
+
+`spec-to-layout.mjs` przenosi to do `report.motion` i **nie wstawia niczego do
+node mapy**: kontrakt nie wystawia kontrolek ruchu. Każda pozycja z
+`report.motion.entries` musi trafić do `residual-plan.json` na tych samych
+zasadach co inne residua. Cicho pominięty hover jest defektem odwzorowania.
+
+### Czytanie stanów z arkuszy — trzy pułapki
+
+1. Od czasu zagnieżdżania CSS **zwykła reguła stylu też wystawia `cssRules`**
+   (pustą listę). Sprawdzenie `rule.cssRules` przed `rule.selectorText`
+   przemilcza wszystkie stany: pętla schodzi w pustą listę i idzie dalej.
+2. Skrót ze zmienną (`background: var(--steel-2)`) **nie jest rozwijany na
+   longhandy** — `getPropertyValue('background-color')` zwraca pusty string.
+   Oryginalny zapis z `style.cssText` jest wtedy jedynym źródłem wartości.
+3. Reset fokusu z arkusza bazowego (`:focus-visible` na selektorze uniwersalnym)
+   pasuje do każdego węzła strony. Bez odfiltrowania selektorów uniwersalnych
+   specyfikacja puchnie o setki pozycji, które niczego nie opisują.
+
+### Wejścia przy przewijaniu
+
+Kontrakt nie zna wejść, więc żyją w motywie potomnym — arkusz plus mały skrypt.
+Cztery reguły, każda wynikająca z zachowania przeglądarki, nie z gustu:
+
+- **Stan początkowy bez tranzycji.** Skrypt oznacza elementy dopiero po
+  wyrenderowaniu strony. Jeśli reguła stanu początkowego ma `transition`, gotowa
+  treść zanika na oczach użytkownika. Ukrycie musi być natychmiastowe.
+- **Wejście animacją, nie tranzycją.** `transition` jest jedną właściwością:
+  reguła wejścia deklarująca `transition: opacity …` odbiera ją stanom po
+  najechaniu na tym samym elemencie i hover staje się skokowy. `@keyframes`
+  z `animation-fill-mode: both` nie koliduje z niczym.
+- **Zegar, nie klatka animacji.** `requestAnimationFrame`, `IntersectionObserver`
+  i czas animacji CSS **stoją w karcie, której przeglądarka nie renderuje**
+  (karta w tle, panel podglądu, zrzut z niewidocznego okna). Mechanizm oparty
+  wyłącznie na nich zostawia ukrytą treść. Licz widoczność z geometrii przy
+  zdarzeniu przewijania, odmierzaj `setTimeout`, a całość włączaj dopiero gdy
+  `document.visibilityState === 'visible'`.
+- **Bez skryptu strona jest w pełni widoczna.** Stan początkowy wiąż z klasą,
+  którą nadaje dopiero skrypt, i dołóż bezpiecznik odsłaniający treść, gdyby
+  mechanizm nie zadziałał. Ukryta treść jest zawsze gorsza niż brak ruchu.
+
+Do tego `@media (prefers-reduced-motion: reduce)` wyłączające wejścia. Jeśli
+makieta je ma, `spec.motion.reducedMotionHonored` jest `true` i brak tej reguły
+w odwzorowaniu jest regresją.
+
+### Zakres z briefu
+
+Brief bywa mocniejszy niż arkusz: zakaz elementów migających, latających czy
+wyskakujących obowiązuje także wtedy, gdy makieta pokazuje efektowniejsze
+przejście. Zanikanie z przesunięciem o kilkanaście pikseli i zmiana koloru po
+najechaniu mieszczą się w takim zakazie; skala, odbicia i obroty nie.
+
 ## Presentation and canonical save
 
 Presentation comes from `contract.layoutPersistence.presentation` and belongs in

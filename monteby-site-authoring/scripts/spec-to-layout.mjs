@@ -577,6 +577,57 @@ class Compiler {
   }
 }
 
+// ---------------------------------------------------------------- ruch
+
+/**
+ * Zbiera ruch odczytany ze źródła i opisuje go w postaci gotowej do przeniesienia
+ * do planu residualnego. Kontrakt nie wystawia kontrolek przejść, stanów ani
+ * animacji, więc kompilator niczego z tego nie wstawia do node mapy — ale nie
+ * wolno tego po cichu zgubić.
+ *
+ * Węzeł jest wskazywany tak, jak umie to plan residualny: tekstem nagłówka lub
+ * odnośnika, a w ostateczności ścieżką w drzewie sekcji.
+ */
+function collectMotion(spec) {
+  const entries = [];
+  let states = 0;
+  let transitions = 0;
+  let animations = 0;
+
+  const visit = (node, path) => {
+    if (node.motion) {
+      const entry = { path, role: node.role };
+      if (node.text) entry.text = node.text.slice(0, 60);
+      if (node.motion.transition) {
+        entry.transition = node.motion.transition;
+        transitions += 1;
+      }
+      if (node.motion.animation) {
+        entry.animation = node.motion.animation;
+        if (node.motion.keyframes) entry.keyframes = node.motion.keyframes;
+        animations += 1;
+      }
+      if (node.motion.states) {
+        entry.states = node.motion.states;
+        states += node.motion.states.length;
+      }
+      entries.push(entry);
+    }
+    (node.children || []).forEach((child, index) => visit(child, `${path}/${index}`));
+  };
+
+  (spec.sections || []).forEach((section, index) => visit(section, `s${index}`));
+
+  return {
+    entries,
+    states,
+    transitions,
+    animations,
+    reducedMotionHonored: spec.motion ? spec.motion.reducedMotionHonored : null,
+    scrollBehavior: spec.motion ? spec.motion.scrollBehavior : null,
+  };
+}
+
 // ---------------------------------------------------------------- main
 
 async function main() {
@@ -603,6 +654,7 @@ async function main() {
     kitNotes: result.notes,
     issues: compiler.report,
     mediaToReplace: compiler.mediaToReplace,
+    motion: collectMotion(spec),
   };
   if (args.report && typeof args.report === 'string') {
     await writeFile(args.report, JSON.stringify(report, null, 2), 'utf8');
@@ -610,6 +662,13 @@ async function main() {
 
   console.log(`Sekcje: ${report.sections} | węzły: ${report.nodes}`);
   console.log(`Media do podmiany: ${report.mediaToReplace.length} | kwestie: ${report.issues.length}`);
+  if (report.motion.entries.length) {
+    console.log(
+      `Ruch do planu residualnego: ${report.motion.entries.length} węzłów ` +
+        `(stany: ${report.motion.states}, przejścia: ${report.motion.transitions}, animacje: ${report.motion.animations})`
+    );
+    console.log('  Kontrakt nie wystawia kontrolek ruchu — te pozycje idą do residual-plan.json, nie do node mapy.');
+  }
   for (const issue of compiler.report.slice(0, 25)) {
     console.log(`  [${issue.target}] ${issue.path}: ${issue.issue}`);
   }

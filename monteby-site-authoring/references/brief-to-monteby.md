@@ -68,7 +68,15 @@ nie rozstrzyga, weź je ze strony wzorcowej i zapisz w briefie na przyszłość:
   pomalowany prostokąt. Gdy nie jest, ostatniemu kaflowi nadaj
   `gridColumnSpan` równy liczbie kolumn oraz `gridColumnSpanTablet/Mobile: 1`;
 - odstępy i wyrównanie kontenerów z przyciskami (`ButtonBlock` bez kontenera
-  rozciąga się na całą szerokość kolumny).
+  rozciąga się na całą szerokość kolumny);
+- ruch: stany po najechaniu i wejścia sekcji. Kontrakt ich nie wystawia, więc
+  żyją w motywie potomnym i obowiązują cały serwis naraz — nowa podstrona
+  dziedziczy je bez żadnej pracy, ale tylko wtedy, gdy nie odbiega strukturą.
+  Arkusz ruchu adresuje elementy strukturalnie (siatki, klasy renderera), a nie
+  po identyfikatorze węzła; kafel poza siatką albo sekcja o innej budowie po
+  cichu wypada z mechanizmu. Po zapisie strony sprawdź, ile węzłów dostało
+  oznaczenia ruchu, i porównaj z liczbą kafli. Szczegóły i pułapki:
+  `references/html-to-monteby.md`, sekcja „Ruch: przejścia, stany, wejścia".
 
 ## Czego kontrakt nie wystawia
 
