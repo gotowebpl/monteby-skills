@@ -475,8 +475,156 @@ function safeGradientEvidence(value) {
       backgroundAccentSize: size,
     };
   };
+  const safeLayerMetric = (candidate) => {
+    const metric = String(candidate || '').trim().toLowerCase();
+    return /^[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:px|rem|%|vw|vh)$/u.test(metric) ? metric : '';
+  };
+  const safeLayerStop = (candidate) => {
+    const stop = String(candidate || '').trim().toLowerCase();
+    return /^(?:\d+(?:\.\d+)?|\.\d+)(?:px|%)$/u.test(stop) ? stop : '';
+  };
+  const parseLayerColorStops = (parts) => {
+    if (parts.length < 2 || parts.length > 5) {
+      return null;
+    }
+    const stops = {};
+    const stopPattern = /\s+([+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:px|%))$/iu;
+    for (let index = 0; index < parts.length; index += 1) {
+      const stopMatch = stopPattern.exec(parts[index]);
+      const color = normalizeColor(stopMatch ? parts[index].slice(0, stopMatch.index) : parts[index], true);
+      if (!color) {
+        return null;
+      }
+      stops[`color${index + 1}`] = color;
+      const stop = stopMatch ? safeLayerStop(stopMatch[1]) : '';
+      if (stopMatch && !stop) {
+        return null;
+      }
+      if (stop) {
+        stops[`color${index + 1}Stop`] = stop;
+      }
+    }
+    return stops;
+  };
+  const parseCompositeLayer = (layer) => {
+    const match = /^(linear|radial)-gradient\(([\s\S]*)\)$/iu.exec(String(layer || '').trim());
+    if (!match || match[2].length > 640) {
+      return null;
+    }
+    const parts = splitTopLevel(match[2]);
+    if (match[1].toLowerCase() === 'linear') {
+      let angle = 180;
+      let colorOffset = 0;
+      const angleMatch = /^([+-]?(?:\d+(?:\.\d+)?|\.\d+))deg$/iu.exec(parts[0] || '');
+      if (angleMatch) {
+        const rawAngle = Number(angleMatch[1]);
+        if (!Number.isFinite(rawAngle)) {
+          return null;
+        }
+        angle = ((rawAngle % 360) + 360) % 360;
+        colorOffset = 1;
+      }
+      const stops = parseLayerColorStops(parts.slice(colorOffset));
+      return stops ? { type: 'linear', angle, ...stops } : null;
+    }
+
+    const prelude = /^(circle|ellipse)(?:\s+([+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:px|rem|%|vw|vh))(?:\s+([+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:px|rem|%|vh)))?)?(?:\s+at\s+(.+))?$/iu.exec(parts[0] || '');
+    if (!prelude) {
+      return null;
+    }
+    const shape = prelude[1].toLowerCase();
+    const size = safeLayerMetric(prelude[2]);
+    const sizeY = safeLayerMetric(prelude[3]);
+    if ((prelude[2] && !size) || (prelude[3] && !sizeY)) {
+      return null;
+    }
+    let positionX = '';
+    let positionY = '';
+    const positionSource = String(prelude[4] || '').trim().toLowerCase();
+    if (positionSource && !/^center(?:\s+center)?$/u.test(positionSource)) {
+      const axes = positionSource.split(/\s+/u);
+      positionX = axes.length === 2 ? safeLayerMetric(axes[0]) : '';
+      positionY = axes.length === 2 ? safeLayerMetric(axes[1]) : '';
+      if (!positionX || !positionY) {
+        return null;
+      }
+    }
+    const stops = parseLayerColorStops(parts.slice(1));
+    return stops
+      ? {
+        type: 'radial',
+        ...(shape === 'ellipse' ? { shape } : {}),
+        ...(size ? { size } : {}),
+        ...(sizeY ? { sizeY } : {}),
+        ...(positionX ? { positionX, positionY } : {}),
+        ...stops,
+      }
+      : null;
+  };
+  const parseCompositeLayers = (layers) => {
+    if (layers.length < 1 || layers.length > 4) {
+      return null;
+    }
+    const parsed = layers.map(parseCompositeLayer);
+    return parsed.every(Boolean) ? { backgroundLayers: parsed } : null;
+  };
+  const sanitizeCompositeLayerObject = (layer) => {
+    if (!layer || typeof layer !== 'object' || Array.isArray(layer)) {
+      return null;
+    }
+    const type = String(layer.type || '').trim().toLowerCase();
+    if (!['linear', 'radial', 'colorwash'].includes(type)) {
+      return null;
+    }
+    const out = { type: type === 'colorwash' ? 'colorWash' : type };
+    for (let index = 1; index <= 5; index += 1) {
+      const color = normalizeColor(layer[`color${index}`], true);
+      if (layer[`color${index}`] !== undefined && !color) {
+        return null;
+      }
+      if (color) {
+        out[`color${index}`] = color;
+      }
+      const stop = safeLayerStop(layer[`color${index}Stop`]);
+      if (layer[`color${index}Stop`] !== undefined && !stop) {
+        return null;
+      }
+      if (stop) {
+        out[`color${index}Stop`] = stop;
+      }
+    }
+    if (!out.color1) {
+      return null;
+    }
+    if (type === 'linear' && Number.isFinite(Number(layer.angle))) {
+      out.angle = ((Number(layer.angle) % 360) + 360) % 360;
+    }
+    if (type === 'radial') {
+      const shape = String(layer.shape || '').trim().toLowerCase();
+      if (shape === 'ellipse') {
+        out.shape = 'ellipse';
+      }
+      for (const metricProp of ['size', 'sizeY', 'positionX', 'positionY']) {
+        const metric = safeLayerMetric(layer[metricProp]);
+        if (layer[metricProp] !== undefined && !metric) {
+          return null;
+        }
+        if (metric) {
+          out[metricProp] = metric;
+        }
+      }
+    }
+    return out;
+  };
 
   if (value && typeof value === 'object' && !Array.isArray(value)) {
+    if (Array.isArray(value.backgroundLayers)) {
+      if (value.backgroundLayers.length < 1 || value.backgroundLayers.length > 4) {
+        return null;
+      }
+      const sanitizedLayers = value.backgroundLayers.map(sanitizeCompositeLayerObject);
+      return sanitizedLayers.every(Boolean) ? { backgroundLayers: sanitizedLayers } : null;
+    }
     if (value.backgroundType !== 'gradient') {
       return null;
     }
@@ -499,14 +647,17 @@ function safeGradientEvidence(value) {
   }
   const layers = splitTopLevel(gradient);
   if (layers.length === 1) {
-    return parseSingleGradient(layers[0]);
+    return parseSingleGradient(layers[0]) || parseCompositeLayers(layers);
   }
   if (layers.length !== 2) {
-    return null;
+    return parseCompositeLayers(layers);
   }
   const accent = parseRadialAccent(layers[0]);
   const base = parseSingleGradient(layers[1]);
-  return accent && base?.gradientType === 'linear' ? { ...base, ...accent } : null;
+  if (accent && base?.gradientType === 'linear') {
+    return { ...base, ...accent };
+  }
+  return parseCompositeLayers(layers);
 }
 
 function safeVisualFrameEvidence(value) {
@@ -2190,6 +2341,30 @@ function captureRenderedLayout(
     const slashAlpha = /\/([+]?\d*\.?\d+)%?\)$/u.exec(normalized);
     return !slashAlpha || Number.parseFloat(slashAlpha[1]) > 0.02;
   };
+  const safeMediaFilterEvidence = (value) => {
+    const filter = String(value || '').trim().toLowerCase();
+    if (!filter || filter === 'none' || filter.length > 256) {
+      return null;
+    }
+    const evidence = {};
+    const functionPattern = /([a-z-]+)\(\s*([^)]*)\s*\)/gu;
+    for (let match = functionPattern.exec(filter); match; match = functionPattern.exec(filter)) {
+      const name = match[1];
+      if (!['brightness', 'saturate', 'contrast'].includes(name)) {
+        // Inne funkcje filtra nie mają typowanych kontrolek medium; cały
+        // filtr przestaje być bezpiecznym dowodem, nie tylko ta funkcja.
+        return null;
+      }
+      const raw = match[2];
+      const percentage = /^([+]?(?:\d+(?:\.\d+)?|\.\d+))%$/u.exec(raw);
+      const numeric = percentage ? Number(percentage[1]) / 100 : Number(raw);
+      if (!Number.isFinite(numeric) || numeric < 0 || numeric > 2) {
+        return null;
+      }
+      evidence[name] = Math.round(numeric * 100) / 100;
+    }
+    return Object.keys(evidence).length > 0 ? { mediaFilter: evidence } : null;
+  };
   const hasVisibleBorder = (style) => [
     ['borderTopWidth', 'borderTopColor'],
     ['borderRightWidth', 'borderRightColor'],
@@ -2671,6 +2846,19 @@ function captureRenderedLayout(
       }
       const backgroundDimensions = backgroundImageDimensions[rawBackgroundImage] || {};
       const stackingIndex = safeStackingIndex(style.zIndex);
+      const rawPoster = tag === 'video' ? String(element.poster || '').trim() : '';
+      const videoEvidence = tag === 'video'
+        ? {
+          videoAutoplay: element.autoplay === true,
+          videoLoop: element.loop === true,
+          videoMuted: element.muted === true || element.defaultMuted === true,
+          videoPlaysInline: element.playsInline === true,
+          videoPreload: ['none', 'metadata', 'auto'].includes(String(element.preload || '').toLowerCase())
+            ? String(element.preload).toLowerCase()
+            : '',
+          videoPoster: /^data:|^blob:/i.test(rawPoster) ? '' : rawPoster,
+        }
+        : {};
       return {
         order,
         tag,
@@ -2678,6 +2866,8 @@ function captureRenderedLayout(
         ...(sourceKind ? { sourceKind } : {}),
         backgroundImage,
         ...(backgroundImageKind ? { backgroundImageKind } : {}),
+        ...videoEvidence,
+        ...(safeMediaFilterEvidence(style.filter) || {}),
         backgroundNaturalWidth: Number(backgroundDimensions.width) || 0,
         backgroundNaturalHeight: Number(backgroundDimensions.height) || 0,
         rect,
@@ -4286,6 +4476,7 @@ module.exports = {
   renderedMediaSurfaces,
   resolveNpxExecutable,
   safeCapturedFontFamily,
+  safeGradientEvidence,
   usage,
   waitForFontFaceSet,
   waitForImageDecode,

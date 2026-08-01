@@ -35,7 +35,9 @@ const BLOCKED_PROPS = new Set([
   'styleattribute',
   'class',
   'classes',
-  'backgroundvideo',
+  // 'backgroundvideo' usunięte: od Buildera 1.2.0 Section wystawia typowane
+  // propy backgroundVideo*; na starszych kontraktach bez tych propów zadziała
+  // bramka allowlisty kontraktu (unknown_prop).
   'position',
   'postop',
   'posright',
@@ -464,6 +466,29 @@ function nodeType(node) {
 function auditProps(report, nodeId, type, props, contract) {
   if (!props || typeof props !== 'object' || Array.isArray(props)) {
     return;
+  }
+
+  const backgroundVideo = typeof props.backgroundVideo === 'string' ? props.backgroundVideo.trim() : '';
+  const backgroundVideoPoster = typeof props.backgroundVideoPoster === 'string' ? props.backgroundVideoPoster.trim() : '';
+  if (backgroundVideo && !backgroundVideoPoster) {
+    // Budżet wydajności protokołu: zakaz wideo w tle bez posteru.
+    error(
+      report,
+      'background_video_poster_missing',
+      `${nodeId} (${type}) authors backgroundVideo without backgroundVideoPoster; the performance budget forbids background video without a poster.`
+    );
+  }
+
+  const hasCompositeLayers = Array.isArray(props.backgroundLayers) && props.backgroundLayers.length > 0;
+  const hasCompositeMedia = props.backgroundMedia === 'image' || props.backgroundMedia === 'video';
+  if ((hasCompositeLayers || hasCompositeMedia) && Number(props.backgroundModelVersion) !== 2) {
+    // Renderer konsumuje kompozytowe tło wyłącznie przy jawnym dyskryminatorze
+    // modelu 2; bez niego warstwy i medium walidują się, ale malują się na nic.
+    error(
+      report,
+      'background_model_version_missing',
+      `${nodeId} (${type}) authors composite background props without backgroundModelVersion: 2; the renderer ignores them silently.`
+    );
   }
 
   for (const [prop, value] of Object.entries(props)) {

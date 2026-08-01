@@ -8,8 +8,14 @@
  *   - odrzucenie komponentu/propa spoza kontraktu i propa zablokowanego,
  *   - sprawdzenie allowedParents przy każdym zagnieżdżeniu,
  *   - normalizacja wartości wg kontrolki (step, min/max, options, liczba vs tekst),
+ *   - walidacja repeaterów (np. backgroundLayers, FormBlock.fields/steps):
+ *     klucze pozycji tylko z itemControls kontraktu, wartości dociągane
+ *     do zagnieżdżonych kontrolek,
  *   - marginTop: 0 na tekstach (motyw dokłada 1em),
  *   - borderWidth: 0 przy pojedynczej krawędzi (inaczej renderer obrysuje pudełko),
+ *   - twarda blokada backgroundVideo bez backgroundVideoPoster (budżet
+ *     wydajności) i uwaga o domyślnej polityce mobilnej "poster",
+ *   - uwaga, gdy sectionRhythmPreset miesza się z ręcznymi paddingami,
  *   - ostrzeżenia dla ListBlock/FormBlock/ImageBlock i jednowartościowego gap.
  *
  * Użycie:
@@ -44,6 +50,23 @@ export class Kit {
         for (const prop of control.props || []) {
           const key = `${component.name}.${prop}`;
           if (!this.controls.has(key)) this.controls.set(key, control);
+        }
+      }
+    }
+    // Kontrolki zagnieżdżone repeaterów (itemControls), np. Section.backgroundLayers
+    // czy FormBlock.fields; klucz: "Komponent.propRepeatera".
+    this.repeaterItemControls = new Map();
+    for (const component of contract.components || []) {
+      for (const control of component.controls || []) {
+        if (control.type !== 'repeater' || !Array.isArray(control.itemControls)) continue;
+        for (const prop of control.props || []) {
+          const itemControls = new Map();
+          for (const itemControl of control.itemControls) {
+            for (const itemProp of itemControl.props || []) {
+              if (!itemControls.has(itemProp)) itemControls.set(itemProp, itemControl);
+            }
+          }
+          this.repeaterItemControls.set(`${component.name}.${prop}`, itemControls);
         }
       }
     }
@@ -91,11 +114,18 @@ export class Kit {
   #normalize(component, prop, value) {
     const control = this.controls.get(`${component}.${prop}`);
     if (!control) return value;
+    if (control.type === 'repeater' && Array.isArray(value)) {
+      return this.#normalizeRepeater(component, prop, control, value);
+    }
+    return this.#normalizeControlValue(control, `${component}.${prop}`, value);
+  }
+
+  #normalizeControlValue(control, label, value) {
     const { type, options, step, min, max } = control;
 
     if ((type === 'select' || type === 'segment') && Array.isArray(options)) {
       if (!options.includes(value)) {
-        this.notes.push(`${component}.${prop}: ${JSON.stringify(value)} spoza ${JSON.stringify(options)} — pominięte`);
+        this.notes.push(`${label}: ${JSON.stringify(value)} spoza ${JSON.stringify(options)}, pominięte`);
         return undefined;
       }
       return value;
@@ -104,7 +134,7 @@ export class Kit {
     if (type === 'number') {
       const numeric = Number(value);
       if (!Number.isFinite(numeric)) {
-        this.notes.push(`${component}.${prop}: ${JSON.stringify(value)} nie jest liczbą — pominięte`);
+        this.notes.push(`${label}: ${JSON.stringify(value)} nie jest liczbą, pominięte`);
         return undefined;
       }
       let out = step ? snap(numeric, step) : numeric;
@@ -115,7 +145,7 @@ export class Kit {
 
     if (type === 'css-value' && typeof value === 'string') {
       if (/\S\s+\S/.test(value.trim())) {
-        this.notes.push(`${component}.${prop}: kontrolka przyjmuje jedną wartość, podano „${value}” — pominięte`);
+        this.notes.push(`${label}: kontrolka przyjmuje jedną wartość, podano „${value}”, pominięte`);
         return undefined;
       }
       if (!step) return value;
@@ -129,12 +159,46 @@ export class Kit {
         // Docięcie do kroku kontrolki jest rozbieżnością z referencją/briefem,
         // więc musi zostawić ślad — inaczej pre-flight widzi już czystą wartość
         // i raportuje „0 napraw”, a autor sądzi, że ma 1:1.
-        this.notes.push(`${component}.${prop}: dociągnięte do kroku ${step}: ${value} → ${snapped}`);
+        this.notes.push(`${label}: dociągnięte do kroku ${step}: ${value} → ${snapped}`);
       }
       return snapped;
     }
 
     return value;
+  }
+
+  #normalizeRepeater(component, prop, control, value) {
+    const itemControls = this.repeaterItemControls.get(`${component}.${prop}`);
+    if (!itemControls || itemControls.size === 0) return value;
+
+    const items = [];
+    for (const [index, item] of value.entries()) {
+      const label = `${component}.${prop}[${index}]`;
+      if (!item || typeof item !== 'object' || Array.isArray(item)) {
+        this.notes.push(`${label}: pozycja repeatera musi być obiektem, pominięta`);
+        continue;
+      }
+      const out = {};
+      for (const [itemProp, raw] of Object.entries(item)) {
+        if (raw === undefined || raw === null || raw === '') continue;
+        if (!itemControls.has(itemProp)) {
+          // Wymyślony klucz potrafi przejść render PHP i wywrócić edytor,
+          // dlatego nie wchodzi do node mapy.
+          this.notes.push(`${label}.${itemProp}: klucz spoza itemControls kontraktu, pominięty`);
+          continue;
+        }
+        const normalized = this.#normalizeControlValue(itemControls.get(itemProp), `${label}.${itemProp}`, raw);
+        if (normalized !== undefined) out[itemProp] = normalized;
+      }
+      items.push(out);
+    }
+    if (typeof control.minItems === 'number' && items.length < control.minItems) {
+      this.notes.push(`${component}.${prop}: ${items.length} pozycji poniżej minItems ${control.minItems}`);
+    }
+    if (typeof control.maxItems === 'number' && items.length > control.maxItems) {
+      this.notes.push(`${component}.${prop}: ${items.length} pozycji ponad maxItems ${control.maxItems}`);
+    }
+    return items;
   }
 
   /** Dowolny komponent z kontraktu. */
@@ -196,6 +260,27 @@ export class Kit {
     if (out.backgroundType === 'image' && out.background !== undefined) {
       this.notes.push(`${component}: backgroundType "image" pomija kolor tła`);
     }
+    if (out.backgroundVideo !== undefined || out.backgroundMedia === 'video' || out.backgroundType === 'video') {
+      if (out.backgroundVideoPoster === undefined) {
+        // Budżet wydajności protokołu: zakaz wideo bez posteru. Bez posteru
+        // wolny transfer zostawia pustą sekcję, a mobilna polityka "poster"
+        // nie ma czego pokazać.
+        throw new Error(
+          `${component}: backgroundVideo bez backgroundVideoPoster jest zablokowane przez budżet wydajności; podaj poster`
+        );
+      }
+      if (out.backgroundVideoMobileBehavior === undefined) {
+        this.notes.push(
+          `${component}: backgroundVideoMobileBehavior nieustawione; polityka budżetu to "poster" na mobile, ustaw jawnie`
+        );
+      }
+    }
+    if (out.sectionRhythmPreset !== undefined
+      && (out.paddingTop !== undefined || out.paddingBottom !== undefined)) {
+      this.notes.push(
+        `${component}: sectionRhythmPreset razem z ręcznym paddingTop/paddingBottom; preset ma zastępować ręczny rytm, zostaw jedno źródło`
+      );
+    }
 
     const isCanvas = Boolean(definition.isCanvas);
     this.counter += 1;
@@ -224,6 +309,22 @@ export class Kit {
   button(label, href, props = {}) { return this.node('ButtonBlock', { label, href, ...props }); }
   image(src, props = {}) { return this.node('ImageBlock', { src, ...props }); }
   icon(name, props = {}) { return this.node('IconBlock', { icon: name, ...props }); }
+
+  /**
+   * Sekcja z wideo w tle (Builder 1.2.0). Poster jest obowiązkowy, polityka
+   * mobilna jawna (domyślnie "poster" zgodnie z budżetem wydajności).
+   */
+  videoSection(src, poster, props = {}, children = []) {
+    return this.section({
+      // Renderer wymaga dyskryminatora modelu 2, inaczej wideo nie maluje się wcale.
+      backgroundModelVersion: 2,
+      backgroundMedia: 'video',
+      backgroundVideo: src,
+      backgroundVideoPoster: poster,
+      backgroundVideoMobileBehavior: props.backgroundVideoMobileBehavior ?? 'poster',
+      ...props,
+    }, children);
+  }
 
   /** Sekcja z kolumną treści o szerokości serwisu. */
   shell(props, children) {

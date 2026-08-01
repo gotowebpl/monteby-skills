@@ -30,15 +30,65 @@ z layoutu wzorcowego.
 
 | Faza | Komenda / czynność | Warunek przejścia |
 |---|---|---|
-| 0 Kontrakt | `GET /wp-json/monteby/v1/contract` → `.monteby/contract.json` | HTTP 200, jest `components` |
-| 1 Wzorzec | `GET .../pages/{wzorzec}/layout` → zapisz jako `.monteby/pattern.json` | masz wartości propów sekcji, których będziesz używać |
-| 2 Treść | zbierz treść w jednym pliku JSON (jeden obiekt na stronę) | teksty 1:1 z briefu, bez skracania i parafraz |
-| 3 Build | `node .monteby/build-<slug>.mjs` na `layout-kit.mjs` | skrypt kończy się bez wyjątku |
-| 4 Uwagi kitu | przeczytaj `result.notes` | **pusta lista** albo każda pozycja świadomie zaakceptowana i opisana |
-| 5 Pre-flight | `normalize-layout.js --contract … --layout …` | `Błędy: 0`, ostrzeżenia przeczytane |
-| 6 Walidacja | `POST /wp-json/monteby/v1/validate` | `valid: true` |
-| 7 Zapis | `GET .../layout` po `postModifiedGmt`, potem `PUT` z `expectedModifiedGmt` | HTTP 200 |
-| 8 Pomiar | zapisana strona na 1440/768/390 | brak przepełnienia poziomego, sekcje wyrenderowane |
+| 0 Tokeny | wczytaj tokeny marki projektu: `.monteby/design-tokens.mjs` i `brand.json` (albo `handoff.json` z przekazania, patrz `references/design-handoff.md`) | kolory, fonty i skala odstępów pochodzą z tokenów, nie z pamięci; brak plików tokenów odnotuj jawnie w raporcie |
+| 1 Kontrakt | `GET /wp-json/monteby/v1/contract` → `.monteby/contract.json` | HTTP 200, jest `components` |
+| 2 Wzorzec | `GET .../pages/{wzorzec}/layout` → zapisz jako `.monteby/pattern.json` | masz wartości propów sekcji, których będziesz używać |
+| 3 Treść | zbierz treść w jednym pliku JSON (jeden obiekt na stronę) | teksty 1:1 z briefu, bez skracania i parafraz |
+| 4 Build per sekcja | `node .monteby/build-<slug>.mjs` na `layout-kit.mjs`, sekcja po sekcji z szybkim podglądem (niżej) | każda sekcja obejrzana w podglądzie zanim powstanie następna |
+| 5 Uwagi kitu | przeczytaj `result.notes` | **pusta lista** albo każda pozycja świadomie zaakceptowana i opisana |
+| 6 Pre-flight | `normalize-layout.js --contract … --layout …` | `Błędy: 0`, ostrzeżenia przeczytane |
+| 7 Walidacja | `POST /wp-json/monteby/v1/validate` | `valid: true` |
+| 8 Zapis | `GET .../layout` po `postModifiedGmt`, potem `PUT` z `expectedModifiedGmt` | HTTP 200 |
+| 9 Bramka końcowa | porównanie zrzutów zapisanej strony na 1440/834/390 (niżej) | brak przepełnienia poziomego, sekcje wyrenderowane, różnice zrzutów rozliczone |
+
+Szerokości pomiaru: 1440/834/390. Wcześniejsza wersja tej tabeli podawała 768;
+obowiązuje jedna reguła szerokości tabletu z `mechanical-workflow-protocol.md`
+(arkusz tabletowy wtyczki działa do 900px, mobilny do 767px, a 834 to
+szerokość pomiarowa).
+
+## Iteracja per sekcja
+
+Nie buduj całej strony na ślepo. Po każdej sekcji wyrenderuj szybki podgląd
+statyczny i obejrzyj go, zanim przejdziesz dalej:
+
+```bash
+node monteby-site-authoring/scripts/render-monteby-preview.js \
+  --layout .monteby/layout-<slug>.json \
+  --out .monteby/preview-<slug>.html
+```
+
+Podgląd statyczny jest diagnostyką, nie dowodem kanonicznym: łapie złe kolory,
+złamane siatki, brakujące media i rozjechane odstępy od tokenów, zanim
+zapłacisz koszt pełnego zapisu. Iteruj na pojedynczej sekcji do skutku, dopiero
+potem dodawaj kolejną. Kanoniczna prawda pozostaje po stronie zapisanej strony
+WordPress/PHP.
+
+## Bramka końcowa: porównanie zrzutów
+
+Po zapisie wykonaj zrzuty zapisanej strony na trzech viewportach i porównaj je
+z podglądem lub wzorcem wizualnym (makietą z design skilla, stroną wzorcową):
+
+```bash
+node monteby-site-authoring/scripts/capture-template-reference.js \
+  --url "https://example.test/nowa-strona" \
+  --out-dir .monteby/final-<slug> \
+  --name candidate \
+  --full-page \
+  --capture-layout
+
+node monteby-site-authoring/scripts/compare-screenshots.js \
+  --target .monteby/final-<slug>/pattern-desktop.png \
+  --candidate .monteby/final-<slug>/candidate-desktop.png \
+  --diff .monteby/final-<slug>/diff-desktop.png \
+  --label desktop
+```
+
+Powtórz porównanie dla tabletu i mobile. Gdy nie ma żadnego wzorca rastrowego,
+bramką pozostaje inspekcja zrzutów: brak przepełnienia poziomego, kompletność
+sekcji, zgodność kolorów i typografii z tokenami. Różnice wypisz w raporcie
+z decyzją dla każdej; cicha akceptacja różnicy jest defektem. Sprawdź też
+budżety wydajności z `mechanical-workflow-protocol.md` (sekcja „Budżety
+wydajności").
 
 **Uwagi kitu są bramką, nie logiem.** Kit zgłasza tam każde docięcie wartości do
 kroku kontrolki oraz każdą pułapkę renderera. Pusta lista to jedyny dowód, że
@@ -58,6 +108,11 @@ równolegle — plik znika albo zostaje nadpisany cudzą node mapą, a `/validat
 Te decyzje muszą być identyczne na wszystkich stronach serwisu — jeśli brief ich
 nie rozstrzyga, weź je ze strony wzorcowej i zapisz w briefie na przyszłość:
 
+- rytm pionowy sekcji: od Buildera 1.2.0 preferuj `sectionRhythmPreset`
+  (`compact`/`standard`/`spacious`/`hero`, z wariantami Tablet/Mobile) zamiast
+  ręcznego kopiowania `paddingTop*`/`paddingBottom*` ze wzorca; ręczne paddingi
+  zostają tylko tam, gdzie zmierzony rytm nie pasuje do żadnego presetu. To samo
+  dotyczy `sectionContentWidthPreset` wobec `innerMaxWidth`;
 - `lineHeight` na **każdym** `Heading` i `Text` (brak = motyw narzuca własną
   interlinię, typowo 1.5–1.6, i bliźniacze strony rozjadą się wizualnie);
 - `fontSizeTablet` i `fontSizeMobile` wszędzie, gdzie `fontSize ≥ 30px`

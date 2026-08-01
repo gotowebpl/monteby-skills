@@ -100,6 +100,38 @@ A painted band owns its measured rectangle, not neutral whitespace before the ne
 landmark. Put trailing neutral space on the following neutral section so a color,
 gradient, or image does not bleed between bands.
 
+## Composition routes available since Builder 1.2.0
+
+These behaviors used to be product gaps. Since Monteby Builder 1.2.0 the live
+contract expresses them with typed controls, so degrading them to
+`blocked_product_gap` is an authoring error. Always confirm the prop in the live
+contract first; on an older contract the pre-1.2.0 gap classification still
+applies.
+
+
+Every composite route below (layers, base medium, video, filters) additionally
+requires the explicit discriminator `backgroundModelVersion: 2` on the same
+node. The renderer consumes composite props only behind it: without the
+discriminator the document validates cleanly and paints nothing.
+
+| Measured evidence | Contract-backed composition since 1.2.0 |
+|---|---|
+| Multi-stop gradient (3 to 5 stops) | One `backgroundLayers` item with `type: "linear"`, `color1..color5`, and per-stop `color1Stop..color5Stop` |
+| Positioned radial gradient | `backgroundLayers` item with `type: "radial"`, `positionX`/`positionY` (plus tablet/mobile variants) and `size` |
+| Elliptical radial gradient | Same layer with `shape: "ellipse"` and `sizeY` (plus `sizeYTablet`/`sizeYMobile`) |
+| Stacked gradient artwork over one band | Multiple `backgroundLayers` items ordered top-first, each with `opacity` and `blendMode` from the listed options |
+| Dimmed or tinted photo/video frame | Medium filter tiers: `backgroundMediaBrightness`, `backgroundMediaSaturate`, `backgroundMediaContrast`, each with `Tablet`/`Mobile` tiers; do not bake the dimming into a pre-darkened asset or an extra overlay node |
+| Background video | `backgroundMedia: "video"` (or `backgroundType: "video"` on the legacy model) with `backgroundVideo`, a required `backgroundVideoPoster`, `backgroundVideoAutoplay`/`Loop`/`Muted`/`Preload`, `backgroundVideoFit`, and an explicit `backgroundVideoMobileBehavior` (`autoplay`, `poster`, or `disabled`) |
+| Uniform vertical band rhythm that matches a preset | `sectionRhythmPreset` (`compact`, `standard`, `spacious`, `hero`) with `Tablet`/`Mobile` variants instead of hand-copied `paddingTop*`/`paddingBottom*` values; keep explicit paddings when the measured rhythm does not match a preset |
+| Sibling overlap or pull-up of a following section/container | `Container.layerPull` plus `layerIndex` (and `paintLayer`) instead of negative-margin improvisation |
+| Linked heading | `Heading.href` for a static link, `Heading.dynamicHref` for a host-resolved link; no wrapper button or raw anchor |
+| Multi-step form with conditional fields | FormBlock v2: `fields[].fieldId`, `steps[]` with `stepId`/`fieldIds`, `progress`, `visibleWhen` on fields, result/redirect props, `attributionMode`, and `collectionNoticeMode`/`collectionNotice` for the information shown at data collection |
+
+The product-gap rule remains for behavior the contract still cannot express,
+for example conic gradients, `url()` image layers inside a gradient stack,
+`var()`/`calc()` color or geometry, more than five stops in one layer, and
+multi-layer shadows. Those stay `blocked_product_gap`, never raw CSS.
+
 ## Control-value rules
 
 Resolve each value against that component's current `controls`; same-named props may
@@ -139,8 +171,10 @@ PHP output.
 ### Image background plus color
 
 `backgroundType: "image"` may not emit a separate background color. Use only the
-typed layer combination exposed by the live contract. Do not preserve a raw
-multi-layer CSS background string.
+typed layer combination exposed by the live contract; since 1.2.0 a color wash
+over a base medium is one `backgroundLayers` item with `type: "colorWash"` above
+`backgroundMedia: "image"`. Do not preserve a raw multi-layer CSS background
+string.
 
 ### Lists and repeaters
 
@@ -153,9 +187,12 @@ render it.
 
 Renderer przepisuje **każdy** inline `font-size ≥ 30px` na
 `clamp(round(0.46·px)px, round(px/12, 2)cqw, px)`. Warianty `fontSizeTablet` /
-`fontSizeMobile` nadpisują to wyłącznie wewnątrz swoich breakpointów, więc
-wartość „co do piksela" obowiązuje dokładnie na 1440 / 768 / 390, a pomiędzy
-nimi rozmiar płynie. Zawsze podawaj oba warianty dla rozmiarów od 30px wzwyż;
+`fontSizeMobile` nadpisują to wyłącznie wewnątrz swoich arkuszy: tabletowy
+obowiązuje do 900px, mobilny do 767px (reguła szerokości tabletu z
+`mechanical-workflow-protocol.md`; wcześniejsza wersja tego zapisu podawała
+768, co było niespójne z progami arkuszy wtyczki). Wartość „co do piksela"
+sprawdzasz na pomiarowych szerokościach 1440 / 834 / 390, a pomiędzy arkuszami
+rozmiar płynie. Zawsze podawaj oba warianty dla rozmiarów od 30px wzwyż;
 poniżej progu clamp nie jest nakładany.
 
 ### Interlinia dziedziczona z motywu
@@ -188,10 +225,13 @@ PHP page keeps the media visible at all three widths.
 
 ### Gradients and shadows
 
-Map a gradient only when the complete rendered evidence reduces to the exact typed
-gradient controls. Map a shadow only when all required structured fields and
-renderable colors exist. Unsupported layers, functions, variables, extra stops, or
-multi-shadows are product gaps or safe visual fallbacks, never raw CSS props.
+Map a gradient only when the complete rendered evidence reduces to typed
+controls: two-stop evidence to the legacy `gradient*` props, multi-stop and
+positioned/elliptical evidence to `backgroundLayers` (see the 1.2.0 composition
+table above). Map a shadow only when all required structured fields and
+renderable colors exist. Layers or functions the contract still cannot express
+(conic, `url()` inside a stack, `var()`/`calc()`, more than five stops,
+multi-shadows) are product gaps or safe visual fallbacks, never raw CSS props.
 
 ## Responsive inheritance
 
@@ -200,6 +240,11 @@ Capture full pages at:
 - desktop: `1440x1200`;
 - tablet: `834x1112`;
 - mobile: `390x844`.
+
+These are measurement viewports only. Runtime breakpoint semantics follow the
+single tablet-width rule in `mechanical-workflow-protocol.md`: the plugin's
+tablet sheet applies at and below 900px, the mobile sheet at and below 767px.
+834 is where tablet behavior is measured, not where it switches.
 
 Treat tablet/mobile values as overrides only when measured behavior changes.
 Preserve the live `mobile -> tablet -> desktop` inheritance cascade instead of
@@ -243,6 +288,13 @@ Map a measured form only when the live contract exposes its actual field types,
 required state, submit control, and repeater keys. Never coerce password, date,
 number, file, radio, or another unsupported field into plain text. A reset or
 `type="button"` is not submit evidence.
+
+Since FormBlock v2, a measured multi-step form maps to one `FormBlock` with
+stable `fields[].fieldId` values, `steps[]` grouping those ids, `progress`, and
+`visibleWhen` conditions; do not split steps into separate fake forms or hide
+fields with layout tricks. Delivery, attribution (`attributionMode`), and the
+information shown at data collection (`collectionNoticeMode`/`collectionNotice`)
+are typed props, and their legal copy follows the same approval rules as below.
 
 Consent/legal copy may be authored only when the user/project supplied or approved
 that exact text and destination URL. Do not invent:

@@ -24,6 +24,11 @@ mode.
 | `custom-widget` | registering a site-specific child-theme widget | `references/custom-widget-registration.md` |
 | `product-gap` | the contract cannot express a required, reusable behavior | `monteby-widget-development` skill |
 
+A raster reference (user screenshot or a design-skill-generated image) routes
+through `references/design-handoff.md`: owned images become owned local HTML
+via a design skill and enter `owned-html-reconstruction`; third-party
+screenshots stay `external-reference-benchmark`.
+
 For `live-page-edit` and `owned-html-reconstruction`, read
 `references/mechanical-workflow-protocol.md`. Its explicitly labeled read-only
 contract bootstrap happens before the mutation state machine; no candidate exists
@@ -64,6 +69,9 @@ variable but never contain its value.
 for the reference? Reclassify the work as `external-reference-benchmark` and do
 not use `--preserve-source-text`. Third-party HTML, classes, scripts, asset URLs,
 brand identity, contact data, legal text never enter authored output.
+HTML or images generated locally in this project from the user's own
+brief/tokens count as owned when their provenance is recorded in
+`handoff.json`; see `references/design-handoff.md`.
 
 **Product boundary — `blocked_product_gap`.** A required behavior that is
 reusable across sites belongs in Builder/Core. Return `blocked_product_gap` and switch to
@@ -162,7 +170,21 @@ only when their primary reference explicitly calls for it.
   classes.
 - `references/html-to-monteby.md` — measured evidence → composition lookup,
   control-value rules, renderer traps (text margins, single-edge borders,
-  `ListBlock` string items, media sizing, gradients).
+  `ListBlock` string items, media sizing, gradients), and the 1.2.0 composition
+  routes (`backgroundLayers`, background video with mobile policy, media filter
+  tiers, rhythm presets, `layerPull`, `Heading.href`, FormBlock v2).
+- `references/legacy-components-policy.md` — `legacyComponents` names validate
+  without a schema; preserve them when editing existing pages, never author
+  them in new trees.
+- `references/design-handoff.md` — seam with the local design skills: image
+  references, locally generated HTML as owned input, and the `handoff.json`
+  artifact (tokens, section list, breakpoints, asset manifest) produced and
+  consumed by the modes.
+- `references/mechanical-workflow-protocol.md` §“Performance budgets” and
+  §“Tablet-width rule” — final-gate budgets (page weight, image formats, video
+  poster requirement, node-count threshold) and the single 900px/767px sheet
+  rule behind the 1440/834/390 measurement viewports; these apply to every
+  mode's final report, not only the mechanical state machine.
 
 ## Reporting
 

@@ -897,6 +897,7 @@ function summarizeReferenceLandmark(landmark, viewportWidth, pageHeight) {
     backgroundAccentPositionX: String(landmark.backgroundAccentPositionX || ''),
     backgroundAccentPositionY: String(landmark.backgroundAccentPositionY || ''),
     backgroundAccentSize: String(landmark.backgroundAccentSize || ''),
+    backgroundLayers: referenceBackgroundLayers(landmark.backgroundLayers),
     display: String(landmark.display || ''),
     flexDirection: String(landmark.flexDirection || ''),
     flexWrap: String(landmark.flexWrap || ''),
@@ -927,6 +928,51 @@ function summarizeReferenceLandmark(landmark, viewportWidth, pageHeight) {
     paintedBackground: landmark.paintedBackground === true,
     flowParticipation: landmark.flowParticipation === 'overlay' ? 'overlay' : 'normal',
   };
+}
+
+function referenceBackgroundLayers(value) {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 4) {
+    return undefined;
+  }
+  const layers = value.map((layer) => {
+    if (!layer || typeof layer !== 'object' || Array.isArray(layer)) {
+      return null;
+    }
+    const type = String(layer.type || '').trim();
+    if (!['linear', 'radial', 'colorWash'].includes(type)) {
+      return null;
+    }
+    const out = { type };
+    for (let index = 1; index <= 5; index += 1) {
+      const color = String(layer[`color${index}`] || '').trim();
+      if (color) {
+        out[`color${index}`] = color;
+      }
+      const stop = String(layer[`color${index}Stop`] || '').trim().toLowerCase();
+      if (/^(?:\d+(?:\.\d+)?|\.\d+)(?:px|%)$/u.test(stop)) {
+        out[`color${index}Stop`] = stop;
+      }
+    }
+    if (!out.color1) {
+      return null;
+    }
+    if (type === 'linear' && Number.isFinite(Number(layer.angle))) {
+      out.angle = Number(layer.angle);
+    }
+    if (type === 'radial') {
+      if (String(layer.shape || '').trim().toLowerCase() === 'ellipse') {
+        out.shape = 'ellipse';
+      }
+      for (const metricProp of ['size', 'sizeY', 'positionX', 'positionY']) {
+        const metric = String(layer[metricProp] || '').trim().toLowerCase();
+        if (/^[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:px|rem|%|vw|vh)$/u.test(metric)) {
+          out[metricProp] = metric;
+        }
+      }
+    }
+    return out;
+  });
+  return layers.every(Boolean) ? layers : undefined;
 }
 
 function summarizeReferenceVisualFrame(value) {
@@ -1207,6 +1253,7 @@ function summarizeReferenceBandContent(band, index, viewportWidth, textBoxes, me
     backgroundAccentPositionX: band.backgroundAccentPositionX,
     backgroundAccentPositionY: band.backgroundAccentPositionY,
     backgroundAccentSize: band.backgroundAccentSize,
+    backgroundLayers: band.backgroundLayers,
     paintedBackground: band.paintedBackground,
     display: band.display,
     flexDirection: band.flexDirection,
@@ -1357,11 +1404,25 @@ function summarizeReferenceMediaBox(box, bandRect) {
   );
   const relative = (value, total) => Math.round(Math.max(-1, Math.min(2, value / total)) * 10000) / 10000;
 
+  const tag = String(box.tag || '').toLowerCase();
+  const poster = String(box.videoPoster || '').trim();
+
   return {
     parentGroupKey: String(box.parentGroupKey || ''),
     structureKey: String(box.structureKey || ''),
     source: source.length <= 4096 ? source : '',
     mediaKind: isBackground ? 'background' : 'image',
+    tag,
+    ...(tag === 'video' ? {
+      videoAutoplay: box.videoAutoplay === true,
+      videoLoop: box.videoLoop === true,
+      videoMuted: box.videoMuted === true,
+      videoPreload: ['none', 'metadata', 'auto'].includes(String(box.videoPreload || '').toLowerCase())
+        ? String(box.videoPreload).toLowerCase()
+        : '',
+      videoPoster: poster.length <= 4096 ? poster : '',
+    } : {}),
+    ...(referenceMediaFilter(box.mediaFilter) ? { mediaFilter: referenceMediaFilter(box.mediaFilter) } : {}),
     flowParticipation: box.flowParticipation === 'overlay' ? 'overlay' : 'normal',
     stackingIndex: safeReferenceStackingIndex(box.stackingIndex),
     rect,
@@ -1397,6 +1458,23 @@ function summarizeReferenceMediaBox(box, bandRect) {
 function safeReferenceMediaFit(value) {
   const fit = String(value || '').trim().toLowerCase();
   return ['cover', 'contain'].includes(fit) ? fit : '';
+}
+
+function referenceMediaFilter(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+  const filter = {};
+  for (const channel of ['brightness', 'saturate', 'contrast']) {
+    const numeric = Number(value[channel]);
+    if (value[channel] !== undefined) {
+      if (!Number.isFinite(numeric) || numeric < 0 || numeric > 2) {
+        return null;
+      }
+      filter[channel] = Math.round(numeric * 100) / 100;
+    }
+  }
+  return Object.keys(filter).length > 0 ? filter : null;
 }
 
 function safeReferenceMediaPosition(positionX, positionY, shorthand) {
@@ -1934,6 +2012,7 @@ function summarizeReferenceLayoutGroups(layoutGroups, band, textBoxes, mediaBoxe
         backgroundAccentPositionX: String(group.backgroundAccentPositionX || ''),
         backgroundAccentPositionY: String(group.backgroundAccentPositionY || ''),
         backgroundAccentSize: String(group.backgroundAccentSize || ''),
+        backgroundLayers: referenceBackgroundLayers(group.backgroundLayers),
         display: String(group.display || ''),
         flexDirection: String(group.flexDirection || ''),
         flexWrap: String(group.flexWrap || ''),
@@ -2058,6 +2137,7 @@ function summarizeReferenceChildLandmarks(landmarks, band, textBoxes, mediaBoxes
         backgroundAccentPositionX: String(landmark.backgroundAccentPositionX || ''),
         backgroundAccentPositionY: String(landmark.backgroundAccentPositionY || ''),
         backgroundAccentSize: String(landmark.backgroundAccentSize || ''),
+        backgroundLayers: referenceBackgroundLayers(landmark.backgroundLayers),
         borderRadius: String(landmark.borderRadius || ''),
         borderWidth: String(landmark.borderWidth || ''),
         borderColor: String(landmark.borderColor || ''),
@@ -2232,11 +2312,17 @@ function isMeaningfulReferenceMediaBox(box, viewport) {
   const viewportArea = Number(viewport?.width || 0) * Number(viewport?.height || 0);
   const minArea = Math.max(12000, viewportArea * 0.004);
 
-  if (!isReferencePhotoSource(source) || isExcludedReferenceMediaSource(source)) {
+  if (!isReferenceVideoBox(box)
+    && (!isReferencePhotoSource(source) || isExcludedReferenceMediaSource(source))) {
     return false;
   }
 
   return width * height >= minArea || Number(box?.firstViewportArea || 0) >= minArea;
+}
+
+function isReferenceVideoBox(box) {
+  return String(box?.tag || '').toLowerCase() === 'video'
+    && /\.(?:m4v|mov|mp4|webm)(?:[?#].*)?$/i.test(String(box?.source || '').trim());
 }
 
 function isReferencePhotoSource(source) {
@@ -3197,7 +3283,11 @@ function genericMediaCoversBand(media, measurement) {
   if (media?.mediaKind !== 'background') {
     return false;
   }
-  const rect = normalizeReferenceRect(media.rect);
+  return genericMediaRectCoversBand(media, measurement);
+}
+
+function genericMediaRectCoversBand(media, measurement) {
+  const rect = normalizeReferenceRect(media?.rect);
   const bandRect = normalizeReferenceRect(measurement?.rect);
   if (!rect || !bandRect) {
     return false;
@@ -3971,12 +4061,36 @@ function addGenericMeasuredSections(context, plan, sectionName, containerName) {
       ? {}
       : genericMeasuredGradientProps(context, containerName, [desktop, tablet, mobile]);
     const appliedGradient = Object.keys(sectionGradient).length > 0 ? sectionGradient : frameGradient;
+    const sectionLayerProps = usesSectionSurface && Object.keys(sectionGradient).length === 0
+      ? genericMeasuredBackgroundLayerProps(context, sectionName, [desktop, tablet, mobile])
+      : {};
+    const frameLayerProps = usesSectionSurface || Object.keys(frameGradient).length > 0
+      ? {}
+      : genericMeasuredBackgroundLayerProps(context, containerName, [desktop, tablet, mobile]);
+    const appliedLayerProps = Object.keys(sectionLayerProps).length > 0 ? sectionLayerProps : frameLayerProps;
+    const heroVideoBundle = usesSectionSurface ? genericFullBandVideo(band, plan) : null;
+    const heroVideoProps = heroVideoBundle
+      ? genericMeasuredVideoBackgroundProps(context, sectionName, heroVideoBundle, plan, band.index)
+      : {};
+    const usesHeroVideo = Object.keys(heroVideoProps).length > 0;
     const sectionBackground = usesSectionSurface
-      ? (Object.keys(sectionGradient).length > 0 ? '' : (bandBackground || plan.pageBackground))
+      ? (Object.keys(sectionGradient).length > 0 || Object.keys(sectionLayerProps).length > 0
+        ? ''
+        : (bandBackground || plan.pageBackground))
       : plan.pageBackground;
-    const frameBackground = usesSectionSurface || Object.keys(frameGradient).length > 0 ? '' : bandBackground;
+    const frameBackground = usesSectionSurface
+      || Object.keys(frameGradient).length > 0
+      || Object.keys(frameLayerProps).length > 0
+      ? ''
+      : bandBackground;
     const pageTextColor = plan.pageTextColor || context.styleProfile.ink;
-    const textColor = genericTextColor(appliedGradient.gradientColor1 || bandBackground || plan.pageBackground, pageTextColor);
+    const textColor = genericTextColor(
+      appliedGradient.gradientColor1
+        || genericMeasuredBackgroundLayerBaseColor(appliedLayerProps)
+        || bandBackground
+        || plan.pageBackground,
+      pageTextColor
+    );
     const sectionMeasurements = [desktop, plan.hasTablet ? tablet : null, plan.hasMobile ? mobile : null].filter(Boolean);
     const topDividerProps = genericMeasuredEdgeDividerProps(sectionMeasurements, 'top');
     const bottomDividerProps = genericMeasuredEdgeDividerProps(sectionMeasurements, 'bottom');
@@ -4065,16 +4179,35 @@ function addGenericMeasuredSections(context, plan, sectionName, containerName) {
         : undefined,
       ...backgroundProps(context, sectionName, sectionBackground),
       ...sectionGradient,
-      ...(heroBackgroundBundle ? {
+      ...sectionLayerProps,
+      ...heroVideoProps,
+      ...(usesHeroVideo
+        ? genericMeasuredMediaFilterProps(context, sectionName, heroVideoBundle, plan)
+        : {}),
+      ...(heroBackgroundBundle && !usesHeroVideo ? {
         backgroundImage: plan.reuseSourceMedia && String(heroBackgroundBundle.desktop?.source || '').trim()
           ? String(heroBackgroundBundle.desktop.source).trim()
           : genericReplacementMediaSource(context, band.index, 0, true),
         backgroundSize: genericMeasuredMediaFit(heroBackgroundBundle),
         ...genericMeasuredMediaPositionProps(heroBackgroundBundle, plan),
         backgroundOverlay: heroBackgroundOverlay,
+        ...genericMeasuredMediaFilterProps(context, sectionName, heroBackgroundBundle, plan),
       } : {}),
     });
     band.generatedSectionId = section.id;
+    if (usesHeroVideo && heroVideoBundle?.desktop?.structureKey) {
+      context.genericMeasuredLoweredMediaKeys.add(heroVideoBundle.desktop.structureKey);
+      registerGenericMeasuredSurface(
+        context,
+        'media',
+        heroVideoBundle.desktop.structureKey,
+        section.id,
+        {
+          strategy: 'section-background-video',
+          lowered: true,
+        }
+      );
+    }
     if (heroBackgroundBundle?.desktop?.structureKey) {
       registerGenericMeasuredSurface(
         context,
@@ -4166,6 +4299,7 @@ function addGenericMeasuredSections(context, plan, sectionName, containerName) {
       ...genericMeasuredShadowProps(context, containerName, [desktop, tablet, mobile]),
       ...backgroundProps(context, containerName, frameBackground),
       ...frameGradient,
+      ...frameLayerProps,
     });
 
     const measuredNodes = hasMeasuredItems
@@ -7084,6 +7218,193 @@ function genericMeasuredGradientProps(context, componentName, measurements) {
 
   const filtered = filterAllowedProps(context, componentName, gradientProps);
   return Object.keys(filtered).length === requiredProps.length ? filtered : {};
+}
+
+function genericMeasuredBackgroundLayerProps(context, componentName, measurements) {
+  let layers = null;
+  for (const measurement of Array.isArray(measurements) ? measurements : []) {
+    const candidate = referenceBackgroundLayers(measurement?.backgroundLayers);
+    if (candidate) {
+      layers = candidate;
+      break;
+    }
+  }
+  if (!layers) {
+    return {};
+  }
+
+  const entry = context.contractIndex.get(componentName);
+  const allowed = new Set(entry?.authoringProps || []);
+  const itemProps = entry?.repeaterItemProps?.get('backgroundLayers');
+  if (!allowed.has('backgroundLayers') || !(itemProps instanceof Set) || itemProps.size === 0) {
+    return {};
+  }
+  const usedKeys = new Set(layers.flatMap((layer) => Object.keys(layer)));
+  for (const key of usedKeys) {
+    if (!itemProps.has(key)) {
+      return {};
+    }
+  }
+  for (const optionProp of ['type', 'shape']) {
+    const options = entry?.propOptions?.get(optionProp);
+    if (options instanceof Set && options.size > 0
+      && !layers.every((layer) => layer[optionProp] === undefined || options.has(String(layer[optionProp])))) {
+      return {};
+    }
+  }
+
+  const normalizedLayers = layers.map((layer) => {
+    const normalized = { ...layer };
+    for (const colorProp of ['color1', 'color2', 'color3', 'color4', 'color5']) {
+      if (normalized[colorProp] === undefined) {
+        continue;
+      }
+      const color = String(normalized[colorProp]).trim().toLowerCase() === 'transparent'
+        ? 'transparent'
+        : normalizedAuthorableColor(normalized[colorProp]);
+      if (!color) {
+        return null;
+      }
+      normalized[colorProp] = color;
+    }
+    return normalized;
+  });
+  if (!normalizedLayers.every(Boolean)) {
+    return {};
+  }
+  // Renderer konsumuje backgroundLayers wyłącznie przy backgroundModelVersion 2;
+  // bez dyskryminatora warstwy walidują się, ale malują się na nic.
+  const layerProps = allowed.has('backgroundModelVersion')
+    ? { backgroundModelVersion: 2, backgroundLayers: normalizedLayers }
+    : { backgroundLayers: normalizedLayers };
+  return filterAllowedProps(context, componentName, layerProps);
+}
+
+function genericMeasuredBackgroundLayerBaseColor(layerProps) {
+  const layers = Array.isArray(layerProps?.backgroundLayers) ? layerProps.backgroundLayers : [];
+  return layers.length > 0 ? String(layers[layers.length - 1]?.color1 || '') : '';
+}
+
+function genericFullBandVideo(band, plan) {
+  const desktopMedia = genericMeasurementMedia(band.desktop);
+  for (let index = 0; index < desktopMedia.length; index += 1) {
+    const desktop = desktopMedia[index];
+    if (desktop?.tag !== 'video' || !genericMediaRectCoversBand(desktop, band.desktop)) {
+      continue;
+    }
+    return {
+      desktop,
+      tablet: matchedGenericMeasuredMedia(desktop, index, band.tablet),
+      mobile: matchedGenericMeasuredMedia(desktop, index, band.mobile),
+    };
+  }
+  return null;
+}
+
+function genericMeasuredVideoBackgroundProps(context, componentName, bundle, plan, bandIndex) {
+  if (!bundle?.desktop) {
+    return {};
+  }
+  const entry = context.contractIndex.get(componentName);
+  const allowed = new Set(entry?.authoringProps || []);
+  if (!allowed.has('backgroundVideo') || !allowed.has('backgroundVideoPoster')) {
+    return {};
+  }
+  const mediaOptions = entry?.propOptions?.get('backgroundMedia');
+  const typeOptions = entry?.propOptions?.get('backgroundType');
+  const baseProps = mediaOptions instanceof Set && mediaOptions.has('video')
+    ? (allowed.has('backgroundModelVersion')
+      ? { backgroundModelVersion: 2, backgroundMedia: 'video' }
+      : { backgroundMedia: 'video' })
+    : typeOptions instanceof Set && typeOptions.has('video')
+      ? { backgroundType: 'video' }
+      : null;
+  if (!baseProps) {
+    return {};
+  }
+
+  const desktop = bundle.desktop;
+  const source = String(desktop.source || '').trim();
+  if (!plan.reuseSourceMedia || !source) {
+    const warning = 'Measured background video needs an owned/licensed replacement video asset; the band fell back to image evidence and the missing asset must be reported.';
+    if (!context.warnings.includes(warning)) {
+      context.warnings.push(warning);
+    }
+    return {};
+  }
+
+  const measuredPoster = String(desktop.videoPoster || '').trim();
+  const poster = plan.reuseSourceMedia && measuredPoster
+    ? measuredPoster
+    : genericReplacementMediaSource(context, bandIndex, 0, true);
+  if (!measuredPoster) {
+    const warning = 'Measured background video exposes no poster; a replacement poster was authored because video without a poster exceeds the performance budget.';
+    if (!context.warnings.includes(warning)) {
+      context.warnings.push(warning);
+    }
+  }
+  const fit = ['cover', 'contain'].includes(String(desktop.objectFit || '')) ? desktop.objectFit : 'cover';
+  const fitOptions = entry?.propOptions?.get('backgroundVideoFit');
+  const behaviorOptions = entry?.propOptions?.get('backgroundVideoMobileBehavior');
+  const preloadOptions = entry?.propOptions?.get('backgroundVideoPreload');
+  const preload = String(desktop.videoPreload || '') || 'metadata';
+
+  return filterAllowedProps(context, componentName, {
+    ...baseProps,
+    backgroundVideo: source,
+    backgroundVideoPoster: poster,
+    backgroundVideoAutoplay: desktop.videoAutoplay === true,
+    backgroundVideoLoop: desktop.videoLoop === true,
+    backgroundVideoMuted: desktop.videoMuted !== false,
+    backgroundVideoPreload: !(preloadOptions instanceof Set) || preloadOptions.size === 0 || preloadOptions.has(preload)
+      ? preload
+      : undefined,
+    backgroundVideoFit: !(fitOptions instanceof Set) || fitOptions.size === 0 || fitOptions.has(fit)
+      ? fit
+      : undefined,
+    // Polityka mobilna: bez zmierzonych dowodów mobilnego autoplay budżet
+    // wydajności wybiera poster.
+    backgroundVideoMobileBehavior: behaviorOptions instanceof Set && behaviorOptions.has('poster')
+      ? 'poster'
+      : undefined,
+  });
+}
+
+function genericMeasuredMediaFilterProps(context, componentName, bundle, plan) {
+  const entry = context.contractIndex.get(componentName);
+  const allowed = new Set(entry?.authoringProps || []);
+  const filters = {
+    desktop: referenceMediaFilter(bundle?.desktop?.mediaFilter),
+    tablet: referenceMediaFilter(bundle?.tablet?.mediaFilter),
+    mobile: referenceMediaFilter(bundle?.mobile?.mediaFilter),
+  };
+  const props = {};
+  for (const [channel, prop] of [
+    ['brightness', 'backgroundMediaBrightness'],
+    ['saturate', 'backgroundMediaSaturate'],
+    ['contrast', 'backgroundMediaContrast'],
+  ]) {
+    const desktopValue = filters.desktop?.[channel];
+    if (Number.isFinite(desktopValue) && allowed.has(prop)) {
+      props[prop] = desktopValue;
+    }
+    const tabletValue = filters.tablet?.[channel];
+    if (plan.hasTablet
+      && Number.isFinite(tabletValue)
+      && tabletValue !== desktopValue
+      && allowed.has(`${prop}Tablet`)) {
+      props[`${prop}Tablet`] = tabletValue;
+    }
+    const tabletBase = Number.isFinite(tabletValue) ? tabletValue : desktopValue;
+    const mobileValue = filters.mobile?.[channel];
+    if (plan.hasMobile
+      && Number.isFinite(mobileValue)
+      && mobileValue !== tabletBase
+      && allowed.has(`${prop}Mobile`)) {
+      props[`${prop}Mobile`] = mobileValue;
+    }
+  }
+  return filterAllowedProps(context, componentName, props);
 }
 
 function normalizedAuthorableColor(value) {

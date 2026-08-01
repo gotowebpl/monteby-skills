@@ -2,8 +2,10 @@
 
 Use this runbook only in `owned-html-reconstruction` mode. The HTML, text, fonts,
 and assets must belong to the user/project or be explicitly licensed for reuse.
-Otherwise stop with `blocked_source_rights` and restart in
-`external-reference-benchmark` mode with replacement content.
+HTML generated locally in this project by a design skill from the user's own
+brief and tokens is owned; record its provenance in `handoff.json` per
+`references/design-handoff.md`. Otherwise stop with `blocked_source_rights` and
+restart in `external-reference-benchmark` mode with replacement content.
 
 Read `mechanical-workflow-protocol.md` first. At every phase, execute only the
 report's `nextAction`. It is an ordered object with `id`, `tool`, `args`,

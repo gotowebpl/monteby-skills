@@ -59,6 +59,40 @@ Canonical WordPress work additionally requires:
 Never place a password, application password, cookie, or authorization value in
 an argument, JSON artifact, Markdown report, or shell transcript.
 
+## Tablet-width rule
+
+One rule governs every tablet width in this skill:
+
+- the plugin's stylesheets switch at fixed thresholds: the tablet sheet applies
+  at and below **900px**, the mobile sheet at and below **767px**;
+- **834px** is the canonical tablet *measurement* viewport (`tablet:834x1112`),
+  chosen because it sits inside the tablet sheet window; it is never itself a
+  breakpoint;
+- authoring decisions ("does this need a `*Tablet` override?") are made against
+  the 900px/767px sheet windows, not against the capture width.
+
+Any document or script in this skill that states a different tablet threshold
+(older texts said 768) is superseded by this rule and must carry an annotation
+pointing here.
+
+## Performance budgets
+
+Every mode ends its final gate with these budgets. Exceeding one is a report
+entry with an explicit decision, never a silent pass:
+
+- **Page weight**: the saved page's transferred weight at desktop must stay
+  under 2.5 MB excluding video; a page over budget names the offending assets
+  in the report.
+- **Image format**: authored raster media uses WebP or AVIF (JPEG acceptable
+  for photography when the host pipeline cannot serve WebP); PNG only for
+  transparency/cutouts; no BMP/TIFF; SVG for vectors.
+- **Video**: background video without `backgroundVideoPoster` is forbidden, and
+  `backgroundVideoMobileBehavior` must be explicit (`poster` is the default
+  policy; `autoplay` on mobile requires a recorded justification).
+- **Node count**: a page over 350 authored nodes requires a written
+  justification in the final report (repeated measured content is a valid
+  justification; decorative wrapper stacking is not).
+
 ## Artifact contract
 
 Every artifact is JSON unless its name says otherwise.

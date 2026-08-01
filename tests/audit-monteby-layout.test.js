@@ -429,8 +429,8 @@ test('audit accepts finite css-value numbers and leading-zero decimals', () => {
   assert.deepEqual(report.errors, []);
 });
 
-test('audit blocks runtime-only background video authoring', () => {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'monteby-audit-blocked-bg-video-'));
+test('audit requires a poster for contract-backed background video and accepts the full 1.2.0 shape', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'monteby-audit-bg-video-poster-'));
   const contractPath = path.join(directory, 'contract.json');
   const layoutPath = path.join(directory, 'layout.json');
 
@@ -439,7 +439,7 @@ test('audit blocks runtime-only background video authoring', () => {
       {
         name: 'Container',
         allowedParents: ['ROOT'],
-        props: ['backgroundType', 'backgroundVideo'],
+        props: ['backgroundType', 'backgroundVideo', 'backgroundVideoPoster'],
         controls: [
           {
             type: 'select',
@@ -450,6 +450,7 @@ test('audit blocks runtime-only background video authoring', () => {
             ],
           },
           { type: 'text', props: ['backgroundVideo'] },
+          { type: 'text', props: ['backgroundVideoPoster'] },
         ],
       },
     ],
@@ -473,8 +474,29 @@ test('audit blocks runtime-only background video authoring', () => {
   assert.equal(result.status, 1);
   const report = JSON.parse(result.stdout);
   assert.equal(report.ok, false);
-  assert.deepEqual(report.errors.map((error) => error.code), ['blocked_prop']);
-  assert.match(report.errors[0].message, /backgroundVideo/);
+  assert.deepEqual(report.errors.map((error) => error.code), ['background_video_poster_missing']);
+  assert.match(report.errors[0].message, /backgroundVideoPoster/);
+
+  fs.writeFileSync(layoutPath, JSON.stringify({
+    ROOT: node('RootCanvas', null, ['container']),
+    container: {
+      ...node('Container', 'ROOT', []),
+      props: {
+        backgroundType: 'video',
+        backgroundVideo: 'https://cdn.example.test/bg.mp4',
+        backgroundVideoPoster: 'https://cdn.example.test/bg-poster.webp',
+      },
+    },
+  }));
+
+  const posterResult = spawnSync(process.execPath, [auditScript, '--layout', layoutPath, '--contract', contractPath, '--json'], {
+    encoding: 'utf8',
+  });
+
+  assert.equal(posterResult.status, 0, posterResult.stdout);
+  const posterReport = JSON.parse(posterResult.stdout);
+  assert.equal(posterReport.ok, true);
+  assert.deepEqual(posterReport.errors, []);
 });
 
 test('audit rejects props advertised only through broad props and defaults metadata', () => {
@@ -735,12 +757,12 @@ test('audit rejects top-level and nested advanced/runtime props even when contra
       {
         name: 'FormBlock',
         allowedParents: ['Section'],
-        props: ['fields', 'className', 'backgroundVideo', ...Object.keys(blockedNestedProps)],
+        props: ['fields', 'className', ...Object.keys(blockedNestedProps)],
         defaults: blockedNestedProps,
-        aiProps: ['fields', 'className', 'backgroundVideo'],
+        aiProps: ['fields', 'className'],
         controls: [
           { type: 'repeater', props: ['fields'] },
-          { type: 'text', props: ['className', 'backgroundVideo'] },
+          { type: 'text', props: ['className'] },
         ],
       },
     ],
@@ -753,7 +775,6 @@ test('audit rejects top-level and nested advanced/runtime props even when contra
       props: {
         fields: [{ label: 'Name', ...blockedNestedProps }],
         className: 'unsafe-root-class',
-        backgroundVideo: 'https://replacement.example.test/runtime.mp4',
       },
     },
   }));
@@ -766,7 +787,7 @@ test('audit rejects top-level and nested advanced/runtime props even when contra
   const report = JSON.parse(result.stdout);
   assert.equal(report.ok, false);
   assert.ok(report.errors.every((error) => ['blocked_prop', 'blocked_nested_prop'].includes(error.code)));
-  assert.equal(report.errors.filter((error) => error.code === 'blocked_prop').length, 2);
+  assert.equal(report.errors.filter((error) => error.code === 'blocked_prop').length, 1);
   for (const prop of Object.keys(blockedNestedProps)) {
     assert.ok(report.errors.some((error) => error.code === 'blocked_nested_prop' && error.message.includes(`"${prop}"`)), prop);
   }
