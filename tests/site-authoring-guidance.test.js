@@ -80,7 +80,8 @@ test('site-authoring keeps live contract, REST concurrency, and presentation can
   assert.match(skill, /send presentation\s+in the same versioned layout PUT/i);
   assert.match(skill, /live contract advertises presentation persistence/);
   assert.match(skill, /Never call the legacy page-settings route/);
-  assert.match(skill, /never send Custom CSS\/JS\/SEO through this API/);
+  assert.match(skill, /never send Custom CSS\/JS through this API/);
+  assert.match(skill, /Send `seo` only when the same live\s+layout resource advertises `layoutPersistence\.seo`/);
   assert.match(skill, /`full-width` for edge-to-edge page bands/);
   assert.match(skill, /`canvas` with `"disableGlobalTemplates": true`/);
 });
@@ -95,6 +96,30 @@ test('site-authoring uses the live company profile instead of hardcoded identity
   assert.match(skill, /Never infer missing identity data from screenshots/);
   assert.match(skill, /`company_phone_url`\s+or `company_email_url` binding is the canonical link target/);
   assert.match(skill, /do not construct a\s+`tel:` or `mailto:` value from display text/);
+});
+
+test('page-role guidance binds AI SEO writes to the live contract and canonical graph', () => {
+  const skill = read(skillPath);
+  const brief = read(path.join(references, 'brief-to-monteby.md'));
+  const guidance = read(path.join(references, 'page-role-and-schema.md'));
+
+  assert.match(skill, /references\/page-role-and-schema\.md/);
+  assert.match(skill, /Never infer a role from a slug, write raw JSON-LD/);
+  assert.match(brief, /`seo`, `seoOwnership` i `seoGraph`/);
+  assert.match(brief, /nie\s+wyprowadzaj jej ze slugu ani długości treści/);
+  assert.match(guidance, /`layoutPersistence\.seo\.owner` i jego `authorable`/);
+  assert.match(guidance, /`blocked_seo_owner`/);
+  assert.match(guidance, /Wyślij kompletny obiekt `seo` zgodny z\s+live `required`/);
+  assert.match(guidance, /surowego JSON-LD ani własnego `@graph`/);
+  assert.match(guidance, /Rola jest decyzją treściową, nie heurystyką URL/);
+  assert.match(guidance, /Article, TechArticle i Service nie zastępują WebPage/);
+  assert.match(guidance, /organizacja nie jest\s+osobą zastępczą/);
+  assert.match(guidance, /FAQ musi pochodzić z widocznych pytań i odpowiedzi Buildera/);
+  assert.match(guidance, /`role\.authored`, `role\.effective`, `role\.schemaType`, `role\.pageType`/);
+  assert.match(guidance, /`yoast-adapter-projection`/);
+  assert.match(guidance, /publiczną stronę renderowaną przez WordPress\/PHP\s+bez wykonywania JavaScriptu/);
+  assert.match(guidance, /dokładnie jeden dokument\/graf standardowego JSON-LD/);
+  assert.match(guidance, /Bez tej bramki wynik pozostaje `diagnostic_passed`/);
 });
 
 test('expert-content guidance binds authoring to evidence and the live widget contract', () => {

@@ -120,6 +120,12 @@ pagination, or an editable empty state, read
 `hostChoices.queryLoop`; never infer a `queryId`, post type, taxonomy, term,
 template, custom-field key, public sort parameter, or indexable filter set.
 
+When the task authors or changes page SEO, its page role, FAQ schema, or an
+Article/Service relationship, read `references/page-role-and-schema.md`. The
+live `layoutPersistence.seo` schema, owner and graph-preview contract are the
+only authority. Never infer a role from a slug, write raw JSON-LD, or claim the
+preview is canonical proof before checking the saved server-rendered page.
+
 ## Persistence endpoints
 
 - `POST /wp-json/monteby/v1/validate`
@@ -150,7 +156,9 @@ When the live contract advertises presentation persistence, send presentation
 in the same versioned layout PUT: `full-width` for edge-to-edge page bands,
 `canvas` with `"disableGlobalTemplates": true` for standalone benchmark pages.
 Never call the legacy page-settings route for AI authoring and
-never send Custom CSS/JS/SEO through this API.
+never send Custom CSS/JS through this API. Send `seo` only when the same live
+layout resource advertises `layoutPersistence.seo`, its owner is authorable,
+and `references/page-role-and-schema.md` permits the evidence-backed change.
 
 Global header/footer templates are `gotoweb_template` posts resolved **by the
 canonical slugs** `gotoweb-global-header` / `gotoweb-global-footer` (plus the
@@ -214,6 +222,9 @@ only when their primary reference explicitly calls for it.
   `PostInfo`, `QuickAnswer`, and `Sources`. Use it whenever the live contract
   exposes any of those widgets; never invent an author, reviewer, verification
   date, source, profile, or factual answer to fill a component.
+- `references/page-role-and-schema.md` — evidence-backed page roles, the full
+  SEO block, Yoast handover, `seoGraph` diagnostics and server-rendered graph
+  verification. Use it for every AI-authored SEO or schema-role change.
 - `references/mechanical-workflow-protocol.md` §“Performance budgets” and
   §“Tablet-width rule” — final-gate budgets (page weight, image formats, video
   poster requirement, node-count threshold) and the single 900px/767px sheet

@@ -153,6 +153,17 @@ stanu, taksonomie, termy oraz klucze pól własnych wybieraj wyłącznie z bież
 kluczy meta; publiczna kontrolka wybiera tylko zapisany w pętli identyfikator
 opcji sortowania.
 
+## SEO i rola strony
+
+Jeżeli brief jawnie określa SEO, rolę treści, FAQ schema albo encję główną,
+przeczytaj `references/page-role-and-schema.md`. Najpierw pobierz pełny blok
+`seo`, `seoOwnership` i `seoGraph` z zasobu layoutu. Rolę wybierz wyłącznie z
+live `layoutPersistence.seo.schema.properties.schemaProfile.enum`; nie
+wyprowadzaj jej ze slugu ani długości treści. Zapisuj pełny blok `seo` razem z
+layoutem i tym samym `expectedModifiedGmt`, a po zapisie sprawdź `seoGraph` oraz
+serwerowy HTML bez JavaScriptu. Gdy brief nie obejmuje SEO, nie dołączaj `seo`
+do payloadu i zachowaj zapisany profil bez zmian.
+
 ## Czego kontrakt nie wystawia
 
 - `ButtonBlock` ma wyłącznie `fontSize` — brak wariantów responsywnych i
