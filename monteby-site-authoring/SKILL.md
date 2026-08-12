@@ -102,6 +102,17 @@ Never use the compatibility policy, remembered contracts, or bundled snapshots
 as a substitute for the live response — components, controls, host choices, and
 persistence capabilities are authoritative only there.
 
+When the live response includes `companyProfile`, treat it as the site's
+authoritative public identity. Prefer matching `dynamicFields.fields` keys that
+start with `company_` for company names, logos, telephone and email content or
+links, address, identifiers, service areas, languages, and contact hours. Do not
+copy those values into static widget props unless the user explicitly requests a
+deliberate one-off override. Never infer missing identity data from screenshots,
+page copy, SEO snippets, or a third-party reference; report the missing profile
+field and continue with content that does not require it. A `company_phone_url`
+or `company_email_url` binding is the canonical link target; do not construct a
+`tel:` or `mailto:` value from display text.
+
 ## Persistence endpoints
 
 - `POST /wp-json/monteby/v1/validate`
