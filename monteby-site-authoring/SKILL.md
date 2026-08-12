@@ -109,12 +109,24 @@ persistence capabilities are authoritative only there.
 - `PUT /wp-json/monteby/v1/pages/{id}/layout`
 - `POST /wp-json/monteby/v1/preview`
 
+For a bounded change to existing nodes, prefer the operation resources exposed
+under `layoutPersistence.operations` in the live contract. Read
+`references/partial-layout-operations.md`; use `patch-validate`, then execute
+only its emitted `patch-save` action. The live `operationSchemas` are the sole
+authority for operation payloads, including whether `update_props` supports
+`unsetProps`. Bind the page snapshot, `postModifiedGmt`, canonical operations
+SHA-256, and `candidateLayoutSha256`. Missing evidence is a hard stop.
+
 Save only through the versioned PUT with a fresh `expectedModifiedGmt` taken
 immediately before the write. A save returns `428` or `409` only for versioning:
 a `428` means the precondition is absent; a `409` means another editor changed
 the page. Refetch, reconcile, revalidate, and issue one new explicit save action;
 never retry PUT automatically. Never bypass a conflict with stale JSON, and never
 write post meta or `post_content` directly.
+
+Apply the same rule to partial writes: never retry `409` or `428`, never apply
+without a successful preflight, and never reuse a preflight after the page or
+operations file changes.
 
 When the live contract advertises presentation persistence, send presentation
 in the same versioned layout PUT: `full-width` for edge-to-edge page bands,

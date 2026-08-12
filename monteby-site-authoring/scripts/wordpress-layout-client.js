@@ -10,7 +10,14 @@ const DEFAULT_AUTH_HEADER_ENV = 'MONTEBY_AUTH_HEADER';
 const DEFAULT_TIMEOUT_MS = 30_000;
 const API_ROOT = '/wp-json/monteby/v1';
 const WORDPRESS_CORE_API_ROOT = '/wp-json/wp/v2';
-const COMMANDS = new Set(['snapshot', 'validate', 'save', 'preview']);
+const COMMANDS = new Set([
+  'snapshot',
+  'validate',
+  'save',
+  'preview',
+  'patch-validate',
+  'patch-save',
+]);
 const PRESENTATION_LAYOUTS = new Set(['default', 'full-width', 'canvas']);
 const CLIENT_TOOL = path.resolve(__filename);
 const CANONICAL_VERIFICATION_TOOL = path.join(__dirname, 'run-canonical-verification.js');
@@ -83,6 +90,10 @@ function parseArgs(argv) {
     expectedLayoutSha256: '',
     saveReport: '',
     reportOut: '',
+    operations: '',
+    patchReport: '',
+    expectedOperationsSha256: '',
+    expectedCandidateLayoutSha256: '',
     authHeaderEnv: DEFAULT_AUTH_HEADER_ENV,
     timeoutMs: DEFAULT_TIMEOUT_MS,
   };
@@ -127,6 +138,14 @@ function parseArgs(argv) {
       options.saveReport = path.resolve(requiredValue(argv, index += 1, option));
     } else if (option === '--report-out') {
       options.reportOut = path.resolve(requiredValue(argv, index += 1, option));
+    } else if (option === '--operations') {
+      options.operations = path.resolve(requiredValue(argv, index += 1, option));
+    } else if (option === '--patch-report') {
+      options.patchReport = path.resolve(requiredValue(argv, index += 1, option));
+    } else if (option === '--expected-operations-sha256') {
+      options.expectedOperationsSha256 = requiredValue(argv, index += 1, option).toLowerCase();
+    } else if (option === '--expected-candidate-layout-sha256') {
+      options.expectedCandidateLayoutSha256 = requiredValue(argv, index += 1, option).toLowerCase();
     } else if (option === '--auth-header-env') {
       options.authHeaderEnv = requiredValue(argv, index += 1, option);
     } else if (option === '--timeout-ms') {
@@ -213,6 +232,18 @@ function validateOptions(options) {
       nextAction: 'Provide the layoutSha256 emitted by a successful validate report.',
     });
   }
+  for (const [key, option] of [
+    ['expectedOperationsSha256', '--expected-operations-sha256'],
+    ['expectedCandidateLayoutSha256', '--expected-candidate-layout-sha256'],
+  ]) {
+    if (options[key] && !/^[a-f0-9]{64}$/.test(options[key])) {
+      throw new ClientError(`${option} must be a 64-character SHA-256 digest.`, {
+        code: 'CLI_USAGE',
+        stage: options.command,
+        nextAction: `Use the digest emitted by patch-validate for ${option}.`,
+      });
+    }
+  }
   if (options.presentationLayout && !PRESENTATION_LAYOUTS.has(options.presentationLayout)) {
     throw new ClientError('--presentation-layout must be default, full-width, or canvas.', {
       code: 'CLI_USAGE',
@@ -263,6 +294,34 @@ function validateOptions(options) {
     rejectOption(options, 'snapshot', '--snapshot');
     rejectOption(options, 'presentationLayout', '--presentation-layout');
     rejectOption(options, 'expectedLayoutSha256', '--expected-layout-sha256');
+  } else if (options.command === 'patch-validate') {
+    requireOption(options, 'pageId', '--page-id');
+    requireOption(options, 'operations', '--operations');
+    requireOption(options, 'out', '--out');
+    if (!options.snapshot && !options.outDir) {
+      throw new ClientError('patch-validate requires --snapshot or --out-dir.', {
+        code: 'CLI_USAGE', stage: options.command,
+        nextAction: 'Provide the page-scoped snapshot created immediately before the patch.',
+      });
+    }
+    rejectOption(options, 'layout', '--layout');
+    rejectOption(options, 'patchReport', '--patch-report');
+    rejectOption(options, 'expectedOperationsSha256', '--expected-operations-sha256');
+    rejectOption(options, 'expectedCandidateLayoutSha256', '--expected-candidate-layout-sha256');
+  } else if (options.command === 'patch-save') {
+    requireOption(options, 'pageId', '--page-id');
+    requireOption(options, 'operations', '--operations');
+    requireOption(options, 'patchReport', '--patch-report');
+    requireOption(options, 'expectedOperationsSha256', '--expected-operations-sha256');
+    requireOption(options, 'expectedCandidateLayoutSha256', '--expected-candidate-layout-sha256');
+    requireOption(options, 'out', '--out');
+    if (!options.snapshot && !options.outDir) {
+      throw new ClientError('patch-save requires --snapshot or --out-dir.', {
+        code: 'CLI_USAGE', stage: options.command,
+        nextAction: 'Provide the same page-scoped snapshot used by patch-validate.',
+      });
+    }
+    rejectOption(options, 'layout', '--layout');
   }
 }
 
@@ -272,6 +331,8 @@ function printHelp() {
   wordpress-layout-client.js validate --site URL --layout LAYOUT.json [--out REPORT.json]
   wordpress-layout-client.js save --site URL --page-id ID --layout LAYOUT.json (--out-dir DIR | --snapshot FILE) --expected-layout-sha256 SHA256 --out SAVE-REPORT.json [--presentation-layout NAME]
   wordpress-layout-client.js preview --site URL --layout LAYOUT.json --save-report SAVE-REPORT.json --out PREVIEW.html --report-out PREVIEW-REPORT.json
+  wordpress-layout-client.js patch-validate --site URL --page-id ID --operations OPERATIONS.json (--out-dir DIR | --snapshot FILE) --out PATCH-VALIDATE-REPORT.json
+  wordpress-layout-client.js patch-save --site URL --page-id ID --operations OPERATIONS.json (--out-dir DIR | --snapshot FILE) --patch-report PATCH-VALIDATE-REPORT.json --expected-operations-sha256 SHA256 --expected-candidate-layout-sha256 SHA256 --out PATCH-SAVE-REPORT.json
 
 Common options:
   --auth-header-env NAME  Environment variable containing the complete Authorization header.
@@ -283,6 +344,9 @@ save reads DIR/layout-before.json when --snapshot is omitted. It never retries a
 409 conflict or 428 precondition response automatically. validate emits the
 layoutSha256 required by save; preview requires the persisted scoped SAVE_OK
 report and writes a separate PREVIEW_OK report for canonical verification.
+patch-validate and patch-save discover their endpoints and operation schemas only
+from the live contract. patch-save binds the same snapshot, operations digest,
+candidate digest, and postModifiedGmt. Neither command retries 409/428.
 `);
 }
 
@@ -339,6 +403,14 @@ function commandArgs(options) {
     args.push('--expected-layout-sha256', options.expectedLayoutSha256);
   }
   if (options.saveReport) args.push('--save-report', options.saveReport);
+  if (options.operations) args.push('--operations', options.operations);
+  if (options.patchReport) args.push('--patch-report', options.patchReport);
+  if (options.expectedOperationsSha256) {
+    args.push('--expected-operations-sha256', options.expectedOperationsSha256);
+  }
+  if (options.expectedCandidateLayoutSha256) {
+    args.push('--expected-candidate-layout-sha256', options.expectedCandidateLayoutSha256);
+  }
   if (options.out) args.push('--out', options.out);
   if (options.reportOut) args.push('--report-out', options.reportOut);
   return withCommonArgs(args, options);
@@ -364,6 +436,18 @@ function snapshotArgs(options) {
     '--site', options.site,
     '--page-id', String(options.pageId),
     '--out-dir', outDir,
+  ], options);
+}
+
+function patchValidateArgs(options) {
+  const reportDirectory = path.dirname(options.out || options.operations);
+  return withCommonArgs([
+    'patch-validate',
+    '--site', options.site,
+    '--page-id', String(options.pageId),
+    '--operations', options.operations,
+    '--snapshot', options.snapshot || path.join(options.outDir, 'layout-before.json'),
+    '--out', path.join(reportDirectory, 'patch-validate-response.json'),
   ], options);
 }
 
@@ -417,6 +501,36 @@ function materializeNextAction(report, options) {
     );
   }
 
+  if (report.code === 'PATCH_VALIDATION_OK') {
+    return nextAction(
+      'save_validated_patch',
+      CLIENT_TOOL,
+      withCommonArgs([
+        'patch-save',
+        '--site', options.site,
+        '--page-id', String(options.pageId),
+        '--operations', options.operations,
+        '--snapshot', options.snapshot || path.join(options.outDir, 'layout-before.json'),
+        '--patch-report', options.out,
+        '--expected-operations-sha256', report.evidence.operationsSha256,
+        '--expected-candidate-layout-sha256', report.evidence.candidateLayoutSha256,
+        '--out', path.join(path.dirname(options.out), 'patch-save-response.json'),
+      ], options),
+      [authRequirement],
+      'Apply this exact preflighted operation batch once. Do not edit the operations file or reuse the report for another snapshot.'
+    );
+  }
+
+  if (report.code === 'PATCH_SAVE_OK') {
+    return nextAction(
+      'verify_saved_patch',
+      CLIENT_TOOL,
+      snapshotArgs(options),
+      [authRequirement, 'CANONICAL_PAGE_REVIEW'],
+      'Snapshot the saved page and verify the affected node in canonical WordPress/PHP output.'
+    );
+  }
+
   if (report.code === 'SAVE_OK') {
     const preview = path.join(path.dirname(options.layout), 'preview.html');
     const previewReport = path.join(path.dirname(options.out), 'preview-response.json');
@@ -457,7 +571,7 @@ function materializeNextAction(report, options) {
   }
 
   if (
-    options.command === 'save'
+    (options.command === 'save' || options.command === 'patch-save')
     && (
       report.code === 'SNAPSHOT_SCOPE_INVALID'
       || report.code === 'SNAPSHOT_SCOPE_MISMATCH'
@@ -473,7 +587,7 @@ function materializeNextAction(report, options) {
   }
 
   if (
-    options.command === 'save'
+    (options.command === 'save' || options.command === 'patch-save')
     && (
       report.code === 'REST_CONFLICT'
       || report.code === 'REST_PRECONDITION_REQUIRED'
@@ -486,19 +600,32 @@ function materializeNextAction(report, options) {
       CLIENT_TOOL,
       snapshotArgs(options),
       [authRequirement, 'MANUAL_LAYOUT_RECONCILIATION'],
-      'Take a new snapshot, reconcile the newer remote layout manually, then revalidate before one explicit save attempt. Do not retry PUT automatically.'
+      'Take a new snapshot, reconcile the newer remote layout manually, then preflight again before one explicit save attempt. Do not retry automatically.'
     );
   }
 
   if (
     report.code === 'VALIDATION_FAILED'
+    || report.code === 'PATCH_VALIDATION_FAILED'
+    || report.code === 'OPERATIONS_SHA256_MISMATCH'
+    || report.code === 'CANDIDATE_LAYOUT_SHA256_MISMATCH'
+    || report.code === 'PATCH_REPORT_INVALID'
+    || report.code === 'PATCH_REPORT_SCOPE_MISMATCH'
     || report.code === 'INVALID_LAYOUT_INPUT'
     || report.code === 'LAYOUT_SHA256_MISMATCH'
     || report.code === 'SAVE_REPORT_INVALID'
     || report.code === 'SAVE_REPORT_SCOPE_MISMATCH'
   ) {
-    const requiresRepair = report.code === 'VALIDATION_FAILED'
-      || report.code === 'INVALID_LAYOUT_INPUT';
+    if (options.command.startsWith('patch-')) {
+      return nextAction(
+        'restart_patch_preflight',
+        CLIENT_TOOL,
+        patchValidateArgs(options),
+        ['PATCH_RECONCILED', authRequirement],
+        'Repair or reconcile the operation batch, then preflight the exact batch again. Never reuse stale patch evidence.'
+      );
+    }
+    const requiresRepair = report.code === 'VALIDATION_FAILED' || report.code === 'INVALID_LAYOUT_INPUT';
     return nextAction(
       'restart_validation_chain',
       CLIENT_TOOL,
@@ -808,9 +935,11 @@ function httpFailureResult(stage, response, artifacts = {}) {
     code = status === 429 ? 'REST_RATE_LIMITED' : 'REST_SERVER_ERROR';
     retryable = true;
     nextAction = 'Check site health, then run the command again explicitly.';
-  } else if ((status === 400 || status === 422) && stage === 'validate') {
-    code = 'VALIDATION_FAILED';
-    nextAction = 'Correct the node map using the validation response, then run validate again.';
+  } else if ((status === 400 || status === 422) && (stage === 'validate' || stage === 'patch-validate')) {
+    code = stage === 'patch-validate' ? 'PATCH_VALIDATION_FAILED' : 'VALIDATION_FAILED';
+    nextAction = stage === 'patch-validate'
+      ? 'Correct the operation batch using the live schemas and preflight response, then run patch-validate again.'
+      : 'Correct the node map using the validation response, then run validate again.';
   } else if (status >= 300 && status < 400) {
     code = 'REST_REDIRECT_NOT_ALLOWED';
     nextAction = 'Use the canonical WordPress base URL so authorization is never forwarded through a redirect.';
@@ -837,6 +966,147 @@ function nodeMapSha256(nodeMap) {
   return createHash('sha256')
     .update(JSON.stringify(nodeMap), 'utf8')
     .digest('hex');
+}
+
+function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (isObject(value)) {
+    return `{${Object.keys(value).sort().map((key) => (
+      `${JSON.stringify(key)}:${canonicalJson(value[key])}`
+    )).join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function operationsSha256(operations) {
+  return createHash('sha256').update(canonicalJson(operations), 'utf8').digest('hex');
+}
+
+function canonicalSha256(value) {
+  return createHash('sha256').update(canonicalJson(value), 'utf8').digest('hex');
+}
+
+function operationSchemaErrors(value, schema, pathName = '$') {
+  const errors = [];
+  if (!isObject(schema)) return [`${pathName}: schema is not an object`];
+  if (typeof schema.$ref === 'string') return [`${pathName}: unresolved schema reference`];
+  if (Array.isArray(schema.allOf)) {
+    for (const candidate of schema.allOf) errors.push(...operationSchemaErrors(value, candidate, pathName));
+  }
+  if (Array.isArray(schema.anyOf)) {
+    const matches = schema.anyOf.some((candidate) => operationSchemaErrors(value, candidate, pathName).length === 0);
+    if (!matches) errors.push(`${pathName}: must match at least one schema`);
+  }
+  if (Array.isArray(schema.oneOf)) {
+    const matches = schema.oneOf.filter((candidate) => operationSchemaErrors(value, candidate, pathName).length === 0);
+    return matches.length === 1 ? [] : [`${pathName}: must match exactly one schema`];
+  }
+  if (schema.const !== undefined && value !== schema.const) errors.push(`${pathName}: const mismatch`);
+  if (Array.isArray(schema.enum) && !schema.enum.some((candidate) => candidate === value)) {
+    errors.push(`${pathName}: value is not in enum`);
+  }
+  const types = Array.isArray(schema.type) ? schema.type : (schema.type ? [schema.type] : []);
+  if (types.length) {
+    const actual = value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value;
+    const normalized = actual === 'number' && Number.isInteger(value) ? ['integer', 'number'] : [actual];
+    if (!types.some((type) => normalized.includes(type))) return [`${pathName}: expected ${types.join('|')}`];
+  }
+  if (Array.isArray(value)) {
+    if (Number.isInteger(schema.minItems) && value.length < schema.minItems) errors.push(`${pathName}: too few items`);
+    if (Number.isInteger(schema.maxItems) && value.length > schema.maxItems) errors.push(`${pathName}: too many items`);
+    if (schema.items) value.forEach((item, index) => errors.push(...operationSchemaErrors(item, schema.items, `${pathName}[${index}]`)));
+    if (schema.uniqueItems === true && new Set(value.map(canonicalJson)).size !== value.length) errors.push(`${pathName}: items must be unique`);
+  } else if (isObject(value)) {
+    if (Number.isInteger(schema.minProperties) && Object.keys(value).length < schema.minProperties) errors.push(`${pathName}: too few properties`);
+    if (Number.isInteger(schema.maxProperties) && Object.keys(value).length > schema.maxProperties) errors.push(`${pathName}: too many properties`);
+    for (const required of schema.required || []) {
+      if (!Object.prototype.hasOwnProperty.call(value, required)) errors.push(`${pathName}.${required}: required`);
+    }
+    if (schema.additionalProperties === false && isObject(schema.properties)) {
+      for (const key of Object.keys(value)) {
+        if (!Object.prototype.hasOwnProperty.call(schema.properties, key)) errors.push(`${pathName}.${key}: unknown property`);
+      }
+    }
+    if (isObject(schema.additionalProperties)) {
+      for (const [key, item] of Object.entries(value)) {
+        if (!Object.prototype.hasOwnProperty.call(schema.properties || {}, key)) {
+          errors.push(...operationSchemaErrors(item, schema.additionalProperties, `${pathName}.${key}`));
+        }
+      }
+    }
+    for (const [key, childSchema] of Object.entries(schema.properties || {})) {
+      if (Object.prototype.hasOwnProperty.call(value, key)) {
+        errors.push(...operationSchemaErrors(value[key], childSchema, `${pathName}.${key}`));
+      }
+    }
+  } else if (typeof value === 'string') {
+    if (Number.isInteger(schema.minLength) && value.length < schema.minLength) errors.push(`${pathName}: too short`);
+    if (Number.isInteger(schema.maxLength) && value.length > schema.maxLength) errors.push(`${pathName}: too long`);
+    if (typeof schema.pattern === 'string' && !(new RegExp(schema.pattern)).test(value)) errors.push(`${pathName}: pattern mismatch`);
+  }
+  if (typeof value === 'number') {
+    if (typeof schema.minimum === 'number' && value < schema.minimum) errors.push(`${pathName}: below minimum`);
+    if (typeof schema.maximum === 'number' && value > schema.maximum) errors.push(`${pathName}: above maximum`);
+  }
+  return errors;
+}
+
+function operationsCapability(contract, pageId, stage) {
+  const capability = contract?.layoutPersistence?.operations;
+  const validResource = (resource) => isObject(resource)
+    && resource.method === 'POST'
+    && typeof resource.endpoint === 'string'
+    && resource.endpoint.includes('{postId}');
+  if (
+    !isObject(capability)
+    || !isObject(capability.operationSchemas)
+    || !validResource(capability.validate)
+    || !validResource(capability.apply)
+  ) {
+    throw new ClientError('The live contract does not expose self-contained patch resources and schemas.', {
+      code: 'PATCH_CAPABILITY_MISSING', stage,
+      nextAction: 'Upgrade Monteby Builder, then fetch the live contract again. Do not guess endpoint or payload shapes.',
+    });
+  }
+  const endpoint = (value) => value
+    .replace('{postId}', String(pageId))
+    .replace(/^\/monteby\/v1(?=\/)/, '');
+  return {
+    ...capability,
+    validateEndpoint: endpoint(capability.validate.endpoint),
+    applyEndpoint: endpoint(capability.apply.endpoint),
+  };
+}
+
+function validateOperations(operations, capability, stage) {
+  const maxBatch = capability.limits?.maxBatchItems;
+  const maxBytes = capability.limits?.maxPayloadBytes;
+  if (!Array.isArray(operations) || operations.length === 0 || (Number.isInteger(maxBatch) && operations.length > maxBatch)) {
+    throw new ClientError('Operations input is not a non-empty batch within the live contract limit.', {
+      code: 'INVALID_OPERATIONS_INPUT', stage,
+      nextAction: 'Provide a non-empty operation array within layoutPersistence.operations.limits.maxBatchItems.',
+    });
+  }
+  if (Number.isInteger(maxBytes) && Buffer.byteLength(JSON.stringify({ operations }), 'utf8') > maxBytes) {
+    throw new ClientError('Operations payload exceeds the live contract byte limit.', {
+      code: 'INVALID_OPERATIONS_INPUT', stage,
+      nextAction: 'Split the bounded change into smaller separately preflighted operation batches.',
+    });
+  }
+  const errors = [];
+  operations.forEach((operation, index) => {
+    const type = operation?.type;
+    const schema = typeof type === 'string' ? capability.operationSchemas[type] : null;
+    if (!isObject(schema)) errors.push(`$[${index}].type: operation schema is absent from the live contract`);
+    else errors.push(...operationSchemaErrors(operation, schema, `$[${index}]`));
+  });
+  if (errors.length) {
+    throw new ClientError('Operations do not satisfy the live operation schemas.', {
+      code: 'INVALID_OPERATIONS_INPUT', stage,
+      artifacts: { schemaErrors: errors.slice(0, 100) },
+      nextAction: 'Repair the batch using only layoutPersistence.operations.operationSchemas from the live contract.',
+    });
+  }
 }
 
 function layoutDocument(value) {
@@ -943,6 +1213,29 @@ async function loadCandidate(options) {
       error.artifacts = { layout: options.layout };
     }
     throw error;
+  }
+}
+
+async function loadOperations(options) {
+  const input = await readJsonFile(options.operations, 'operations', options.command);
+  const operations = Array.isArray(input) ? input : input?.operations;
+  if (!Array.isArray(operations)) {
+    throw new ClientError('Operations input must be an array or an object containing operations.', {
+      code: 'INVALID_OPERATIONS_INPUT', stage: options.command,
+      artifacts: { operations: options.operations },
+      nextAction: 'Provide the exact operation batch as JSON.',
+    });
+  }
+  return operations;
+}
+
+async function fetchOperationsCapability(options, authHeader) {
+  const response = await request(options, authHeader, { method: 'GET', endpoint: '/contract' });
+  if (!response.ok) return { failure: httpFailureResult(options.command, response, {}) };
+  try {
+    return { capability: operationsCapability(response.data, options.pageId, options.command) };
+  } catch (error) {
+    return { failure: resultFromError(error, options.command) };
   }
 }
 
@@ -1092,7 +1385,7 @@ function versionToken(document) {
   return typeof token === 'string' && token.trim() ? token : '';
 }
 
-function snapshotScopeFailure(snapshot, options, artifacts) {
+function snapshotScopeFailure(snapshot, options, artifacts, stage = 'save') {
   const structurallyValid = isObject(snapshot)
     && snapshot.schemaVersion === SCHEMA_VERSION
     && snapshot.artifact === 'monteby-page-snapshot'
@@ -1105,7 +1398,7 @@ function snapshotScopeFailure(snapshot, options, artifacts) {
   if (!structurallyValid) {
     return createResult({
       ok: false,
-      stage: 'save',
+      stage,
       code: 'SNAPSHOT_SCOPE_INVALID',
       artifacts,
       nextAction: 'Create a new page-scoped snapshot before validation or save.',
@@ -1115,7 +1408,7 @@ function snapshotScopeFailure(snapshot, options, artifacts) {
   if (snapshot.site !== options.site || snapshot.pageId !== options.pageId) {
     return createResult({
       ok: false,
-      stage: 'save',
+      stage,
       code: 'SNAPSHOT_SCOPE_MISMATCH',
       artifacts,
       nextAction: 'Snapshot this exact site and page before validation or save.',
@@ -1285,6 +1578,212 @@ async function runSave(options, authHeader) {
       pageId: options.pageId,
       publicPageUrl: snapshotValue.publicPageUrl,
       layoutSha256: candidateSha256,
+    },
+  });
+}
+
+function patchSnapshotFile(options) {
+  return options.snapshot || path.join(options.outDir, 'layout-before.json');
+}
+
+function validSha(value) {
+  return typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
+}
+
+async function preparePatch(options, authHeader) {
+  const snapshotFile = patchSnapshotFile(options);
+  const artifacts = { operations: options.operations, snapshot: snapshotFile };
+  const snapshot = await readJsonFile(snapshotFile, 'snapshot', options.command);
+  const scopeFailure = snapshotScopeFailure(snapshot, options, artifacts, options.command);
+  if (scopeFailure) return { failure: scopeFailure };
+  const expectedModifiedGmt = versionToken(layoutDocument(snapshot));
+  if (!expectedModifiedGmt) {
+    return { failure: createResult({
+      ok: false, stage: options.command, code: 'SNAPSHOT_VERSION_MISSING', artifacts,
+      nextAction: 'Create a fresh page-scoped snapshot and preflight the patch again.',
+      message: 'Snapshot does not contain postModifiedGmt.',
+    }) };
+  }
+  const operations = await loadOperations(options);
+  const discovered = await fetchOperationsCapability(options, authHeader);
+  if (discovered.failure) return discovered;
+  try {
+    validateOperations(operations, discovered.capability, options.command);
+  } catch (error) {
+    return { failure: resultFromError(error, options.command) };
+  }
+  const digest = operationsSha256(operations);
+  const snapshotSha256 = canonicalSha256(snapshot);
+  return {
+    artifacts: { ...artifacts, operationsSha256: digest, snapshotSha256 },
+    snapshot,
+    expectedModifiedGmt,
+    operations,
+    operationsSha256: digest,
+    snapshotSha256,
+    capability: discovered.capability,
+  };
+}
+
+async function runPatchValidate(options, authHeader) {
+  const prepared = await preparePatch(options, authHeader);
+  if (prepared.failure) return prepared.failure;
+  const response = await request(options, authHeader, {
+    method: prepared.capability.validate.method,
+    endpoint: prepared.capability.validateEndpoint,
+    body: {
+      operations: prepared.operations,
+      expectedModifiedGmt: prepared.expectedModifiedGmt,
+    },
+  });
+  if (!response.ok) return httpFailureResult('patch-validate', response, prepared.artifacts);
+  const data = response.data;
+  const candidateLayout = (() => {
+    try { return extractNodeMap(data?.layout); } catch { return null; }
+  })();
+  const invalid = !isObject(data)
+    || data.valid !== true
+    || data.operationCount !== prepared.operations.length
+    || data.operationsSha256 !== prepared.operationsSha256
+    || !validSha(data.candidateLayoutSha256)
+    || !validSha(data.compiledHtmlSha256)
+    || data.postModifiedGmt !== prepared.expectedModifiedGmt
+    || !candidateLayout;
+  if (invalid) {
+    return createResult({
+      ok: false, stage: 'patch-validate', code: 'PATCH_VALIDATION_EVIDENCE_INVALID',
+      artifacts: prepared.artifacts,
+      nextAction: 'Fix the Builder preflight response; do not apply this operation batch.',
+      message: 'Patch preflight did not return complete evidence bound to the snapshot and operation batch.',
+      httpStatus: response.status,
+      response: data,
+    });
+  }
+  prepared.artifacts.candidateLayoutSha256 = data.candidateLayoutSha256;
+  prepared.artifacts.compiledHtmlSha256 = data.compiledHtmlSha256;
+  return createResult({
+    ok: true, stage: 'patch-validate', code: 'PATCH_VALIDATION_OK',
+    artifacts: prepared.artifacts,
+    nextAction: 'Apply the exact batch once using this report and both emitted SHA-256 bindings.',
+    httpStatus: response.status,
+    response: data,
+    scope: { site: options.site, pageId: options.pageId },
+    layoutSha256: data.candidateLayoutSha256,
+    evidence: {
+      site: options.site,
+      pageId: options.pageId,
+      publicPageUrl: prepared.snapshot.publicPageUrl,
+      postModifiedGmt: prepared.expectedModifiedGmt,
+      snapshotSha256: prepared.snapshotSha256,
+      operationsSha256: prepared.operationsSha256,
+      candidateLayoutSha256: data.candidateLayoutSha256,
+      compiledHtmlSha256: data.compiledHtmlSha256,
+    },
+  });
+}
+
+function patchReportFailure(report, options, prepared) {
+  const valid = isObject(report)
+    && report.schemaVersion === SCHEMA_VERSION
+    && report.ok === true
+    && report.stage === 'patch-validate'
+    && report.code === 'PATCH_VALIDATION_OK'
+    && report.scope?.site === options.site
+    && report.scope?.pageId === options.pageId
+    && report.evidence?.postModifiedGmt === prepared.expectedModifiedGmt
+    && report.evidence?.snapshotSha256 === prepared.snapshotSha256
+    && validSha(report.evidence?.operationsSha256)
+    && validSha(report.evidence?.candidateLayoutSha256);
+  if (!valid) return 'PATCH_REPORT_INVALID';
+  if (
+    report.evidence.operationsSha256 !== options.expectedOperationsSha256
+    || report.evidence.operationsSha256 !== prepared.operationsSha256
+  ) return 'OPERATIONS_SHA256_MISMATCH';
+  if (report.evidence.candidateLayoutSha256 !== options.expectedCandidateLayoutSha256) {
+    return 'CANDIDATE_LAYOUT_SHA256_MISMATCH';
+  }
+  return '';
+}
+
+async function runPatchSave(options, authHeader) {
+  const prepared = await preparePatch(options, authHeader);
+  if (prepared.failure) return prepared.failure;
+  prepared.artifacts.patchReport = options.patchReport;
+  const report = await readJsonFile(options.patchReport, 'patchReport', 'patch-save');
+  const reportFailure = patchReportFailure(report, options, prepared);
+  if (reportFailure) {
+    return createResult({
+      ok: false, stage: 'patch-save', code: reportFailure,
+      artifacts: prepared.artifacts,
+      nextAction: 'Run patch-validate again with this exact snapshot and operation file.',
+      message: 'Patch evidence does not bind this exact site, page, snapshot, operation batch, and candidate.',
+    });
+  }
+  const fresh = await request(options, authHeader, {
+    method: 'GET', endpoint: `/pages/${options.pageId}/layout`,
+  });
+  if (!fresh.ok) return httpFailureResult('patch-save', fresh, prepared.artifacts);
+  const currentVersion = versionToken(layoutDocument(fresh.data));
+  if (!currentVersion || currentVersion !== prepared.expectedModifiedGmt) {
+    return createResult({
+      ok: false, stage: 'patch-save', code: currentVersion ? 'REST_CONFLICT' : 'REST_VERSION_MISSING',
+      artifacts: prepared.artifacts,
+      nextAction: 'Snapshot the page again, reconcile the patch, and preflight it again. Do not retry apply.',
+      message: currentVersion ? 'The page changed after patch preflight; no apply request was sent.' : 'Current layout has no postModifiedGmt.',
+      httpStatus: currentVersion ? 409 : fresh.status,
+      response: currentVersion ? {
+        snapshotPostModifiedGmt: prepared.expectedModifiedGmt,
+        currentPostModifiedGmt: currentVersion,
+      } : undefined,
+    });
+  }
+  const response = await request(options, authHeader, {
+    method: prepared.capability.apply.method,
+    endpoint: prepared.capability.applyEndpoint,
+    body: {
+      operations: prepared.operations,
+      expectedModifiedGmt: prepared.expectedModifiedGmt,
+      expectedCandidateSha256: options.expectedCandidateLayoutSha256,
+    },
+  });
+  if (!response.ok) return httpFailureResult('patch-save', response, prepared.artifacts);
+  const data = response.data;
+  if (
+    !isObject(data)
+    || data.operationCount !== prepared.operations.length
+    || data.operationsSha256 !== prepared.operationsSha256
+    || data.candidateLayoutSha256 !== options.expectedCandidateLayoutSha256
+  ) {
+    return createResult({
+      ok: false, stage: 'patch-save', code: 'PATCH_SAVE_EVIDENCE_INVALID',
+      artifacts: prepared.artifacts,
+      nextAction: 'Inspect the saved page and Builder response; never repeat apply automatically.',
+      message: 'Apply returned 2xx without complete evidence for the exact preflighted patch.',
+      httpStatus: response.status,
+      response: data,
+    });
+  }
+  return createResult({
+    ok: true, stage: 'patch-save', code: 'PATCH_SAVE_OK',
+    artifacts: {
+      ...prepared.artifacts,
+      candidateLayoutSha256: data.candidateLayoutSha256,
+      ...(validSha(data.compiledHtmlSha256) ? { compiledHtmlSha256: data.compiledHtmlSha256 } : {}),
+    },
+    nextAction: 'Snapshot and inspect the canonical saved page.',
+    httpStatus: response.status,
+    response: data,
+    scope: { site: options.site, pageId: options.pageId },
+    layoutSha256: data.candidateLayoutSha256,
+    evidence: {
+      site: options.site,
+      pageId: options.pageId,
+      publicPageUrl: prepared.snapshot.publicPageUrl,
+      previousPostModifiedGmt: prepared.expectedModifiedGmt,
+      snapshotSha256: prepared.snapshotSha256,
+      postModifiedGmt: data.postModifiedGmt,
+      operationsSha256: prepared.operationsSha256,
+      candidateLayoutSha256: data.candidateLayoutSha256,
     },
   });
 }
@@ -1490,6 +1989,8 @@ async function run(options, authHeader) {
   if (options.command === 'snapshot') return runSnapshot(options, authHeader);
   if (options.command === 'validate') return runValidate(options, authHeader);
   if (options.command === 'save') return runSave(options, authHeader);
+  if (options.command === 'patch-validate') return runPatchValidate(options, authHeader);
+  if (options.command === 'patch-save') return runPatchSave(options, authHeader);
   return runPreview(options, authHeader);
 }
 
@@ -1565,9 +2066,12 @@ if (require.main === module) {
 
 module.exports = {
   ClientError,
+  canonicalJson,
+  canonicalSha256,
   createResult,
   extractNodeMap,
   main,
   nodeMapSha256,
+  operationsSha256,
   parseArgs,
 };

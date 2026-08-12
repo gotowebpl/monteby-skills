@@ -261,6 +261,12 @@ read-only. Store presentation settings and `postModifiedGmt`.
 Send the exact candidate node map to the canonical validation endpoint. A local
 audit does not replace server validation.
 
+For a bounded existing-node edit, use the separate operation branch documented
+in `partial-layout-operations.md`: `patch-validate -> patch-save -> canonical
+review`. Enter it only after `CANONICAL_SNAPSHOT`. Its preflight must bind the
+snapshot version, exact operation batch, candidate layout, and compiled output;
+it does not permit skipping the canonical review after apply.
+
 ### SAVE
 
 Before PUT, fetch the page again and compare `postModifiedGmt` with the
