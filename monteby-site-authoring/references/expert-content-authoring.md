@@ -44,6 +44,36 @@ nieprzypisanych w workflow. Możesz użyć jawnie zatwierdzonych danych w widocz
 widżecie tylko zgodnie z bramką pochodzenia poniżej, ale nie wolno udawać, że
 tworzą one serwerowo potwierdzoną encję lub recenzję.
 
+## Reguły kategorii i masowe przypisanie
+
+Jeżeli `contract.layoutPersistence.editorial.automation` istnieje, odczytaj
+metody, ścieżki i limity dokładnie z jego `resources` oraz `limits`. Nie zgaduj
+endpointów i nie zapisuj przypisań bez podglądu.
+
+1. Pobierz dokument reguł z `automation.resources.rules.path`. Zachowaj jego
+   `revision`; reguły są uporządkowane, a `first_matching_rule` oznacza, że
+   pierwsza pasująca reguła wygrywa.
+2. Zmieniaj wyłącznie profile, typy treści, taksonomie i terminy opublikowane
+   przez serwer. Zapis reguł wysyła cały dokument z `expectedRevision`. Przy
+   `409` przerwij, pobierz bieżące reguły i pokaż różnicę człowiekowi.
+3. Masowe przypisanie rozpocznij przez zasób `bulkPreview`. Podgląd musi być
+   wygenerowany z aktualnym `expectedRulesRevision`; nie powoduje zapisu.
+4. Pokaż człowiekowi każdy element `changes`, w tym bieżącego autora i
+   recenzenta, wynik, `ruleId` oraz wszystkie `matchedRuleIds`. Kilka dopasowań
+   jest ważnym ostrzeżeniem o kolejności reguł. Jeżeli `hasMore` ma wartość
+   `true`, po zatwierdzeniu bieżącej partii pobierz następną od `nextOffset`;
+   ponowne zaczynanie od zera może nigdy nie dojść do dalszych wpisów.
+5. Do `bulkApply` przekaż bez zmian `rulesRevision`, `previewToken` oraz dokładne
+   `operation` z każdego zatwierdzonego wiersza. Nie buduj operacji samodzielnie
+   i nie zmieniaj ich po podglądzie.
+6. Każdy `409` oznacza zmianę reguł, treści, przypisania lub dopasowania między
+   podglądem a wykonaniem. Wygeneruj nowy podgląd; nigdy nie ponawiaj starego.
+
+Masowa operacja służy wyłącznie do przypisania osób. Zgodnie z
+`reviewPolicy: bulk_assignment_never_confirms_review` nie może potwierdzić
+weryfikacji merytorycznej ani utworzyć `verifiedAt`. Takie potwierdzenie zawsze
+pozostaje osobną czynnością człowieka na konkretnej wersji treści.
+
 ## Bramka pochodzenia danych
 
 Każda wartość faktograficzna musi wskazywać jedno z dozwolonych źródeł:

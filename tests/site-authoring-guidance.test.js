@@ -141,6 +141,13 @@ test('expert-content guidance binds authoring to evidence and the live widget co
   assert.match(guidance, /Status `409` oznacza, że treść zmieniła się od odczytu/);
   assert.match(guidance, /`verification\.status` przechodzi na `stale`/);
   assert.match(guidance, /nie kopiuj wtedy\s+`verifiedAt`/);
+  assert.match(guidance, /`contract\.layoutPersistence\.editorial\.automation`/);
+  assert.match(guidance, /pierwsza pasująca reguła wygrywa/);
+  assert.match(guidance, /Masowe przypisanie rozpocznij przez zasób `bulkPreview`/);
+  assert.match(guidance, /pobierz następną od `nextOffset`/);
+  assert.match(guidance, /Do `bulkApply` przekaż bez zmian `rulesRevision`, `previewToken`/);
+  assert.match(guidance, /Nie buduj operacji samodzielnie/);
+  assert.match(guidance, /bulk_assignment_never_confirms_review/);
   for (const widget of ['QuickAnswer', 'PostInfo', 'AuthorBox', 'Sources']) {
     assert.ok(guidance.includes('### `' + widget + '`'), `guidance documents ${widget}`);
   }
