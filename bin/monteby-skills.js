@@ -10,6 +10,15 @@ const SKILLS = [
   'monteby-widget-development',
 ];
 
+const UNSHIPPED_SKILL_PATHS = {
+  'monteby-site-authoring': [
+    'scripts/compare-geometry.js',
+    'scripts/extract-reference-spec.mjs',
+    'scripts/spec-to-layout.mjs',
+    'quarantine',
+  ],
+};
+
 function usage() {
   return `Monteby Skills installer
 
@@ -227,6 +236,16 @@ function copySkillRuntimeDependencies(skill, destination, dryRun) {
   }
 }
 
+function removeUnshippedSkillArtifacts(skill, destination, dryRun) {
+  if (dryRun) {
+    return;
+  }
+
+  for (const relativePath of UNSHIPPED_SKILL_PATHS[skill] || []) {
+    fs.rmSync(path.join(destination, relativePath), { recursive: true, force: true });
+  }
+}
+
 function install(options) {
   const directories = targetDirectories(options);
   const planned = [];
@@ -246,6 +265,7 @@ function install(options) {
   for (const item of planned) {
     console.log(`${options.dryRun ? '[dry-run] ' : ''}${item.agent}: ${item.skill} -> ${item.destination}`);
     copySkill(item.source, item.destination, options.dryRun);
+    removeUnshippedSkillArtifacts(item.skill, item.destination, options.dryRun);
     copySkillRuntimeDependencies(item.skill, item.destination, options.dryRun);
   }
 

@@ -203,6 +203,10 @@ only when their primary reference explicitly calls for it.
   references, locally generated HTML as owned input, and the `handoff.json`
   artifact (tokens, section list, breakpoints, asset manifest) produced and
   consumed by the modes.
+- `references/expert-content-authoring.md` — evidence-bound use of `AuthorBox`,
+  `PostInfo`, `QuickAnswer`, and `Sources`. Use it whenever the live contract
+  exposes any of those widgets; never invent an author, reviewer, verification
+  date, source, profile, or factual answer to fill a component.
 - `references/mechanical-workflow-protocol.md` §“Performance budgets” and
   §“Tablet-width rule” — final-gate budgets (page weight, image formats, video
   poster requirement, node-count threshold) and the single 900px/767px sheet

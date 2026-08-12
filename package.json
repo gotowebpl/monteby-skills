@@ -10,6 +10,10 @@
   "files": [
     "bin/",
     "monteby-site-authoring/",
+    "!monteby-site-authoring/quarantine/",
+    "!monteby-site-authoring/scripts/compare-geometry.js",
+    "!monteby-site-authoring/scripts/extract-reference-spec.mjs",
+    "!monteby-site-authoring/scripts/spec-to-layout.mjs",
     "monteby-widget-development/",
     "README.md"
   ],

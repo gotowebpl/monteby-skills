@@ -47,6 +47,7 @@ test('installer bundles screenshot comparison runtime dependencies for site auth
   assert.equal(fs.existsSync(path.join(skillDir, 'scripts', 'render-monteby-preview.js')), true);
   assert.equal(fs.existsSync(path.join(skillDir, 'references', 'mechanical-workflow-protocol.md')), true);
   assert.equal(fs.existsSync(path.join(skillDir, 'references', 'client-site-handoff.md')), true);
+  assert.equal(fs.existsSync(path.join(skillDir, 'references', 'expert-content-authoring.md')), true);
   assert.equal(fs.existsSync(path.join(skillDir, 'agents', 'openai.yaml')), true);
   assert.equal(fs.existsSync(path.join(skillDir, 'scripts', 'node_modules', 'pngjs', 'package.json')), true);
   assert.equal(fs.existsSync(path.join(skillDir, 'scripts', 'node_modules', 'pixelmatch', 'package.json')), true);

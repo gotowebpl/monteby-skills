@@ -133,6 +133,15 @@ nie rozstrzyga, weź je ze strony wzorcowej i zapisz w briefie na przyszłość:
   oznaczenia ruchu, i porównaj z liczbą kafli. Szczegóły i pułapki:
   `references/html-to-monteby.md`, sekcja „Ruch: przejścia, stany, wejścia".
 
+## Treść ekspercka
+
+Jeżeli strona zawiera odpowiedź ekspercką, autora, metadane redakcyjne albo
+źródła, przeczytaj `references/expert-content-authoring.md`. Użyj
+`QuickAnswer`, `PostInfo`, `AuthorBox` i `Sources` tylko wtedy, gdy publikuje je
+żywy kontrakt. Dane faktograficzne pochodzą z briefu lub wskazanych materiałów;
+brakującego autora, recenzenta, daty weryfikacji, profilu ani źródła nie wolno
+uzupełniać domysłem.
+
 ## Czego kontrakt nie wystawia
 
 - `ButtonBlock` ma wyłącznie `fontSize` — brak wariantów responsywnych i

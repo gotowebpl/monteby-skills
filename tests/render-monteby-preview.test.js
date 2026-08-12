@@ -324,6 +324,99 @@ test('preview renderer writes safe static HTML from a Monteby node map', () => {
   assert.match(fragment, /^<header[^>]*data-monteby-node-id="section-1"/);
 });
 
+test('preview renderer keeps expert content semantic, evidence visible, and unsafe values inert', () => {
+  const html = renderPreview({
+    ROOT: {
+      type: { resolvedName: 'RootCanvas' },
+      isCanvas: true,
+      props: {},
+      nodes: ['answer', 'info', 'author', 'sources'],
+    },
+    answer: {
+      type: { resolvedName: 'QuickAnswer' },
+      props: {
+        label: 'W skrócie',
+        question: 'Czy <dane> są bezpieczne?',
+        answer: 'Tak & tylko po walidacji.',
+        headingLevel: 'h1',
+        sourceLabel: 'Nieprawidłowy link pozostaje tekstem',
+        sourceUrl: 'javascript:alert(1)',
+      },
+      nodes: [],
+    },
+    info: {
+      type: { resolvedName: 'PostInfo' },
+      props: {
+        publishedDate: '2026-02-28',
+        modifiedDate: '2026-02-30',
+        publishedLabel: 'Opublikowano',
+        modifiedLabel: 'Zmieniono',
+        authorName: 'Anna Kowalska',
+        authorUrl: '/autorzy/anna',
+        authorLabel: 'Autor',
+        reviewerName: 'Jan Nowak',
+        reviewerUrl: 'javascript:alert(1)',
+        reviewerLabel: 'Recenzja',
+        tags: [{ label: 'AEO', url: '#aeo' }],
+        tagsLabel: 'Tagi',
+      },
+      nodes: [],
+    },
+    author: {
+      type: { resolvedName: 'AuthorBox' },
+      props: {
+        name: 'Anna Kowalska',
+        role: 'Ekspertka',
+        biography: 'Opis <bez HTML>.',
+        image: 'https://cdn.example.test/anna.jpg',
+        imageAlt: 'Anna Kowalska',
+        profileUrl: '/autorzy/anna',
+        expertise: [{ label: 'Dostępność' }],
+        sameAs: [
+          { label: 'Profil', url: 'https://profiles.example.test/anna' },
+          { label: 'Niepełny', url: '/anna' },
+        ],
+      },
+      nodes: [],
+    },
+    sources: {
+      type: { resolvedName: 'Sources' },
+      props: {
+        title: 'Źródła',
+        headingLevel: 'h3',
+        openInNewTab: true,
+        accessedLabel: 'Dostęp',
+        primaryLabel: 'Pierwotne',
+        items: [
+          { title: 'Specyfikacja', url: 'https://example.test/spec', publisher: 'Wydawca', accessedAt: '2026-08-12', primary: true },
+          { title: 'Bezpieczny fallback', url: 'javascript:alert(2)', accessedAt: '2026-02-30' },
+        ],
+      },
+      nodes: [],
+    },
+  }, 'monteby-preview-expert-content-');
+
+  assert.match(html, /<aside class="monteby-quick-answer"[^>]*aria-labelledby="answer-question"/u);
+  assert.match(html, /<h2 id="answer-question">Czy &lt;dane&gt; są bezpieczne\?<\/h2>/u);
+  assert.match(html, /Tak &amp; tylko po walidacji\./u);
+  assert.match(html, /<span>Nieprawidłowy link pozostaje tekstem<\/span>/u);
+  assert.match(html, /<time datetime="2026-02-28">2026-02-28<\/time>/u);
+  assert.doesNotMatch(html, /2026-02-30/u);
+  assert.match(html, /href="\/autorzy\/anna" rel="author">Anna Kowalska<\/a>/u);
+  assert.match(html, /Recenzja <span>Jan Nowak<\/span>/u);
+  assert.match(html, /<aside class="monteby-author-box"[^>]*aria-labelledby="author-name"/u);
+  assert.match(html, /<img src="https:\/\/cdn\.example\.test\/anna\.jpg" alt="Anna Kowalska"/u);
+  assert.match(html, /Opis &lt;bez HTML&gt;\./u);
+  assert.match(html, /href="https:\/\/profiles\.example\.test\/anna" rel="me noopener">Profil<\/a>/u);
+  assert.doesNotMatch(html, />Niepełny<\/a>/u);
+  assert.match(html, /<section class="monteby-sources"[^>]*aria-labelledby="sources-title"/u);
+  assert.match(html, /<h3 id="sources-title">Źródła<\/h3>/u);
+  assert.match(html, /href="https:\/\/example\.test\/spec" target="_blank" rel="cite noopener noreferrer">Specyfikacja<\/a>/u);
+  assert.match(html, /<time datetime="2026-08-12">2026-08-12<\/time>/u);
+  assert.match(html, /<cite><span>Bezpieczny fallback<\/span><\/cite>/u);
+  assert.doesNotMatch(html, /javascript:|alert\(/u);
+});
+
 test('preview renderer keeps Section and Container padding inside authored dimensions', () => {
   const html = renderPreview({
     ROOT: {

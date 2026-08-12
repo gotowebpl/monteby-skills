@@ -97,6 +97,31 @@ test('site-authoring uses the live company profile instead of hardcoded identity
   assert.match(skill, /do not construct a\s+`tel:` or `mailto:` value from display text/);
 });
 
+test('expert-content guidance binds authoring to evidence and the live widget contract', () => {
+  const skill = read(skillPath);
+  const brief = read(path.join(references, 'brief-to-monteby.md'));
+  const guidance = read(path.join(references, 'expert-content-authoring.md'));
+
+  assert.match(skill, /references\/expert-content-authoring\.md/);
+  assert.match(skill, /never invent an author, reviewer, verification\s+date, source, profile, or factual answer/);
+  assert.match(brief, /`QuickAnswer`, `PostInfo`, `AuthorBox` i `Sources`/);
+  assert.match(brief, /tylko wtedy, gdy publikuje je\s+żywy kontrakt/);
+  assert.match(guidance, /`GET \/wp-json\/monteby\/v1\/contract`/);
+  assert.match(guidance, /właściwości, typy,\s+limity repeaterów, dozwoleni rodzice i kontrolki/);
+  assert.match(guidance, /To `blocked_product_gap`/);
+  for (const widget of ['QuickAnswer', 'PostInfo', 'AuthorBox', 'Sources']) {
+    assert.ok(guidance.includes('### `' + widget + '`'), `guidance documents ${widget}`);
+  }
+  assert.match(guidance, /Nie ustawiaj `verifiedDate` tylko dlatego, że agent zbudował lub zapisał stronę/);
+  assert.match(guidance, /organizacja\s+nie jest osobą zastępczą/);
+  assert.match(guidance, /pusty tekst alternatywny jest błędem\s+dostępności/);
+  assert.match(guidance, /`primary: true` oznacza materiał pierwotny/);
+  assert.match(guidance, /nie jest zgodą na zapisanie wadliwego URL/);
+  assert.match(guidance, /`2026-02-30`/);
+  assert.match(guidance, /dokładnie jedno właściwe H1/);
+  assert.match(guidance, /pochodzenie danych autora\/recenzenta/);
+});
+
 test('partial operation guidance binds preflight evidence and forbids inferred API shapes', () => {
   const guidance = read(path.join(references, 'partial-layout-operations.md'));
   assert.match(guidance, /operationSchemas/);

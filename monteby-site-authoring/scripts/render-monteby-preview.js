@@ -308,6 +308,18 @@ function renderNode(nodeMap, nodeId) {
   if (type === 'TabsBlock') {
     return renderTabsBlock(nodeId, props);
   }
+  if (type === 'AuthorBox') {
+    return renderAuthorBox(nodeId, props);
+  }
+  if (type === 'PostInfo') {
+    return renderPostInfo(props);
+  }
+  if (type === 'QuickAnswer') {
+    return renderQuickAnswer(nodeId, props);
+  }
+  if (type === 'Sources') {
+    return renderSources(nodeId, props);
+  }
 
   return renderElement('div', props, renderChildren(nodeMap, nodeId));
 }
@@ -363,6 +375,176 @@ function renderImage(props) {
     borderRadius: props.borderRadius,
   });
   return `<img src="${escapeAttr(src)}" alt="${escapeAttr(props.alt || '')}" style="${escapeAttr(style)}">`;
+}
+
+function renderAuthorBox(nodeId, props) {
+  const identifier = safeIdentifier(nodeId) || 'monteby-author-box';
+  const nameId = `${identifier}-name`;
+  const name = safeTextValue(props.name);
+  const role = safeTextValue(props.role);
+  const biography = typeof props.biography === 'string' ? props.biography.trim() : '';
+  const image = safeExpertImageSource(props.image);
+  const profile = safeExpertHref(props.profileUrl);
+  const expertise = Array.isArray(props.expertise)
+    ? props.expertise.map((item) => safeTextValue(item?.label)).filter(Boolean)
+    : [];
+  const profiles = Array.isArray(props.sameAs)
+    ? props.sameAs.map((item) => ({
+      label: safeTextValue(item?.label),
+      url: safeExpertHref(item?.url, true),
+    })).filter((item) => item.label && item.url)
+    : [];
+  const layout = props.layout === 'column' ? 'column' : 'row';
+  const styles = [
+    styleDeclaration('display', 'flex'),
+    styleDeclaration('flex-direction', layout),
+    styleDeclaration('align-items', layout === 'column' ? 'flex-start' : 'center'),
+    styleDeclaration('gap', cssValue(props.gap) || '20px'),
+    styleDeclaration('padding', cssValue(props.padding) || '24px'),
+    styleDeclaration('border', `1px solid ${cssColorValue(props.borderColor) || '#e2e8f0'}`),
+    styleDeclaration('border-radius', cssValue(props.borderRadius) || '12px'),
+    styleDeclaration('background-color', cssColorValue(props.backgroundColor) || '#ffffff'),
+  ].filter(Boolean).join(';');
+  const nameMarkup = `<strong id="${escapeAttr(nameId)}" style="color:${escapeAttr(cssColorValue(props.nameColor) || '#0f172a')}">${escapeHtml(name)}</strong>`;
+  const expertiseMarkup = expertise.length > 0
+    ? `<ul>${expertise.map((label) => `<li>${escapeHtml(label)}</li>`).join('')}</ul>`
+    : '';
+  const profilesMarkup = profiles.length > 0
+    ? `<div>${profiles.map((item) => `<a href="${escapeAttr(item.url)}" rel="me noopener">${escapeHtml(item.label)}</a>`).join(' ')}</div>`
+    : '';
+
+  return [
+    `<aside class="monteby-author-box" aria-labelledby="${escapeAttr(nameId)}" style="${escapeAttr(styles)}">`,
+    image ? `<img src="${escapeAttr(image)}" alt="${escapeAttr(props.imageAlt || '')}" style="width:${escapeAttr(cssValue(props.imageSize) || '96px')};height:${escapeAttr(cssValue(props.imageSize) || '96px')};object-fit:cover;border-radius:9999px">` : '',
+    '<div>',
+    profile ? `<a href="${escapeAttr(profile)}" rel="author">${nameMarkup}</a>` : nameMarkup,
+    role ? `<span style="display:block;color:${escapeAttr(cssColorValue(props.roleColor) || '#475569')}">${escapeHtml(role)}</span>` : '',
+    biography ? `<p style="color:${escapeAttr(cssColorValue(props.biographyColor) || '#334155')}">${escapeHtml(biography)}</p>` : '',
+    expertiseMarkup,
+    profilesMarkup,
+    '</div>',
+    '</aside>',
+  ].join('');
+}
+
+function renderPostInfo(props) {
+  const entries = [];
+  for (const [dateProp, labelProp] of [
+    ['publishedDate', 'publishedLabel'],
+    ['modifiedDate', 'modifiedLabel'],
+    ['verifiedDate', 'verifiedLabel'],
+  ]) {
+    const date = normalizeExpertDate(props[dateProp]);
+    if (date) {
+      const label = safeTextValue(props[labelProp]);
+      entries.push(`<span>${label ? `${escapeHtml(label)} ` : ''}<time datetime="${date}">${date}</time></span>`);
+    }
+  }
+  for (const [nameProp, urlProp, labelProp, relation] of [
+    ['authorName', 'authorUrl', 'authorLabel', 'author'],
+    ['reviewerName', 'reviewerUrl', 'reviewerLabel', ''],
+  ]) {
+    const name = safeTextValue(props[nameProp]);
+    if (!name) {
+      continue;
+    }
+    const label = safeTextValue(props[labelProp]);
+    entries.push(`<span>${label ? `${escapeHtml(label)} ` : ''}${renderExpertLink(name, props[urlProp], relation)}</span>`);
+  }
+  const readingTime = safeTextValue(props.readingTime);
+  if (readingTime) {
+    entries.push(`<span>${escapeHtml(readingTime)}</span>`);
+  }
+  const category = safeTextValue(props.category);
+  if (category) {
+    entries.push(`<span>${renderExpertLink(category, props.categoryUrl)}</span>`);
+  }
+  const tags = Array.isArray(props.tags)
+    ? props.tags.map((tag) => ({ label: safeTextValue(tag?.label), url: tag?.url })).filter((tag) => tag.label)
+    : [];
+  if (tags.length > 0) {
+    const tagsLabel = safeTextValue(props.tagsLabel);
+    entries.push(`<span>${tagsLabel ? `${escapeHtml(tagsLabel)} ` : ''}${tags.map((tag) => renderExpertLink(tag.label, tag.url)).join(' ')}</span>`);
+  }
+  const styles = [
+    styleDeclaration('display', 'flex'),
+    styleDeclaration('flex-direction', props.layout === 'column' ? 'column' : 'row'),
+    styleDeclaration('flex-wrap', 'wrap'),
+    styleDeclaration('gap', cssValue(props.gap) || '12px'),
+    styleDeclaration('color', cssColorValue(props.textColor) || '#334155'),
+    styleDeclaration('font-size', cssValue(props.fontSize) || '14px'),
+  ].filter(Boolean).join(';');
+  return `<div class="monteby-post-info" style="${escapeAttr(styles)}">${entries.join('')}</div>`;
+}
+
+function renderQuickAnswer(nodeId, props) {
+  const identifier = safeIdentifier(nodeId) || 'monteby-quick-answer';
+  const headingId = `${identifier}-question`;
+  const heading = safeExpertHeadingTag(props.headingLevel);
+  const label = safeTextValue(props.label);
+  const question = typeof props.question === 'string' ? props.question.trim() : '';
+  const answer = typeof props.answer === 'string' ? props.answer.trim() : '';
+  const sourceLabel = safeTextValue(props.sourceLabel);
+  const styles = [
+    styleDeclaration('display', 'grid'),
+    styleDeclaration('gap', cssValue(props.gap) || '8px'),
+    styleDeclaration('padding', cssValue(props.padding) || '24px'),
+    styleDeclaration('border', `1px solid ${cssColorValue(props.borderColor) || '#e2e8f0'}`),
+    styleDeclaration('border-left', `4px solid ${cssColorValue(props.accentColor) || '#2563eb'}`),
+    styleDeclaration('border-radius', cssValue(props.borderRadius) || '12px'),
+    styleDeclaration('background-color', cssColorValue(props.backgroundColor) || '#f8fafc'),
+  ].filter(Boolean).join(';');
+  return [
+    `<aside class="monteby-quick-answer" aria-labelledby="${escapeAttr(headingId)}" style="${escapeAttr(styles)}">`,
+    label ? `<span>${escapeHtml(label)}</span>` : '',
+    `<${heading} id="${escapeAttr(headingId)}">${escapeHtml(question)}</${heading}>`,
+    `<p>${escapeHtml(answer)}</p>`,
+    sourceLabel ? renderExpertLink(sourceLabel, props.sourceUrl, 'cite') : '',
+    '</aside>',
+  ].join('');
+}
+
+function renderSources(nodeId, props) {
+  const identifier = safeIdentifier(nodeId) || 'monteby-sources';
+  const headingId = `${identifier}-title`;
+  const heading = safeExpertHeadingTag(props.headingLevel);
+  const title = safeTextValue(props.title);
+  const items = Array.isArray(props.items) ? props.items : [];
+  const listTag = props.listStyle === 'unordered' ? 'ul' : 'ol';
+  const renderedItems = items.map((item) => {
+    const itemTitle = safeTextValue(item?.title);
+    if (!itemTitle) {
+      return '';
+    }
+    const publisher = safeTextValue(item?.publisher);
+    const accessedAt = normalizeExpertDate(item?.accessedAt);
+    const accessedLabel = safeTextValue(props.accessedLabel);
+    const source = renderExpertLink(itemTitle, item?.url, 'cite', props.openInNewTab === true);
+    const primary = item?.primary === true && safeTextValue(props.primaryLabel)
+      ? `<span>${escapeHtml(safeTextValue(props.primaryLabel))}</span>`
+      : '';
+    const metadata = publisher || accessedAt
+      ? `<small>${escapeHtml(publisher)}${publisher && accessedAt ? ' · ' : ''}${accessedAt ? `${accessedLabel ? `${escapeHtml(accessedLabel)} ` : ''}<time datetime="${accessedAt}">${accessedAt}</time>` : ''}</small>`
+      : '';
+    return `<li><cite>${source}</cite>${primary}${metadata}</li>`;
+  }).filter(Boolean).join('');
+  const styles = [
+    styleDeclaration('color', cssColorValue(props.textColor) || '#0f172a'),
+    styleDeclaration('font-size', cssValue(props.fontSize) || '16px'),
+  ].filter(Boolean).join(';');
+  return `<section class="monteby-sources" aria-labelledby="${escapeAttr(headingId)}" style="${escapeAttr(styles)}"><${heading} id="${escapeAttr(headingId)}">${escapeHtml(title)}</${heading}><${listTag} style="display:grid;gap:${escapeAttr(cssValue(props.gap) || '12px')}">${renderedItems}</${listTag}></section>`;
+}
+
+function renderExpertLink(label, value, relation = '', newTab = false) {
+  const href = safeExpertHref(value);
+  const text = escapeHtml(label);
+  if (!href) {
+    return `<span>${text}</span>`;
+  }
+  const target = newTab ? ' target="_blank"' : '';
+  const relations = [relation, newTab ? 'noopener noreferrer' : ''].filter(Boolean).join(' ');
+  const rel = relations ? ` rel="${relations}"` : '';
+  return `<a href="${escapeAttr(href)}"${target}${rel}>${text}</a>`;
 }
 
 function renderDivider(props) {
@@ -1448,6 +1630,48 @@ function safeUrlValue(value, allowedSchemes) {
   return trimmed;
 }
 
+function safeExpertHref(value, absoluteOnly = false) {
+  if (typeof value !== 'string' || /[\u0000-\u0020\u007f]/.test(value)) {
+    return '';
+  }
+  const href = value.trim();
+  if (!href) {
+    return '';
+  }
+  const allowed = absoluteOnly
+    ? /^https?:\/\//i.test(href)
+    : /^(?:https?:\/\/|\/|\.\.?\/|\?|mailto:|tel:|#)/i.test(href);
+  return allowed ? href : '';
+}
+
+function safeExpertImageSource(value) {
+  if (typeof value !== 'string' || /[\u0000-\u0020\u007f]/.test(value)) {
+    return '';
+  }
+  const source = value.trim();
+  return /^(?:https?:\/\/|\/|\.\.?\/|data:image\/(?:png|jpe?g|gif|webp|svg\+xml|avif)[;,])/i.test(source)
+    ? source
+    : '';
+}
+
+function normalizeExpertDate(value) {
+  if (typeof value !== 'string') {
+    return '';
+  }
+  const candidate = value.trim();
+  const match = /^([1-9][0-9]{3})-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$/.exec(candidate);
+  if (!match) {
+    return '';
+  }
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day
+    ? candidate
+    : '';
+}
+
 function safeTextValue(value, fallback = '') {
   if (typeof value !== 'string' || CONTROL_CHARACTER_PATTERN.test(value)) {
     return fallback;
@@ -1519,6 +1743,10 @@ function textProp(props) {
 
 function safeHeadingTag(value) {
   return ['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'div'].includes(value) ? value : 'h2';
+}
+
+function safeExpertHeadingTag(value) {
+  return ['h2', 'h3', 'h4', 'h5', 'h6'].includes(value) ? value : 'h2';
 }
 
 function safeSectionTag(value) {
