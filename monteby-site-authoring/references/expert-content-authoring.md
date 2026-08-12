@@ -10,6 +10,40 @@ Jeżeli potrzebnego widgetu nie ma w żywym kontrakcie, nie odtwarzaj go przez
 `HtmlBlock`, shortcode, klasę CSS ani child theme. To `blocked_product_gap` i
 osobny przebieg przez skill `monteby-widget-development`.
 
+## Publiczny katalog ekspertów i przypisanie redakcyjne
+
+Jeżeli `contract.layoutPersistence.editorial` istnieje, jest jedynym źródłem
+tożsamości autora i recenzenta dla grafu strony. Nie pobieraj osób z kont
+logowania WordPressa ani nie wysyłaj wpisanej ręcznie nazwy. Używaj wyłącznie
+obiektów z `editorial.profiles`, które serwer opublikował jako kwalifikujące się
+profile ekspertów.
+
+1. Pobierz bieżący dokument strony przez
+   `GET /wp-json/monteby/v1/pages/{postId}/editorial`.
+2. Wybierz `authorProfileId` i opcjonalny `reviewerProfileId` z dokładnej listy
+   `profiles`. Autor i recenzent muszą być różnymi osobami.
+3. Zapisz cały dokument przez metodę i ścieżkę wskazane w
+   `contract.layoutPersistence.editorial.resource`. Wyślij dokładnie:
+   `authorProfileId`, `reviewerProfileId`, `reviewAction` oraz niezmieniony
+   `expectedContentSha256` z `verification.currentContentSha256`.
+4. Dla zwykłego przypisania użyj `reviewAction: "keep"`. Nie używaj
+   `"confirm"`, dopóki człowiek nie potwierdzi, że wskazany recenzent naprawdę
+   sprawdził bieżącą zapisaną treść. `"clear"` jawnie usuwa wcześniejsze
+   potwierdzenie, zachowując wybrane osoby.
+5. Status `409` oznacza, że treść zmieniła się od odczytu. Pobierz dokument
+   ponownie, pokaż różnicę człowiekowi i nie ponawiaj starego potwierdzenia.
+
+Potwierdzenie jest związane z dokładnym odciskiem zapisanej treści. Po zmianie
+layoutu lub treści `verification.status` przechodzi na `stale`; nie kopiuj wtedy
+`verifiedAt` do widocznego `PostInfo`, nie emituj recenzenta jako aktualnego i
+nie próbuj przywracać daty przez zapis propsów layoutu. Ponowna weryfikacja jest
+osobną, świadomą czynnością człowieka.
+
+Jeżeli kontrakt nie publikuje zasobu `editorial`, pozostaw autora i recenzenta
+nieprzypisanych w workflow. Możesz użyć jawnie zatwierdzonych danych w widocznym
+widżecie tylko zgodnie z bramką pochodzenia poniżej, ale nie wolno udawać, że
+tworzą one serwerowo potwierdzoną encję lub recenzję.
+
 ## Bramka pochodzenia danych
 
 Każda wartość faktograficzna musi wskazywać jedno z dozwolonych źródeł:
@@ -50,8 +84,9 @@ oznaczają różne zdarzenia:
 - `verifiedDate` — data rzeczywistej weryfikacji merytorycznej.
 
 Nie ustawiaj `verifiedDate` tylko dlatego, że agent zbudował lub zapisał stronę.
-`authorName` i `reviewerName` muszą odpowiadać zatwierdzonym osobom; organizacja
-nie jest osobą zastępczą. `authorUrl`, `reviewerUrl`, `categoryUrl` i adresy
+`authorName` i `reviewerName` muszą odpowiadać profilom zwróconym przez zasób
+redakcyjny, jeżeli jest dostępny; organizacja nie jest osobą zastępczą.
+`authorUrl`, `reviewerUrl`, `categoryUrl` i adresy
 tagów wskazują wyłącznie istniejące, zatwierdzone zasoby. Utrzymuj zgodność
 nazwy i adresu autora z `AuthorBox`. Czas czytania podaj tylko wtedy, gdy brief
 go dostarcza albo projekt ma jawnie zatwierdzoną metodę obliczania.
@@ -112,5 +147,6 @@ Przed `POST /wp-json/monteby/v1/validate` sprawdź:
 7. Źródła są unikalne, rzeczywiście użyte i mają poprawnie uzasadnione
    oznaczenie `primary`.
 
-W raporcie końcowym wymień użyte widgety, pochodzenie danych autora/recenzenta,
-daty weryfikacji, liczbę źródeł oraz każde celowo pominięte pole wraz z powodem.
+W raporcie końcowym wymień użyte widgety, identyfikatory zatwierdzonych profili,
+status i odcisk weryfikacji, pochodzenie danych autora/recenzenta, daty
+weryfikacji, liczbę źródeł oraz każde celowo pominięte pole wraz z powodem.

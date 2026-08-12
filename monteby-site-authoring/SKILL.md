@@ -227,7 +227,9 @@ only when their primary reference explicitly calls for it.
   consumed by the modes.
 - `references/expert-content-authoring.md` — evidence-bound use of `AuthorBox`,
   `PostInfo`, `QuickAnswer`, and `Sources`. Use it whenever the live contract
-  exposes any of those widgets; never invent an author, reviewer, verification
+  exposes any of those widgets or `layoutPersistence.editorial`; use only the
+  server-published expert directory, bind review confirmation to the advertised
+  content fingerprint, and never invent an author, reviewer, verification
   date, source, profile, or factual answer to fill a component.
 - `references/page-role-and-schema.md` — evidence-backed page roles, the full
   SEO block, Yoast handover, `seoGraph` diagnostics and server-rendered graph

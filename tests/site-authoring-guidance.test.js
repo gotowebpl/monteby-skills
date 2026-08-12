@@ -129,11 +129,18 @@ test('expert-content guidance binds authoring to evidence and the live widget co
 
   assert.match(skill, /references\/expert-content-authoring\.md/);
   assert.match(skill, /never invent an author, reviewer, verification\s+date, source, profile, or factual answer/);
+  assert.match(skill, /server-published expert directory/);
   assert.match(brief, /`QuickAnswer`, `PostInfo`, `AuthorBox` i `Sources`/);
   assert.match(brief, /tylko wtedy, gdy publikuje je\s+żywy kontrakt/);
   assert.match(guidance, /`GET \/wp-json\/monteby\/v1\/contract`/);
   assert.match(guidance, /właściwości, typy,\s+limity repeaterów, dozwoleni rodzice i kontrolki/);
   assert.match(guidance, /To `blocked_product_gap`/);
+  assert.match(guidance, /`contract\.layoutPersistence\.editorial`/);
+  assert.match(guidance, /GET \/wp-json\/monteby\/v1\/pages\/\{postId\}\/editorial/);
+  assert.match(guidance, /`expectedContentSha256` z `verification\.currentContentSha256`/);
+  assert.match(guidance, /Status `409` oznacza, że treść zmieniła się od odczytu/);
+  assert.match(guidance, /`verification\.status` przechodzi na `stale`/);
+  assert.match(guidance, /nie kopiuj wtedy\s+`verifiedAt`/);
   for (const widget of ['QuickAnswer', 'PostInfo', 'AuthorBox', 'Sources']) {
     assert.ok(guidance.includes('### `' + widget + '`'), `guidance documents ${widget}`);
   }
