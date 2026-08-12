@@ -122,6 +122,29 @@ test('expert-content guidance binds authoring to evidence and the live widget co
   assert.match(guidance, /pochodzenie danych autora\/recenzenta/);
 });
 
+test('query-loop guidance binds every public control to live host choices and one exact graph', () => {
+  const skill = read(skillPath);
+  const brief = read(path.join(references, 'brief-to-monteby.md'));
+  const guidance = read(path.join(references, 'query-loop-authoring.md'));
+
+  assert.match(skill, /references\/query-loop-authoring\.md/);
+  assert.match(skill, /authoring\.relationshipRules\.queryControls/);
+  assert.match(brief, /`QueryLoop`, `FilterBar`,\s+`SearchControl`, `SortControl` i `ActiveFilters`/);
+  assert.match(guidance, /`GET \/wp-json\/monteby\/v1\/contract`/);
+  assert.match(guidance, /`hostChoices\.queryLoop\.templates`, `emptyTemplates`, `postTypes`/);
+  assert.match(guidance, /dokładnie jeden `QueryLoop` w całej node mapie/);
+  assert.match(guidance, /Nie dołączaj publicznych kontrolek do pętli z `source="inherit"`/);
+  assert.match(guidance, /`FilterBar\.postType` musi być zgodny z `QueryLoop\.postType`/);
+  assert.match(guidance, /REST-visible, skalarne pola/);
+  assert.match(guidance, /Publiczny adres przenosi wyłącznie identyfikator zapisanej opcji/);
+  assert.match(guidance, /surowe `orderBy`, `order`,\s+`metaKey`/);
+  assert.match(guidance, /Domyślnie traktuj warianty filtrowane jako `noindex`/);
+  assert.match(guidance, /nie traktuj podzbioru jako zgody na indeksowanie\s+supersetu/);
+  assert.match(guidance, /Tryb\s+`infinite`[\s\S]*serwerowy link progresywnego\s+fallbacku/);
+  assert.match(guidance, /`patch-validate`, potem wyłącznie\s+emitowany `patch-save`/);
+  assert.match(guidance, /z JavaScriptem i bez niego/);
+});
+
 test('partial operation guidance binds preflight evidence and forbids inferred API shapes', () => {
   const guidance = read(path.join(references, 'partial-layout-operations.md'));
   assert.match(guidance, /operationSchemas/);

@@ -113,6 +113,13 @@ field and continue with content that does not require it. A `company_phone_url`
 or `company_email_url` binding is the canonical link target; do not construct a
 `tel:` or `mailto:` value from display text.
 
+When a page needs a public listing, search, sort, filters, active-filter pills,
+pagination, or an editable empty state, read
+`references/query-loop-authoring.md`. Build the whole composition from the live
+`authoring.relationshipRules.queryControls`, component schemas, and
+`hostChoices.queryLoop`; never infer a `queryId`, post type, taxonomy, term,
+template, custom-field key, public sort parameter, or indexable filter set.
+
 ## Persistence endpoints
 
 - `POST /wp-json/monteby/v1/validate`

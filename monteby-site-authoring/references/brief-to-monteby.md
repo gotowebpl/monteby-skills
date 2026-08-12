@@ -142,6 +142,17 @@ Jeżeli strona zawiera odpowiedź ekspercką, autora, metadane redakcyjne albo
 brakującego autora, recenzenta, daty weryfikacji, profilu ani źródła nie wolno
 uzupełniać domysłem.
 
+## Listy, wyszukiwanie, sortowanie i filtry
+
+Jeżeli brief wymaga publicznej listy treści lub produktów, przeczytaj
+`references/query-loop-authoring.md`. `QueryLoop`, `FilterBar`,
+`SearchControl`, `SortControl` i `ActiveFilters` twórz jako jeden graf związany
+tym samym, jawnym `queryId`. Wszystkie typy treści, szablony wyników i pustego
+stanu, taksonomie, termy oraz klucze pól własnych wybieraj wyłącznie z bieżącego
+`hostChoices.queryLoop`. Nie przepisuj do URL surowych parametrów sortowania ani
+kluczy meta; publiczna kontrolka wybiera tylko zapisany w pętli identyfikator
+opcji sortowania.
+
 ## Czego kontrakt nie wystawia
 
 - `ButtonBlock` ma wyłącznie `fontSize` — brak wariantów responsywnych i
