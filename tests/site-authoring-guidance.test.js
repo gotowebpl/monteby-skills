@@ -70,6 +70,11 @@ test('site-authoring keeps live contract, REST concurrency, and presentation can
   assert.match(skill, /GET \/wp-json\/monteby\/v1\/pages\/\{id\}\/layout/);
   assert.match(skill, /PUT \/wp-json\/monteby\/v1\/pages\/\{id\}\/layout/);
   assert.match(skill, /POST \/wp-json\/monteby\/v1\/preview/);
+  assert.match(skill, /layoutPersistence\.operations/);
+  assert.match(skill, /references\/partial-layout-operations\.md/);
+  assert.match(skill, /`patch-validate`/);
+  assert.match(skill, /canonical operations\s+SHA-256/);
+  assert.match(skill, /never retry `409` or `428`/);
   assert.match(skill, /fresh `expectedModifiedGmt`/);
   assert.match(skill, /A save returns `428` or `409`/);
   assert.match(skill, /send presentation\s+in the same versioned layout PUT/i);
@@ -78,6 +83,17 @@ test('site-authoring keeps live contract, REST concurrency, and presentation can
   assert.match(skill, /never send Custom CSS\/JS\/SEO through this API/);
   assert.match(skill, /`full-width` for edge-to-edge page bands/);
   assert.match(skill, /`canvas` with `"disableGlobalTemplates": true`/);
+});
+
+test('partial operation guidance binds preflight evidence and forbids inferred API shapes', () => {
+  const guidance = read(path.join(references, 'partial-layout-operations.md'));
+  assert.match(guidance, /operationSchemas/);
+  assert.match(guidance, /never remember or construct endpoints/);
+  assert.match(guidance, /`unsetProps` only\s+when the live `update_props` schema exposes it/);
+  assert.match(guidance, /postModifiedGmt/);
+  assert.match(guidance, /operationsSha256/);
+  assert.match(guidance, /candidateLayoutSha256/);
+  assert.match(guidance, /Never automatically retry/);
 });
 
 test('owned HTML route uses the measured runner, deterministic plan, and canonical PHP gate', () => {

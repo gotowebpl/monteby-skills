@@ -15,7 +15,7 @@ const CLIENT = path.join(
   'scripts',
   'wordpress-layout-client.js'
 );
-const { nodeMapSha256 } = require(CLIENT);
+const { canonicalSha256, nodeMapSha256, operationsSha256 } = require(CLIENT);
 const AUTH = 'Basic dGVzdDpzZWNyZXQ=';
 const NODE_MAP = {
   ROOT: {
@@ -33,6 +33,44 @@ const NODE_MAP = {
   },
 };
 const LAYOUT_SHA256 = nodeMapSha256(NODE_MAP);
+const OPERATIONS = [{
+  type: 'update_props',
+  nodeId: 'section-1',
+  props: { background: '#111111' },
+  unsetProps: ['legacyColor'],
+}];
+const OPERATIONS_SHA256 = operationsSha256(OPERATIONS);
+
+function patchContract() {
+  return {
+    layoutPersistence: {
+      operations: {
+        limits: { maxBatchItems: 100, maxPayloadBytes: 2097152 },
+        operationSchemas: {
+          update_props: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['type', 'nodeId'],
+            properties: {
+              type: { type: 'string', const: 'update_props' },
+              nodeId: { type: 'string', minLength: 1 },
+              props: { type: 'object' },
+              unsetProps: { type: 'array', items: { type: 'string', minLength: 1 } },
+            },
+          },
+        },
+        validate: {
+          method: 'POST',
+          endpoint: '/monteby/v1/pages/{postId}/layout/operations/validate',
+        },
+        apply: {
+          method: 'POST',
+          endpoint: '/monteby/v1/pages/{postId}/layout/operations',
+        },
+      },
+    },
+  };
+}
 
 function tempDir(t) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'wordpress-layout-client-'));
@@ -671,6 +709,186 @@ test('save maps PUT 428 and 409 to stable non-retryable codes without retrying',
     ]);
     assert.deepEqual(server.errors, []);
   }
+});
+
+test('patch-validate discovers the live schemas and binds snapshot, operations, and candidate digests', async (t) => {
+  const directory = tempDir(t);
+  const snapshotFile = path.join(directory, 'layout-before.json');
+  const operationsFile = path.join(directory, 'operations.json');
+  const reportFile = path.join(directory, 'patch-validate-response.json');
+  writeJson(operationsFile, OPERATIONS);
+  const requests = [];
+  let validateBody;
+  const server = await startServer(t, async (request, response) => {
+    requests.push(`${request.method} ${request.url}`);
+    if (request.url.endsWith('/contract')) return sendJson(response, 200, patchContract());
+    validateBody = await readBody(request);
+    return sendJson(response, 200, {
+      valid: true,
+      operationCount: 1,
+      operationsSha256: OPERATIONS_SHA256,
+      candidateLayoutSha256: LAYOUT_SHA256,
+      compiledHtmlSha256: 'a'.repeat(64),
+      postModifiedGmt: 'v1',
+      layout: NODE_MAP,
+      migration: { sourceSchemaVersion: 1, targetSchemaVersion: 2 },
+    });
+  });
+  const snapshot = pageSnapshot(server.site, 17, { postModifiedGmt: 'v1', nodeMap: NODE_MAP });
+  writeJson(snapshotFile, snapshot);
+
+  const execution = await runClient([
+    'patch-validate', '--site', server.site, '--page-id', '17',
+    '--operations', operationsFile, '--snapshot', snapshotFile, '--out', reportFile,
+  ]);
+
+  assert.equal(execution.exitCode, 0);
+  assertEnvelope(execution.result, { ok: true, stage: 'patch-validate', code: 'PATCH_VALIDATION_OK' });
+  assert.deepEqual(requests, [
+    'GET /wp-json/monteby/v1/contract',
+    'POST /wp-json/monteby/v1/pages/17/layout/operations/validate',
+  ]);
+  assert.deepEqual(validateBody, { operations: OPERATIONS, expectedModifiedGmt: 'v1' });
+  assert.equal(execution.result.evidence.operationsSha256, OPERATIONS_SHA256);
+  assert.equal(execution.result.evidence.snapshotSha256, canonicalSha256(snapshot));
+  assert.equal(execution.result.evidence.candidateLayoutSha256, LAYOUT_SHA256);
+  assert.equal(execution.result.nextAction.id, 'save_validated_patch');
+  assert.ok(execution.result.nextAction.args.includes(OPERATIONS_SHA256));
+  assert.ok(execution.result.nextAction.args.includes(LAYOUT_SHA256));
+  assert.deepEqual(JSON.parse(fs.readFileSync(reportFile, 'utf8')), execution.result);
+  assert.deepEqual(server.errors, []);
+});
+
+test('patch-save applies only the exact preflighted batch and sends both server preconditions', async (t) => {
+  const directory = tempDir(t);
+  const snapshotFile = path.join(directory, 'layout-before.json');
+  const operationsFile = path.join(directory, 'operations.json');
+  const reportFile = path.join(directory, 'patch-validate-response.json');
+  writeJson(operationsFile, OPERATIONS);
+  const requests = [];
+  let applyBody;
+  const server = await startServer(t, async (request, response) => {
+    requests.push(`${request.method} ${request.url}`);
+    if (request.url.endsWith('/contract')) return sendJson(response, 200, patchContract());
+    if (request.method === 'GET') return sendJson(response, 200, { postModifiedGmt: 'v1', nodeMap: NODE_MAP });
+    applyBody = await readBody(request);
+    return sendJson(response, 200, {
+      operationCount: 1,
+      operationsSha256: OPERATIONS_SHA256,
+      candidateLayoutSha256: LAYOUT_SHA256,
+      compiledHtmlSha256: 'a'.repeat(64),
+      postModifiedGmt: 'v2',
+    });
+  });
+  const snapshot = pageSnapshot(server.site, 17, { postModifiedGmt: 'v1', nodeMap: NODE_MAP });
+  writeJson(snapshotFile, snapshot);
+  writeJson(reportFile, {
+    schemaVersion: 1, ok: true, stage: 'patch-validate', code: 'PATCH_VALIDATION_OK',
+    scope: { site: server.site, pageId: 17 },
+    evidence: {
+      postModifiedGmt: 'v1', operationsSha256: OPERATIONS_SHA256,
+      snapshotSha256: canonicalSha256(snapshot),
+      candidateLayoutSha256: LAYOUT_SHA256,
+    },
+  });
+
+  const execution = await runClient([
+    'patch-save', '--site', server.site, '--page-id', '17',
+    '--operations', operationsFile, '--snapshot', snapshotFile,
+    '--patch-report', reportFile,
+    '--expected-operations-sha256', OPERATIONS_SHA256,
+    '--expected-candidate-layout-sha256', LAYOUT_SHA256,
+    '--out', path.join(directory, 'patch-save-response.json'),
+  ]);
+
+  assert.equal(execution.exitCode, 0);
+  assertEnvelope(execution.result, { ok: true, stage: 'patch-save', code: 'PATCH_SAVE_OK' });
+  assert.deepEqual(requests, [
+    'GET /wp-json/monteby/v1/contract',
+    'GET /wp-json/monteby/v1/pages/17/layout',
+    'POST /wp-json/monteby/v1/pages/17/layout/operations',
+  ]);
+  assert.deepEqual(applyBody, {
+    operations: OPERATIONS,
+    expectedModifiedGmt: 'v1',
+    expectedCandidateSha256: LAYOUT_SHA256,
+  });
+  assert.equal(execution.result.nextAction.id, 'verify_saved_patch');
+  assert.deepEqual(server.errors, []);
+});
+
+test('patch-save never applies or retries after a concurrent page change', async (t) => {
+  const directory = tempDir(t);
+  const snapshotFile = path.join(directory, 'layout-before.json');
+  const operationsFile = path.join(directory, 'operations.json');
+  const reportFile = path.join(directory, 'patch-validate-response.json');
+  writeJson(operationsFile, OPERATIONS);
+  let applyCount = 0;
+  const server = await startServer(t, (request, response) => {
+    if (request.url.endsWith('/contract')) return sendJson(response, 200, patchContract());
+    if (request.method === 'POST') applyCount += 1;
+    return sendJson(response, 200, { postModifiedGmt: 'v2', nodeMap: NODE_MAP });
+  });
+  const snapshot = pageSnapshot(server.site, 17, { postModifiedGmt: 'v1', nodeMap: NODE_MAP });
+  writeJson(snapshotFile, snapshot);
+  writeJson(reportFile, {
+    schemaVersion: 1, ok: true, stage: 'patch-validate', code: 'PATCH_VALIDATION_OK',
+    scope: { site: server.site, pageId: 17 },
+    evidence: { postModifiedGmt: 'v1', snapshotSha256: canonicalSha256(snapshot), operationsSha256: OPERATIONS_SHA256, candidateLayoutSha256: LAYOUT_SHA256 },
+  });
+
+  const execution = await runClient([
+    'patch-save', '--site', server.site, '--page-id', '17',
+    '--operations', operationsFile, '--snapshot', snapshotFile, '--patch-report', reportFile,
+    '--expected-operations-sha256', OPERATIONS_SHA256,
+    '--expected-candidate-layout-sha256', LAYOUT_SHA256,
+    '--out', path.join(directory, 'conflict.json'),
+  ]);
+
+  assert.equal(execution.exitCode, 1);
+  assertEnvelope(execution.result, { ok: false, stage: 'patch-save', code: 'REST_CONFLICT' });
+  assert.equal(execution.result.nextAction.id, 'resnapshot_and_reconcile');
+  assert.equal(execution.result.retryable, false);
+  assert.equal(applyCount, 0);
+  assert.deepEqual(server.errors, []);
+});
+
+test('patch-save rejects an operation file changed after preflight before apply', async (t) => {
+  const directory = tempDir(t);
+  const snapshotFile = path.join(directory, 'layout-before.json');
+  const operationsFile = path.join(directory, 'operations.json');
+  const reportFile = path.join(directory, 'patch-validate-response.json');
+  writeJson(operationsFile, [{ ...OPERATIONS[0], props: { background: '#222222' } }]);
+  let requestCount = 0;
+  const server = await startServer(t, (request, response) => {
+    requestCount += 1;
+    if (request.url.endsWith('/contract')) return sendJson(response, 200, patchContract());
+    return sendJson(response, 500, { code: 'must_not_be_called' });
+  });
+  const snapshot = pageSnapshot(server.site, 17, { postModifiedGmt: 'v1', nodeMap: NODE_MAP });
+  writeJson(snapshotFile, snapshot);
+  writeJson(reportFile, {
+    schemaVersion: 1, ok: true, stage: 'patch-validate', code: 'PATCH_VALIDATION_OK',
+    scope: { site: server.site, pageId: 17 },
+    evidence: {
+      postModifiedGmt: 'v1', snapshotSha256: canonicalSha256(snapshot),
+      operationsSha256: OPERATIONS_SHA256, candidateLayoutSha256: LAYOUT_SHA256,
+    },
+  });
+
+  // The live contract is the only request permitted before the local digest mismatch.
+  const execution = await runClient([
+    'patch-save', '--site', server.site, '--page-id', '17', '--operations', operationsFile,
+    '--snapshot', snapshotFile, '--patch-report', reportFile,
+    '--expected-operations-sha256', OPERATIONS_SHA256,
+    '--expected-candidate-layout-sha256', LAYOUT_SHA256,
+    '--out', path.join(directory, 'changed.json'),
+  ]);
+  assert.equal(execution.exitCode, 1);
+  assertEnvelope(execution.result, { ok: false, stage: 'patch-save', code: 'OPERATIONS_SHA256_MISMATCH' });
+  assert.equal(execution.result.nextAction.id, 'restart_patch_preflight');
+  assert.equal(requestCount, 1);
+  assert.deepEqual(server.errors, []);
 });
 
 test('preview posts nodeMap and writes returned HTML atomically', async (t) => {
