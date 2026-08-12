@@ -181,6 +181,28 @@ test('partial operation guidance binds preflight evidence and forbids inferred A
   assert.match(guidance, /Never automatically retry/);
 });
 
+test('accessibility fix guidance requires exact diff review and the canonical operation preflight', () => {
+  const skill = read(skillPath);
+  const partial = read(path.join(references, 'partial-layout-operations.md'));
+  const guidance = read(path.join(references, 'accessibility-audit-fixes.md'));
+
+  assert.match(skill, /references\/accessibility-audit-fixes\.md/);
+  assert.match(skill, /show every advertised `changes` entry, obtain\s+explicit approval/);
+  assert.match(skill, /Never invent a fix for a\s+finding, apply one to another `documentId`, auto-apply it, or auto-save it/);
+  assert.match(partial, /audit's operation and exact diff are\s+immutable evidence/);
+  assert.match(guidance, /`layoutPersistence\.accessibilityAudit`/);
+  assert.match(guidance, /`complete: false`[\s\S]*absence of a finding is not a\s+pass/);
+  assert.match(guidance, /`finding\.nodeId` equals `fix\.operation\.nodeId`/);
+  assert.match(guidance, /`finding\.documentId` is the document being edited/);
+  assert.match(guidance, /Never invent an alternative text, label, color, ARIA value, or patch/);
+  assert.match(guidance, /Require explicit approval for that exact proposal/);
+  assert.match(guidance, /containing only the advertised\s+`fix\.operation`/);
+  assert.match(guidance, /Run `patch-validate`/);
+  assert.match(guidance, /Execute only the emitted `patch-save` action/);
+  assert.match(guidance, /A version conflict invalidates both\s+the approval evidence and preflight/);
+  assert.match(guidance, /open that exact\s+`documentId` as a separate authoring run/);
+});
+
 test('owned HTML route uses the measured runner, deterministic plan, and canonical PHP gate', () => {
   const skill = read(skillPath);
   const protocol = read(path.join(references, 'mechanical-workflow-protocol.md'));

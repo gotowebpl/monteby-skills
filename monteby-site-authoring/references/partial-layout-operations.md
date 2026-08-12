@@ -14,6 +14,11 @@ validation/PUT for a new page or intentional whole-document replacement.
    when the live `update_props` schema exposes it. Do not encode deletion as
    `null` unless the schema explicitly allows null.
 
+When the operation comes from `accessibilityAudit.findings[].fix`, follow
+`accessibility-audit-fixes.md` first. The audit's operation and exact diff are
+immutable evidence: do not add a prop, omit a prop, change a value, or target a
+different node/document before preflight.
+
 ## Preflight
 
 ```bash

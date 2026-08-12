@@ -126,6 +126,13 @@ live `layoutPersistence.seo` schema, owner and graph-preview contract are the
 only authority. Never infer a role from a slug, write raw JSON-LD, or claim the
 preview is canonical proof before checking the saved server-rendered page.
 
+When the live layout response carries `accessibilityAudit`, read
+`references/accessibility-audit-fixes.md`. Treat every `fix` as a reviewable
+proposal, never as permission: show every advertised `changes` entry, obtain
+explicit approval, and submit only the exact advertised `update_props`
+operation through the live operation preflight. Never invent a fix for a
+finding, apply one to another `documentId`, auto-apply it, or auto-save it.
+
 ## Persistence endpoints
 
 - `POST /wp-json/monteby/v1/validate`
@@ -225,6 +232,10 @@ only when their primary reference explicitly calls for it.
 - `references/page-role-and-schema.md` — evidence-backed page roles, the full
   SEO block, Yoast handover, `seoGraph` diagnostics and server-rendered graph
   verification. Use it for every AI-authored SEO or schema-role change.
+- `references/accessibility-audit-fixes.md` — read-only audit evidence and the
+  approval-bound path from an advertised exact diff through operation preflight
+  to one versioned partial save. Use it whenever `accessibilityAudit` carries a
+  `fix`.
 - `references/mechanical-workflow-protocol.md` §“Performance budgets” and
   §“Tablet-width rule” — final-gate budgets (page weight, image formats, video
   poster requirement, node-count threshold) and the single 900px/767px sheet
