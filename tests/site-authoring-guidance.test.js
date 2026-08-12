@@ -85,6 +85,18 @@ test('site-authoring keeps live contract, REST concurrency, and presentation can
   assert.match(skill, /`canvas` with `"disableGlobalTemplates": true`/);
 });
 
+test('site-authoring uses the live company profile instead of hardcoded identity data', () => {
+  const skill = read(skillPath);
+
+  assert.match(skill, /live response includes `companyProfile`/);
+  assert.match(skill, /authoritative public identity/);
+  assert.match(skill, /`dynamicFields\.fields` keys that\s+start with `company_`/);
+  assert.match(skill, /Do not\s+copy those values into static widget props/);
+  assert.match(skill, /Never infer missing identity data from screenshots/);
+  assert.match(skill, /`company_phone_url`\s+or `company_email_url` binding is the canonical link target/);
+  assert.match(skill, /do not construct a\s+`tel:` or `mailto:` value from display text/);
+});
+
 test('partial operation guidance binds preflight evidence and forbids inferred API shapes', () => {
   const guidance = read(path.join(references, 'partial-layout-operations.md'));
   assert.match(guidance, /operationSchemas/);
