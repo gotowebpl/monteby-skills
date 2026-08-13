@@ -156,6 +156,14 @@ the authenticated preview's exact bytes and SHA-256, then compare the public
 root file separately. A valid directory is discovery evidence only — never
 permission to crawl or train, proof of AI use/citation, or an AEO verdict.
 
+When the live contract publishes `analytics.trafficSources`, read
+`references/traffic-sources.md`. Treat its ordered rules, precedence and closed
+output channels as the one classifier shared by analytics and attribution.
+Never classify from a product name, screenshot, arbitrary substring or User
+Agent, and never publish a raw campaign value, referrer path or unknown host as
+an analytics parameter. Changing the rule table is a site-wide configuration
+task, not part of ordinary page authoring.
+
 ## Persistence endpoints
 
 - `POST /wp-json/monteby/v1/validate`
@@ -272,6 +280,10 @@ only when their primary reference explicitly calls for it.
   authenticated preview validation and byte-for-byte public `/llms.txt`
   verification. Use it whenever `indexing.llmsTxt` is present and the task
   includes AI discovery, AEO diagnostics or a claim about the generated file.
+- `references/traffic-sources.md` — live ordered source rules, label-boundary
+  domain matching, campaign precedence and privacy-safe reporting. Use it when
+  `analytics.trafficSources` is present and the task inspects analytics,
+  attribution or traffic from AI products.
 - `references/mechanical-workflow-protocol.md` §“Performance budgets” and
   §“Tablet-width rule” — final-gate budgets (page weight, image formats, video
   poster requirement, node-count threshold) and the single 900px/767px sheet

@@ -201,6 +201,29 @@ test('llms.txt guidance binds one owner, exact preview evidence, and public byte
   assert.match(guidance, /Never rewrite these as “visible to AI”, “indexed by AI” or “AEO complete”/);
 });
 
+test('traffic-source guidance uses one live classifier and label-boundary evidence', () => {
+  const skill = read(skillPath);
+  const guidance = read(path.join(references, 'traffic-sources.md'));
+
+  assert.match(skill, /analytics\.trafficSources/);
+  assert.match(skill, /references\/traffic-sources\.md/);
+  assert.match(skill, /one classifier shared by analytics and attribution/);
+  assert.match(skill, /Never classify from a product name, screenshot, arbitrary substring or User\s+Agent/);
+  assert.match(skill, /never publish a raw campaign value, referrer path or unknown host/);
+  assert.match(guidance, /live ordered `rules`, closed channel\s+lists, precedence and parameter names are authoritative/);
+  assert.match(guidance, /must not add a second script, data-layer lookup, theme\s+condition or form-specific mapping/);
+  assert.match(guidance, /Raw UTM values, click identifiers, query strings,\s+referrer paths and arbitrary hosts/);
+  assert.match(guidance, /campaign or click identifier is classified before the referrer/);
+  assert.match(guidance, /A newly observed campaign\s+replaces the complete campaign record/);
+  assert.match(guidance, /`chatgpt\.com` may match `chatgpt\.com` and `share\.chatgpt\.com`/);
+  assert.match(guidance, /must not match\s+`evilchatgpt\.com` or `chatgpt\.com\.evil\.example`/);
+  assert.match(guidance, /Never classify traffic by User Agent/);
+  assert.match(guidance, /does not prove that an AI crawler visited the page/);
+  assert.match(guidance, /destination still inherits\s+the consent policy published by the analytics runtime/);
+  assert.match(guidance, /Changing `analytics\.trafficSources` affects the whole site/);
+  assert.match(guidance, /verify that\s+analytics and attribution expose the same normalized rule order/);
+});
+
 test('query-loop guidance binds every public control to live host choices and one exact graph', () => {
   const skill = read(skillPath);
   const brief = read(path.join(references, 'brief-to-monteby.md'));
