@@ -113,6 +113,65 @@ field and continue with content that does not require it. A `company_phone_url`
 or `company_email_url` binding is the canonical link target; do not construct a
 `tel:` or `mailto:` value from display text.
 
+When a page needs a public listing, search, sort, filters, active-filter pills,
+pagination, or an editable empty state, read
+`references/query-loop-authoring.md`. Build the whole composition from the live
+`authoring.relationshipRules.queryControls`, component schemas, and
+`hostChoices.queryLoop`; never infer a `queryId`, post type, taxonomy, term,
+template, custom-field key, public sort parameter, or indexable filter set.
+
+When the task authors or changes page SEO, its page role, FAQ schema, or an
+Article/Service relationship, read `references/page-role-and-schema.md`. The
+live `layoutPersistence.seo` schema, owner and graph-preview contract are the
+only authority. Never infer a role from a slug, write raw JSON-LD, or claim the
+preview is canonical proof before checking the saved server-rendered page.
+
+When the live layout response carries `accessibilityAudit`, read
+`references/accessibility-audit-fixes.md`. Treat every `fix` as a reviewable
+proposal, never as permission: show every advertised `changes` entry, obtain
+explicit approval, and submit only the exact advertised `update_props`
+operation through the live operation preflight. Never invent a fix for a
+finding, apply one to another `documentId`, auto-apply it, or auto-save it.
+
+When the live contract publishes `layoutPersistence.contentQualityAudit`, read
+`references/expert-content-authoring.md` and treat `roleRequirements` as the
+explicit checklist for the selected page role. The report is read-only: never
+turn a finding into invented copy, identity, chronology, review or source, and
+never claim answer-engine readiness unless `passed`, `complete` and
+`serverRendered` are all true in the freshly saved response.
+
+When the live contract publishes `indexing.indexNow`, read
+`references/indexnow.md`. Treat page-save acceptance and IndexNow delivery as
+separate facts: saving queues an eligible change asynchronously, while only the
+authenticated status/history resource records a provider response. Never
+generate or rotate a key, submit an off-site URL, submit a known draft/private/
+password-protected/noindex post, run the queue, or manually submit a removed URL
+unless the user explicitly asked for that operational action.
+
+When the live contract publishes `indexing.llmsTxt`, read
+`references/llms-txt.md`. Ownership is authoritative: do not create a competing
+file while the owner is `external`, and do not enable Builder or change its
+site-wide section policy during an ordinary page edit. Bind every inspection to
+the authenticated preview's exact bytes and SHA-256, then compare the public
+root file separately. A valid directory is discovery evidence only — never
+permission to crawl or train, proof of AI use/citation, or an AEO verdict.
+
+When the live contract publishes `analytics.trafficSources`, read
+`references/traffic-sources.md`. Treat its ordered rules, precedence and closed
+output channels as the one classifier shared by analytics and attribution.
+Never classify from a product name, screenshot, arbitrary substring or User
+Agent, and never publish a raw campaign value, referrer path or unknown host as
+an analytics parameter. Changing the rule table is a site-wide configuration
+task, not part of ordinary page authoring.
+
+When the live contract publishes `contract.environmentDoctor`, read
+`references/environment-doctor.md` before making a compatibility, integrity,
+cache, filesystem, release-readiness, or rollback claim. Fetch its passive
+report first. Run the active resource only when the user explicitly requested
+local self-tests or operational verification; it is not part of an ordinary
+page edit. A finding is evidence, never repair authority: do not change files,
+settings, cache, content, versions, or deployment state from this report alone.
+
 ## Persistence endpoints
 
 - `POST /wp-json/monteby/v1/validate`
@@ -143,7 +202,9 @@ When the live contract advertises presentation persistence, send presentation
 in the same versioned layout PUT: `full-width` for edge-to-edge page bands,
 `canvas` with `"disableGlobalTemplates": true` for standalone benchmark pages.
 Never call the legacy page-settings route for AI authoring and
-never send Custom CSS/JS/SEO through this API.
+never send Custom CSS/JS through this API. Send `seo` only when the same live
+layout resource advertises `layoutPersistence.seo`, its owner is authorable,
+and `references/page-role-and-schema.md` permits the evidence-backed change.
 
 Global header/footer templates are `gotoweb_template` posts resolved **by the
 canonical slugs** `gotoweb-global-header` / `gotoweb-global-footer` (plus the
@@ -203,6 +264,39 @@ only when their primary reference explicitly calls for it.
   references, locally generated HTML as owned input, and the `handoff.json`
   artifact (tokens, section list, breakpoints, asset manifest) produced and
   consumed by the modes.
+- `references/expert-content-authoring.md` — evidence-bound use of `AuthorBox`,
+  `PostInfo`, `QuickAnswer`, and `Sources`. Use it whenever the live contract
+  exposes any of those widgets or `layoutPersistence.editorial`; use only the
+  server-published expert directory, bind review confirmation to the advertised
+  content fingerprint, and never invent an author, reviewer, verification
+  date, source, profile, or factual answer to fill a component.
+  When the live contract exposes `contentQualityAudit`, use its role-specific
+  requirements and verify the fresh saved report; findings never authorize an
+  automatic content fix.
+- `references/page-role-and-schema.md` — evidence-backed page roles, the full
+  SEO block, Yoast handover, `seoGraph` diagnostics and server-rendered graph
+  verification. Use it for every AI-authored SEO or schema-role change.
+- `references/accessibility-audit-fixes.md` — read-only audit evidence and the
+  approval-bound path from an advertised exact diff through operation preflight
+  to one versioned partial save. Use it whenever `accessibilityAudit` carries a
+  `fix`.
+- `references/indexnow.md` — contract-led IndexNow eligibility, asynchronous
+  queue semantics, manual-submit guardrails, and the evidence required before
+  reporting provider acceptance. Use it whenever `indexing.indexNow` is present
+  and the task includes publication, indexing, or an indexing-status claim.
+- `references/llms-txt.md` — single-owner policy, explicit section evidence,
+  authenticated preview validation and byte-for-byte public `/llms.txt`
+  verification. Use it whenever `indexing.llmsTxt` is present and the task
+  includes AI discovery, AEO diagnostics or a claim about the generated file.
+- `references/traffic-sources.md` — live ordered source rules, label-boundary
+  domain matching, campaign precedence and privacy-safe reporting. Use it when
+  `analytics.trafficSources` is present and the task inspects analytics,
+  attribution or traffic from AI products.
+- `references/environment-doctor.md` — authenticated, bounded runtime and
+  release diagnostics plus explicitly invoked reversible local self-tests. Use
+  it for compatibility, mixed-deployment, cache, filesystem, REST, JSON-LD,
+  form-render or rollback verification; never treat a finding as an autofix or
+  deployment instruction.
 - `references/mechanical-workflow-protocol.md` §“Performance budgets” and
   §“Tablet-width rule” — final-gate budgets (page weight, image formats, video
   poster requirement, node-count threshold) and the single 900px/767px sheet

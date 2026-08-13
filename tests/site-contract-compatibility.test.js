@@ -46,6 +46,11 @@ test('site contract compatibility manifest ships in the npm package', () => {
   );
   const packedPaths = packResult[0].files.map((file) => file.path);
   assert.equal(
+    packedPaths.includes('monteby-site-authoring/references/expert-content-authoring.md'),
+    true,
+    'expert-content guidance must ship in the npm package'
+  );
+  assert.equal(
     packedPaths.some((file) => file.startsWith('audit-evidence/')),
     false,
     'rejected audit prototypes must stay outside the published package'

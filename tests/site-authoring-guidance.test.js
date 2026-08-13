@@ -80,7 +80,8 @@ test('site-authoring keeps live contract, REST concurrency, and presentation can
   assert.match(skill, /send presentation\s+in the same versioned layout PUT/i);
   assert.match(skill, /live contract advertises presentation persistence/);
   assert.match(skill, /Never call the legacy page-settings route/);
-  assert.match(skill, /never send Custom CSS\/JS\/SEO through this API/);
+  assert.match(skill, /never send Custom CSS\/JS through this API/);
+  assert.match(skill, /Send `seo` only when the same live\s+layout resource advertises `layoutPersistence\.seo`/);
   assert.match(skill, /`full-width` for edge-to-edge page bands/);
   assert.match(skill, /`canvas` with `"disableGlobalTemplates": true`/);
 });
@@ -97,6 +98,180 @@ test('site-authoring uses the live company profile instead of hardcoded identity
   assert.match(skill, /do not construct a\s+`tel:` or `mailto:` value from display text/);
 });
 
+test('page-role guidance binds AI SEO writes to the live contract and canonical graph', () => {
+  const skill = read(skillPath);
+  const brief = read(path.join(references, 'brief-to-monteby.md'));
+  const guidance = read(path.join(references, 'page-role-and-schema.md'));
+
+  assert.match(skill, /references\/page-role-and-schema\.md/);
+  assert.match(skill, /Never infer a role from a slug, write raw JSON-LD/);
+  assert.match(brief, /`seo`, `seoOwnership` i `seoGraph`/);
+  assert.match(brief, /nie\s+wyprowadzaj jej ze slugu ani długości treści/);
+  assert.match(guidance, /`layoutPersistence\.seo\.owner` i jego `authorable`/);
+  assert.match(guidance, /`blocked_seo_owner`/);
+  assert.match(guidance, /Wyślij kompletny obiekt `seo` zgodny z\s+live `required`/);
+  assert.match(guidance, /surowego JSON-LD ani własnego `@graph`/);
+  assert.match(guidance, /Rola jest decyzją treściową, nie heurystyką URL/);
+  assert.match(guidance, /Article, TechArticle i Service nie zastępują WebPage/);
+  assert.match(guidance, /organizacja nie jest\s+osobą zastępczą/);
+  assert.match(guidance, /FAQ musi pochodzić z widocznych pytań i odpowiedzi Buildera/);
+  assert.match(guidance, /`role\.authored`, `role\.effective`, `role\.schemaType`, `role\.pageType`/);
+  assert.match(guidance, /`yoast-adapter-projection`/);
+  assert.match(guidance, /publiczną stronę renderowaną przez WordPress\/PHP\s+bez wykonywania JavaScriptu/);
+  assert.match(guidance, /dokładnie jeden dokument\/graf standardowego JSON-LD/);
+  assert.match(guidance, /Bez tej bramki wynik pozostaje `diagnostic_passed`/);
+});
+
+test('expert-content guidance binds authoring to evidence and the live widget contract', () => {
+  const skill = read(skillPath);
+  const brief = read(path.join(references, 'brief-to-monteby.md'));
+  const guidance = read(path.join(references, 'expert-content-authoring.md'));
+
+  assert.match(skill, /references\/expert-content-authoring\.md/);
+  assert.match(skill, /never invent an author, reviewer, verification\s+date, source, profile, or factual answer/);
+  assert.match(skill, /server-published expert directory/);
+  assert.match(skill, /layoutPersistence\.contentQualityAudit/);
+  assert.match(skill, /`passed`, `complete` and\s+`serverRendered` are all true/);
+  assert.match(brief, /`QuickAnswer`, `PostInfo`, `AuthorBox` i `Sources`/);
+  assert.match(brief, /tylko wtedy, gdy publikuje je\s+żywy kontrakt/);
+  assert.match(guidance, /`GET \/wp-json\/monteby\/v1\/contract`/);
+  assert.match(guidance, /właściwości, typy,\s+limity repeaterów, dozwoleni rodzice i kontrolki/);
+  assert.match(guidance, /To `blocked_product_gap`/);
+  assert.match(guidance, /`contract\.layoutPersistence\.editorial`/);
+  assert.match(guidance, /GET \/wp-json\/monteby\/v1\/pages\/\{postId\}\/editorial/);
+  assert.match(guidance, /`expectedContentSha256` z `verification\.currentContentSha256`/);
+  assert.match(guidance, /Status `409` oznacza, że treść zmieniła się od odczytu/);
+  assert.match(guidance, /`verification\.status` przechodzi na `stale`/);
+  assert.match(guidance, /nie kopiuj wtedy\s+`verifiedAt`/);
+  assert.match(guidance, /`contract\.layoutPersistence\.editorial\.automation`/);
+  assert.match(guidance, /pierwsza pasująca reguła wygrywa/);
+  assert.match(guidance, /Masowe przypisanie rozpocznij przez zasób `bulkPreview`/);
+  assert.match(guidance, /pobierz następną od `nextOffset`/);
+  assert.match(guidance, /Do `bulkApply` przekaż bez zmian `rulesRevision`, `previewToken`/);
+  assert.match(guidance, /Nie buduj operacji samodzielnie/);
+  assert.match(guidance, /bulk_assignment_never_confirms_review/);
+  assert.match(guidance, /`contentQualityAudit`/);
+  assert.match(guidance, /`roleRequirements`/);
+  assert.match(guidance, /znalezienie nie jest patchem ani zgodą na automatyczną zmianę/);
+  assert.match(guidance, /`complete: false` oznacza, że brak kolejnych znalezisk nie jest zaliczeniem/);
+  assert.match(guidance, /`serverRendered: true`/);
+  assert.match(guidance, /`missing_sources` nie pozwala dodać prawdopodobnego linku/);
+  for (const widget of ['QuickAnswer', 'PostInfo', 'AuthorBox', 'Sources']) {
+    assert.ok(guidance.includes('### `' + widget + '`'), `guidance documents ${widget}`);
+  }
+  assert.match(guidance, /Nie ustawiaj `verifiedDate` tylko dlatego, że agent zbudował lub zapisał stronę/);
+  assert.match(guidance, /organizacja\s+nie jest osobą zastępczą/);
+  assert.match(guidance, /pusty tekst alternatywny jest błędem\s+dostępności/);
+  assert.match(guidance, /`primary: true` oznacza materiał pierwotny/);
+  assert.match(guidance, /nie jest zgodą na zapisanie wadliwego URL/);
+  assert.match(guidance, /`2026-02-30`/);
+  assert.match(guidance, /dokładnie jedno właściwe H1/);
+  assert.match(guidance, /pochodzenie danych autora\/recenzenta/);
+});
+
+test('IndexNow guidance separates queue acceptance, provider response, and indexing', () => {
+  const skill = read(skillPath);
+  const guidance = read(path.join(references, 'indexnow.md'));
+
+  assert.match(skill, /indexing\.indexNow/);
+  assert.match(skill, /page-save acceptance and IndexNow delivery as\s+separate facts/);
+  assert.match(guidance, /A `202` from Monteby's manual-submit resource means the queue accepted/);
+  assert.match(guidance, /Never report “submitted to IndexNow” from the page-save response alone/);
+  assert.match(guidance, /Drafts, private content, password-protected content, templates, revisions/);
+  assert.match(guidance, /do not run the worker automatically after queue acceptance/);
+  assert.match(guidance, /Never equate any of these with “indexed by a search engine.”/);
+});
+
+test('llms.txt guidance binds one owner, exact preview evidence, and public bytes', () => {
+  const skill = read(skillPath);
+  const guidance = read(path.join(references, 'llms-txt.md'));
+
+  assert.match(skill, /indexing\.llmsTxt/);
+  assert.match(skill, /references\/llms-txt\.md/);
+  assert.match(skill, /authenticated preview's exact bytes and SHA-256/);
+  assert.match(skill, /never\s+permission to crawl or train, proof of AI use\/citation, or an AEO verdict/);
+  assert.match(guidance, /`disabled` — Builder intentionally serves no generated `\/llms\.txt`/);
+  assert.match(guidance, /`external` — another component owns the address/);
+  assert.match(guidance, /Never switch the owner, enable a section or change a case-study post-type map/);
+  assert.match(guidance, /ordinary unauthenticated GET without cookies or a WordPress nonce/);
+  assert.match(guidance, /bytes identical to the authenticated preview/);
+  assert.match(guidance, /Never infer a service, contact page, author or case study from a title, slug/);
+  assert.match(guidance, /When `sameSiteUrlsOnly` is true/);
+  assert.match(guidance, /`llms_txt_public_verified`/);
+  assert.match(guidance, /Never rewrite these as “visible to AI”, “indexed by AI” or “AEO complete”/);
+});
+
+test('traffic-source guidance uses one live classifier and label-boundary evidence', () => {
+  const skill = read(skillPath);
+  const guidance = read(path.join(references, 'traffic-sources.md'));
+
+  assert.match(skill, /analytics\.trafficSources/);
+  assert.match(skill, /references\/traffic-sources\.md/);
+  assert.match(skill, /one classifier shared by analytics and attribution/);
+  assert.match(skill, /Never classify from a product name, screenshot, arbitrary substring or User\s+Agent/);
+  assert.match(skill, /never publish a raw campaign value, referrer path or unknown host/);
+  assert.match(guidance, /live ordered `rules`, closed channel\s+lists, precedence and parameter names are authoritative/);
+  assert.match(guidance, /must not add a second script, data-layer lookup, theme\s+condition or form-specific mapping/);
+  assert.match(guidance, /Raw UTM values, click identifiers, query strings,\s+referrer paths and arbitrary hosts/);
+  assert.match(guidance, /campaign or click identifier is classified before the referrer/);
+  assert.match(guidance, /A newly observed campaign\s+replaces the complete campaign record/);
+  assert.match(guidance, /`chatgpt\.com` may match `chatgpt\.com` and `share\.chatgpt\.com`/);
+  assert.match(guidance, /must not match\s+`evilchatgpt\.com` or `chatgpt\.com\.evil\.example`/);
+  assert.match(guidance, /Never classify traffic by User Agent/);
+  assert.match(guidance, /does not prove that an AI crawler visited the page/);
+  assert.match(guidance, /destination still inherits\s+the consent policy published by the analytics runtime/);
+  assert.match(guidance, /Changing `analytics\.trafficSources` affects the whole site/);
+  assert.match(guidance, /verify that\s+analytics and attribution expose the same normalized rule order/);
+});
+
+test('Environment Doctor guidance keeps diagnostics bounded and repairs separately authorized', () => {
+  const skill = read(skillPath);
+  const guidance = read(path.join(references, 'environment-doctor.md'));
+
+  assert.match(skill, /contract\.environmentDoctor/);
+  assert.match(skill, /references\/environment-doctor\.md/);
+  assert.match(skill, /Fetch its passive\s+report first/);
+  assert.match(skill, /Run the active resource only when the user explicitly requested/);
+  assert.match(skill, /finding is evidence, never repair authority/);
+  assert.match(guidance, /advertised resources, modes, groups and\s+safety flags are authoritative/);
+  assert.match(guidance, /bounded `evidence` containing no secret and no absolute filesystem path/);
+  assert.match(guidance, /A `warning` is not an error/);
+  assert.match(guidance, /does not authorize overwriting it/);
+  assert.match(guidance, /does not discover every reverse-proxy limit/);
+  assert.match(guidance, /not proof that HTTP can\s+download the file/);
+  assert.match(guidance, /Call `resources\.run` only when the user explicitly requested/);
+  assert.match(guidance, /only persistent-content exercise must be a newly created draft/);
+  assert.match(guidance, /unconditional deletion in a\s+`finally` path/);
+  assert.match(guidance, /`temporaryDraftCreated: true`/);
+  assert.match(guidance, /`temporaryDraftDeleted: true`/);
+  assert.match(guidance, /must not submit an external request, clear caches, edit an\s+existing post/);
+  assert.match(guidance, /`blocked_environment_doctor_safety`/);
+  assert.match(guidance, /Never repair from the report automatically/);
+});
+
+test('query-loop guidance binds every public control to live host choices and one exact graph', () => {
+  const skill = read(skillPath);
+  const brief = read(path.join(references, 'brief-to-monteby.md'));
+  const guidance = read(path.join(references, 'query-loop-authoring.md'));
+
+  assert.match(skill, /references\/query-loop-authoring\.md/);
+  assert.match(skill, /authoring\.relationshipRules\.queryControls/);
+  assert.match(brief, /`QueryLoop`, `FilterBar`,\s+`SearchControl`, `SortControl` i `ActiveFilters`/);
+  assert.match(guidance, /`GET \/wp-json\/monteby\/v1\/contract`/);
+  assert.match(guidance, /`hostChoices\.queryLoop\.templates`, `emptyTemplates`, `postTypes`/);
+  assert.match(guidance, /dokładnie jeden `QueryLoop` w całej node mapie/);
+  assert.match(guidance, /Nie dołączaj publicznych kontrolek do pętli z `source="inherit"`/);
+  assert.match(guidance, /`FilterBar\.postType` musi być zgodny z `QueryLoop\.postType`/);
+  assert.match(guidance, /REST-visible, skalarne pola/);
+  assert.match(guidance, /Publiczny adres przenosi wyłącznie identyfikator zapisanej opcji/);
+  assert.match(guidance, /surowe `orderBy`, `order`,\s+`metaKey`/);
+  assert.match(guidance, /Domyślnie traktuj warianty filtrowane jako `noindex`/);
+  assert.match(guidance, /nie traktuj podzbioru jako zgody na indeksowanie\s+supersetu/);
+  assert.match(guidance, /Tryb\s+`infinite`[\s\S]*serwerowy link progresywnego\s+fallbacku/);
+  assert.match(guidance, /`patch-validate`, potem wyłącznie\s+emitowany `patch-save`/);
+  assert.match(guidance, /z JavaScriptem i bez niego/);
+});
+
 test('partial operation guidance binds preflight evidence and forbids inferred API shapes', () => {
   const guidance = read(path.join(references, 'partial-layout-operations.md'));
   assert.match(guidance, /operationSchemas/);
@@ -106,6 +281,28 @@ test('partial operation guidance binds preflight evidence and forbids inferred A
   assert.match(guidance, /operationsSha256/);
   assert.match(guidance, /candidateLayoutSha256/);
   assert.match(guidance, /Never automatically retry/);
+});
+
+test('accessibility fix guidance requires exact diff review and the canonical operation preflight', () => {
+  const skill = read(skillPath);
+  const partial = read(path.join(references, 'partial-layout-operations.md'));
+  const guidance = read(path.join(references, 'accessibility-audit-fixes.md'));
+
+  assert.match(skill, /references\/accessibility-audit-fixes\.md/);
+  assert.match(skill, /show every advertised `changes` entry, obtain\s+explicit approval/);
+  assert.match(skill, /Never invent a fix for a\s+finding, apply one to another `documentId`, auto-apply it, or auto-save it/);
+  assert.match(partial, /audit's operation and exact diff are\s+immutable evidence/);
+  assert.match(guidance, /`layoutPersistence\.accessibilityAudit`/);
+  assert.match(guidance, /`complete: false`[\s\S]*absence of a finding is not a\s+pass/);
+  assert.match(guidance, /`finding\.nodeId` equals `fix\.operation\.nodeId`/);
+  assert.match(guidance, /`finding\.documentId` is the document being edited/);
+  assert.match(guidance, /Never invent an alternative text, label, color, ARIA value, or patch/);
+  assert.match(guidance, /Require explicit approval for that exact proposal/);
+  assert.match(guidance, /containing only the advertised\s+`fix\.operation`/);
+  assert.match(guidance, /Run `patch-validate`/);
+  assert.match(guidance, /Execute only the emitted `patch-save` action/);
+  assert.match(guidance, /A version conflict invalidates both\s+the approval evidence and preflight/);
+  assert.match(guidance, /open that exact\s+`documentId` as a separate authoring run/);
 });
 
 test('owned HTML route uses the measured runner, deterministic plan, and canonical PHP gate', () => {
