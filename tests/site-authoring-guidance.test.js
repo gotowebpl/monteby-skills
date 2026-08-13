@@ -84,6 +84,21 @@ test('site-authoring keeps live contract, REST concurrency, and presentation can
   assert.match(skill, /Send `seo` only when the same live\s+layout resource advertises `layoutPersistence\.seo`/);
   assert.match(skill, /`full-width` for edge-to-edge page bands/);
   assert.match(skill, /`canvas` with `"disableGlobalTemplates": true`/);
+  assert.match(skill, /public `anchorId` prop advertised by the live/);
+  assert.match(skill, /Never use\s+the blocked\/runtime-only `cssId`/);
+  assert.match(skill, /pair every `href: "#target"` or `TableOfContents\.items\[\]\.anchor: "target"`/);
+  assert.match(skill, /exactly one matching `anchorId: "target"`/);
+});
+
+test('content-brief guidance treats every same-page link as one contract-backed anchor pair', () => {
+  const brief = read(path.join(references, 'brief-to-monteby.md'));
+
+  assert.match(brief, /## Kotwice i spis treści/);
+  assert.match(brief, /`Section`, `Container` lub `Heading` wystawia kontrolowane pole\s+`anchorId`/);
+  assert.match(brief, /bez `#` w `anchorId` oraz `TableOfContents\.items\[\]\.anchor`/);
+  assert.match(brief, /z jednym `#` w `ButtonBlock\.href`, `Heading\.href`/);
+  assert.match(brief, /musi wystąpić jako `anchorId` dokładnie raz/);
+  assert.match(brief, /`cssId` pozostaje zablokowanym polem zgodności wstecznej/);
 });
 
 test('site-authoring uses the live company profile instead of hardcoded identity data', () => {

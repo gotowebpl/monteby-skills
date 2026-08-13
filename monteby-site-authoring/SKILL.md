@@ -113,6 +113,14 @@ field and continue with content that does not require it. A `company_phone_url`
 or `company_email_url` binding is the canonical link target; do not construct a
 `tel:` or `mailto:` value from display text.
 
+For same-page links, use only the public `anchorId` prop advertised by the live
+component contract (currently `Section`, `Container`, and `Heading`). Never use
+the blocked/runtime-only `cssId`. Copy the live control's pattern exactly and
+pair every `href: "#target"` or `TableOfContents.items[].anchor: "target"` with
+exactly one matching `anchorId: "target"` in the same candidate. A missing,
+duplicate, or contract-absent target is `blocked_product_gap`, not permission to
+invent a class, raw HTML ID, script, or residual CSS workaround.
+
 When a page needs a public listing, search, sort, filters, active-filter pills,
 pagination, or an editable empty state, read
 `references/query-loop-authoring.md`. Build the whole composition from the live
