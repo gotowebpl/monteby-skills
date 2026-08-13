@@ -169,6 +169,19 @@ test('expert-content guidance binds authoring to evidence and the live widget co
   assert.match(guidance, /pochodzenie danych autora\/recenzenta/);
 });
 
+test('IndexNow guidance separates queue acceptance, provider response, and indexing', () => {
+  const skill = read(skillPath);
+  const guidance = read(path.join(references, 'indexnow.md'));
+
+  assert.match(skill, /indexing\.indexNow/);
+  assert.match(skill, /page-save acceptance and IndexNow delivery as\s+separate facts/);
+  assert.match(guidance, /A `202` from Monteby's manual-submit resource means the queue accepted/);
+  assert.match(guidance, /Never report “submitted to IndexNow” from the page-save response alone/);
+  assert.match(guidance, /Drafts, private content, password-protected content, templates, revisions/);
+  assert.match(guidance, /do not run the worker automatically after queue acceptance/);
+  assert.match(guidance, /Never equate any of these with “indexed by a search engine.”/);
+});
+
 test('query-loop guidance binds every public control to live host choices and one exact graph', () => {
   const skill = read(skillPath);
   const brief = read(path.join(references, 'brief-to-monteby.md'));

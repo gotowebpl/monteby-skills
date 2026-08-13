@@ -140,6 +140,14 @@ turn a finding into invented copy, identity, chronology, review or source, and
 never claim answer-engine readiness unless `passed`, `complete` and
 `serverRendered` are all true in the freshly saved response.
 
+When the live contract publishes `indexing.indexNow`, read
+`references/indexnow.md`. Treat page-save acceptance and IndexNow delivery as
+separate facts: saving queues an eligible change asynchronously, while only the
+authenticated status/history resource records a provider response. Never
+generate or rotate a key, submit an off-site URL, submit a known draft/private/
+password-protected/noindex post, run the queue, or manually submit a removed URL
+unless the user explicitly asked for that operational action.
+
 ## Persistence endpoints
 
 - `POST /wp-json/monteby/v1/validate`
@@ -248,6 +256,10 @@ only when their primary reference explicitly calls for it.
   approval-bound path from an advertised exact diff through operation preflight
   to one versioned partial save. Use it whenever `accessibilityAudit` carries a
   `fix`.
+- `references/indexnow.md` — contract-led IndexNow eligibility, asynchronous
+  queue semantics, manual-submit guardrails, and the evidence required before
+  reporting provider acceptance. Use it whenever `indexing.indexNow` is present
+  and the task includes publication, indexing, or an indexing-status claim.
 - `references/mechanical-workflow-protocol.md` §“Performance budgets” and
   §“Tablet-width rule” — final-gate budgets (page weight, image formats, video
   poster requirement, node-count threshold) and the single 900px/767px sheet
