@@ -148,6 +148,14 @@ generate or rotate a key, submit an off-site URL, submit a known draft/private/
 password-protected/noindex post, run the queue, or manually submit a removed URL
 unless the user explicitly asked for that operational action.
 
+When the live contract publishes `indexing.llmsTxt`, read
+`references/llms-txt.md`. Ownership is authoritative: do not create a competing
+file while the owner is `external`, and do not enable Builder or change its
+site-wide section policy during an ordinary page edit. Bind every inspection to
+the authenticated preview's exact bytes and SHA-256, then compare the public
+root file separately. A valid directory is discovery evidence only — never
+permission to crawl or train, proof of AI use/citation, or an AEO verdict.
+
 ## Persistence endpoints
 
 - `POST /wp-json/monteby/v1/validate`
@@ -260,6 +268,10 @@ only when their primary reference explicitly calls for it.
   queue semantics, manual-submit guardrails, and the evidence required before
   reporting provider acceptance. Use it whenever `indexing.indexNow` is present
   and the task includes publication, indexing, or an indexing-status claim.
+- `references/llms-txt.md` — single-owner policy, explicit section evidence,
+  authenticated preview validation and byte-for-byte public `/llms.txt`
+  verification. Use it whenever `indexing.llmsTxt` is present and the task
+  includes AI discovery, AEO diagnostics or a claim about the generated file.
 - `references/mechanical-workflow-protocol.md` §“Performance budgets” and
   §“Tablet-width rule” — final-gate budgets (page weight, image formats, video
   poster requirement, node-count threshold) and the single 900px/767px sheet

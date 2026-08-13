@@ -182,6 +182,25 @@ test('IndexNow guidance separates queue acceptance, provider response, and index
   assert.match(guidance, /Never equate any of these with “indexed by a search engine.”/);
 });
 
+test('llms.txt guidance binds one owner, exact preview evidence, and public bytes', () => {
+  const skill = read(skillPath);
+  const guidance = read(path.join(references, 'llms-txt.md'));
+
+  assert.match(skill, /indexing\.llmsTxt/);
+  assert.match(skill, /references\/llms-txt\.md/);
+  assert.match(skill, /authenticated preview's exact bytes and SHA-256/);
+  assert.match(skill, /never\s+permission to crawl or train, proof of AI use\/citation, or an AEO verdict/);
+  assert.match(guidance, /`disabled` — Builder intentionally serves no generated `\/llms\.txt`/);
+  assert.match(guidance, /`external` — another component owns the address/);
+  assert.match(guidance, /Never switch the owner, enable a section or change a case-study post-type map/);
+  assert.match(guidance, /ordinary unauthenticated GET without cookies or a WordPress nonce/);
+  assert.match(guidance, /bytes identical to the authenticated preview/);
+  assert.match(guidance, /Never infer a service, contact page, author or case study from a title, slug/);
+  assert.match(guidance, /When `sameSiteUrlsOnly` is true/);
+  assert.match(guidance, /`llms_txt_public_verified`/);
+  assert.match(guidance, /Never rewrite these as “visible to AI”, “indexed by AI” or “AEO complete”/);
+});
+
 test('query-loop guidance binds every public control to live host choices and one exact graph', () => {
   const skill = read(skillPath);
   const brief = read(path.join(references, 'brief-to-monteby.md'));
