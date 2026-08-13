@@ -164,6 +164,14 @@ Agent, and never publish a raw campaign value, referrer path or unknown host as
 an analytics parameter. Changing the rule table is a site-wide configuration
 task, not part of ordinary page authoring.
 
+When the live contract publishes `contract.environmentDoctor`, read
+`references/environment-doctor.md` before making a compatibility, integrity,
+cache, filesystem, release-readiness, or rollback claim. Fetch its passive
+report first. Run the active resource only when the user explicitly requested
+local self-tests or operational verification; it is not part of an ordinary
+page edit. A finding is evidence, never repair authority: do not change files,
+settings, cache, content, versions, or deployment state from this report alone.
+
 ## Persistence endpoints
 
 - `POST /wp-json/monteby/v1/validate`
@@ -284,6 +292,11 @@ only when their primary reference explicitly calls for it.
   domain matching, campaign precedence and privacy-safe reporting. Use it when
   `analytics.trafficSources` is present and the task inspects analytics,
   attribution or traffic from AI products.
+- `references/environment-doctor.md` — authenticated, bounded runtime and
+  release diagnostics plus explicitly invoked reversible local self-tests. Use
+  it for compatibility, mixed-deployment, cache, filesystem, REST, JSON-LD,
+  form-render or rollback verification; never treat a finding as an autofix or
+  deployment instruction.
 - `references/mechanical-workflow-protocol.md` §“Performance budgets” and
   §“Tablet-width rule” — final-gate budgets (page weight, image formats, video
   poster requirement, node-count threshold) and the single 900px/767px sheet

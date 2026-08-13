@@ -224,6 +224,31 @@ test('traffic-source guidance uses one live classifier and label-boundary eviden
   assert.match(guidance, /verify that\s+analytics and attribution expose the same normalized rule order/);
 });
 
+test('Environment Doctor guidance keeps diagnostics bounded and repairs separately authorized', () => {
+  const skill = read(skillPath);
+  const guidance = read(path.join(references, 'environment-doctor.md'));
+
+  assert.match(skill, /contract\.environmentDoctor/);
+  assert.match(skill, /references\/environment-doctor\.md/);
+  assert.match(skill, /Fetch its passive\s+report first/);
+  assert.match(skill, /Run the active resource only when the user explicitly requested/);
+  assert.match(skill, /finding is evidence, never repair authority/);
+  assert.match(guidance, /advertised resources, modes, groups and\s+safety flags are authoritative/);
+  assert.match(guidance, /bounded `evidence` containing no secret and no absolute filesystem path/);
+  assert.match(guidance, /A `warning` is not an error/);
+  assert.match(guidance, /does not authorize overwriting it/);
+  assert.match(guidance, /does not discover every reverse-proxy limit/);
+  assert.match(guidance, /not proof that HTTP can\s+download the file/);
+  assert.match(guidance, /Call `resources\.run` only when the user explicitly requested/);
+  assert.match(guidance, /only persistent-content exercise must be a newly created draft/);
+  assert.match(guidance, /unconditional deletion in a\s+`finally` path/);
+  assert.match(guidance, /`temporaryDraftCreated: true`/);
+  assert.match(guidance, /`temporaryDraftDeleted: true`/);
+  assert.match(guidance, /must not submit an external request, clear caches, edit an\s+existing post/);
+  assert.match(guidance, /`blocked_environment_doctor_safety`/);
+  assert.match(guidance, /Never repair from the report automatically/);
+});
+
 test('query-loop guidance binds every public control to live host choices and one exact graph', () => {
   const skill = read(skillPath);
   const brief = read(path.join(references, 'brief-to-monteby.md'));
