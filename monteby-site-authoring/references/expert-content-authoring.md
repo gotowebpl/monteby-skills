@@ -74,6 +74,35 @@ Masowa operacja służy wyłącznie do przypisania osób. Zgodnie z
 weryfikacji merytorycznej ani utworzyć `verifiedAt`. Takie potwierdzenie zawsze
 pozostaje osobną czynnością człowieka na konkretnej wersji treści.
 
+## Audyt jakości treści i AEO po zapisie
+
+Jeżeli żywy kontrakt publikuje
+`layoutPersistence.contentQualityAudit`, odczytaj jego `roleRequirements` przed
+autorstwem. To jawna lista dowodów wymaganych dla efektywnej roli strony, a nie
+ukryty scoring. Nie przenoś wymagań między rolami i nie zgaduj ich na podstawie
+slugu, długości tekstu ani wyglądu referencji.
+
+Po każdym zapisie layoutu albo zmianie roli pobierz świeży zasób strony i
+sprawdź `contentQualityAudit`:
+
+1. `role` odpowiada zapisanej, efektywnej roli strony;
+2. `requirements` odpowiada dokładnie właściwej pozycji z
+   `roleRequirements`;
+3. każde `finding` jest zgłoszone człowiekowi wraz z `code`, `path` i
+   `message`; znalezienie nie jest patchem ani zgodą na automatyczną zmianę;
+4. `complete: false` oznacza, że brak kolejnych znalezisk nie jest zaliczeniem;
+5. `passed: true` oznacza brak błędów i ostrzeżeń w rozpoznanym zakresie, ale
+   gotowość bez JavaScriptu można zadeklarować dopiero przy jednoczesnym
+   `serverRendered: true`;
+6. po zmianie autora, recenzenta, daty, źródła albo widocznego widgetu audyt
+   musi zostać pobrany ponownie — wcześniejszy raport nie opisuje nowego stanu.
+
+Audyt pozostaje wyłącznie odczytem. Kod `missing_quick_answer` nie pozwala
+wymyślić odpowiedzi, `missing_sources` nie pozwala dodać prawdopodobnego linku,
+a rozbieżność autora lub daty nie pozwala nadpisać potwierdzonego profilu czy
+historii publikacji. Uzupełnij wartość dopiero z dozwolonego źródła pochodzenia,
+przeprowadź zwykłą walidację i zapis, a następnie sprawdź nowy raport.
+
 ## Bramka pochodzenia danych
 
 Każda wartość faktograficzna musi wskazywać jedno z dozwolonych źródeł:
@@ -176,7 +205,10 @@ Przed `POST /wp-json/monteby/v1/validate` sprawdź:
    pozwala na to żywa kontrolka.
 7. Źródła są unikalne, rzeczywiście użyte i mają poprawnie uzasadnione
    oznaczenie `primary`.
+8. Wymagania z `contentQualityAudit.roleRequirements` dla wybranej roli są
+   pokryte dowodami, których nie wymyślono ani nie skopiowano z placeholderów.
 
 W raporcie końcowym wymień użyte widgety, identyfikatory zatwierdzonych profili,
 status i odcisk weryfikacji, pochodzenie danych autora/recenzenta, daty
-weryfikacji, liczbę źródeł oraz każde celowo pominięte pole wraz z powodem.
+weryfikacji, liczbę źródeł, wynik świeżego `contentQualityAudit` (`passed`,
+`complete`, `serverRendered`) oraz każde celowo pominięte pole wraz z powodem.

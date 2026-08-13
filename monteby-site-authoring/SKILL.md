@@ -133,6 +133,13 @@ explicit approval, and submit only the exact advertised `update_props`
 operation through the live operation preflight. Never invent a fix for a
 finding, apply one to another `documentId`, auto-apply it, or auto-save it.
 
+When the live contract publishes `layoutPersistence.contentQualityAudit`, read
+`references/expert-content-authoring.md` and treat `roleRequirements` as the
+explicit checklist for the selected page role. The report is read-only: never
+turn a finding into invented copy, identity, chronology, review or source, and
+never claim answer-engine readiness unless `passed`, `complete` and
+`serverRendered` are all true in the freshly saved response.
+
 ## Persistence endpoints
 
 - `POST /wp-json/monteby/v1/validate`
@@ -231,6 +238,9 @@ only when their primary reference explicitly calls for it.
   server-published expert directory, bind review confirmation to the advertised
   content fingerprint, and never invent an author, reviewer, verification
   date, source, profile, or factual answer to fill a component.
+  When the live contract exposes `contentQualityAudit`, use its role-specific
+  requirements and verify the fresh saved report; findings never authorize an
+  automatic content fix.
 - `references/page-role-and-schema.md` — evidence-backed page roles, the full
   SEO block, Yoast handover, `seoGraph` diagnostics and server-rendered graph
   verification. Use it for every AI-authored SEO or schema-role change.

@@ -130,6 +130,8 @@ test('expert-content guidance binds authoring to evidence and the live widget co
   assert.match(skill, /references\/expert-content-authoring\.md/);
   assert.match(skill, /never invent an author, reviewer, verification\s+date, source, profile, or factual answer/);
   assert.match(skill, /server-published expert directory/);
+  assert.match(skill, /layoutPersistence\.contentQualityAudit/);
+  assert.match(skill, /`passed`, `complete` and\s+`serverRendered` are all true/);
   assert.match(brief, /`QuickAnswer`, `PostInfo`, `AuthorBox` i `Sources`/);
   assert.match(brief, /tylko wtedy, gdy publikuje je\s+żywy kontrakt/);
   assert.match(guidance, /`GET \/wp-json\/monteby\/v1\/contract`/);
@@ -148,6 +150,12 @@ test('expert-content guidance binds authoring to evidence and the live widget co
   assert.match(guidance, /Do `bulkApply` przekaż bez zmian `rulesRevision`, `previewToken`/);
   assert.match(guidance, /Nie buduj operacji samodzielnie/);
   assert.match(guidance, /bulk_assignment_never_confirms_review/);
+  assert.match(guidance, /`contentQualityAudit`/);
+  assert.match(guidance, /`roleRequirements`/);
+  assert.match(guidance, /znalezienie nie jest patchem ani zgodą na automatyczną zmianę/);
+  assert.match(guidance, /`complete: false` oznacza, że brak kolejnych znalezisk nie jest zaliczeniem/);
+  assert.match(guidance, /`serverRendered: true`/);
+  assert.match(guidance, /`missing_sources` nie pozwala dodać prawdopodobnego linku/);
   for (const widget of ['QuickAnswer', 'PostInfo', 'AuthorBox', 'Sources']) {
     assert.ok(guidance.includes('### `' + widget + '`'), `guidance documents ${widget}`);
   }
