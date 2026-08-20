@@ -309,6 +309,41 @@ test('recursively restores a complete planned subtree and applies responsive Sec
   assert.deepEqual(tempArtifacts(fixture.directory), []);
 });
 
+test('returns terminal REPAIR_IDEMPOTENT without writing or scheduling a rerun', () => {
+  const layout = {
+    ROOT: { type: { resolvedName: 'ROOT' }, nodes: ['section-a'], props: {} },
+    'section-a': node('Section', 'ROOT', [], { minHeight: '420px', innerPaddingX: '32px' }),
+  };
+  const fixture = createFixture({
+    sourceLayout: layout,
+    candidateLayout: layout,
+    bands: [{
+      order: 0,
+      generatedSectionId: 'section-a',
+      viewports: {
+        desktop: {
+          ...viewport(900, 120),
+          repairProps: { minHeight: '420px', innerPaddingX: '32px' },
+        },
+      },
+    }],
+    repairQueue: [{
+      code: 'match_band_geometry',
+      viewport: 'desktop',
+      referenceIndex: 0,
+      sectionId: 'section-a',
+    }],
+  });
+
+  const result = runFixture(fixture);
+  assert.equal(result.status, 1, result.stderr || result.stdout);
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.status, 'REPAIR_IDEMPOTENT');
+  assert.equal(report.nextAction.id, 'blocked_repair_idempotent');
+  assert.equal(report.nextAction.tool, '');
+  assert.equal(fs.existsSync(fixture.out), false);
+});
+
 test('blocks recursive restore when a source subtree ID is reachable from an unrelated root', () => {
   const sourceLayout = {
     ROOT: {

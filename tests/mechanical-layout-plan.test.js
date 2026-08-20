@@ -68,6 +68,10 @@ test('plan-out records every generic measured band and viewport without truncati
     height: 300,
     width: 1440,
     contentInset: 120,
+    repairProps: {
+      minHeight: '300px',
+      innerPaddingX: '0px',
+    },
     columns: 1,
     display: 'block',
     textCount: 0,
@@ -79,6 +83,7 @@ test('plan-out records every generic measured band and viewport without truncati
   assert.equal(plan.bands[1].viewports.tablet.height, 260);
   assert.equal(plan.bands[1].viewports.mobile.width, 390);
   assert.equal(plan.bands[1].viewports.mobile.contentInset, 20);
+  assert.deepEqual(Object.keys(plan.bands[1].viewports.mobile.repairProps).sort(), ['innerPaddingXMobile', 'minHeightMobile']);
   assert.deepEqual(plan.bands.map((band) => band.surfaceMappings), [[], []]);
   assert.deepEqual(plan.bands.map((band) => band.surfaceParity), [
     emptySurfaceParity(),

@@ -333,16 +333,24 @@ function renderSection(nodeMap, nodeId, props) {
   const outerProps = { ...props };
   delete outerProps.innerMaxWidth;
   delete outerProps.innerPaddingX;
+  delete outerProps.innerPaddingXTablet;
+  delete outerProps.innerPaddingXMobile;
   delete outerProps.tag;
+  const innerPadding = cssValue(props.innerPaddingX) || '0px';
+  const innerPaddingTablet = cssValue(props.innerPaddingXTablet) || innerPadding;
+  const innerPaddingMobile = cssValue(props.innerPaddingXMobile) || innerPaddingTablet;
   const innerStyles = [
     styleDeclaration('box-sizing', 'border-box'),
     styleDeclaration('max-width', cssValue(props.innerMaxWidth)),
     styleDeclaration('margin-left', 'auto'),
     styleDeclaration('margin-right', 'auto'),
-    styleDeclaration('padding-left', cssValue(props.innerPaddingX)),
-    styleDeclaration('padding-right', cssValue(props.innerPaddingX)),
+    styleDeclaration('padding-left', 'var(--monteby-section-inner-padding-x)'),
+    styleDeclaration('padding-right', 'var(--monteby-section-inner-padding-x)'),
+    styleDeclaration('--monteby-section-inner-padding-x', innerPadding),
+    styleDeclaration('--monteby-section-inner-padding-x-tablet', innerPaddingTablet),
+    styleDeclaration('--monteby-section-inner-padding-x-mobile', innerPaddingMobile),
   ].filter(Boolean);
-  const children = `<div style="${innerStyles.join(';')}">${renderChildren(nodeMap, nodeId)}</div>`;
+  const children = `<div class="monteby-preview-section__inner" style="${innerStyles.join(';')}">${renderChildren(nodeMap, nodeId)}</div>`;
 
   return renderElement(
     tag,
@@ -1773,6 +1781,8 @@ function baseCss() {
     'body{margin:0;background:#f7f7f4;color:#111;font-family:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}',
     '.monteby-preview{width:100%;overflow:hidden}',
     '.monteby-preview p,.monteby-preview h1,.monteby-preview h2,.monteby-preview h3,.monteby-preview h4,.monteby-preview h5,.monteby-preview h6{margin-top:0;margin-bottom:0}',
+    '@media (max-width:900px){.monteby-preview-section__inner{--monteby-section-inner-padding-x:var(--monteby-section-inner-padding-x-tablet)!important}}',
+    '@media (max-width:767px){.monteby-preview-section__inner{--monteby-section-inner-padding-x:var(--monteby-section-inner-padding-x-mobile)!important}}',
     '@media (max-width:900px){.gotoweb-margin-left--responsive{margin-left:var(--gotoweb-margin-left-tablet,var(--gotoweb-margin-left-base))!important}}',
     '@media (max-width:767px){.gotoweb-margin-left--responsive{margin-left:var(--gotoweb-margin-left-mobile,var(--gotoweb-margin-left-tablet,var(--gotoweb-margin-left-base)))!important}}',
     '.monteby-preview a{cursor:pointer}',

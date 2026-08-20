@@ -36,10 +36,13 @@ const CONTRACT = {
       name: 'Container',
       isCanvas: true,
       allowedParents: ['Section', 'Container'],
-      props: ['anchorId', 'borderWidth', 'borderTopWidth', 'borderTopColor', 'flexGrow', 'width'],
+      props: ['anchorId', 'borderWidth', 'borderTopWidth', 'borderTopColor', 'flexGrow', 'width', 'sticky', 'stickyTop', 'hoverTranslateY'],
       controls: [
         { type: 'number', props: ['flexGrow'], step: 1, min: 0, max: 12 },
         { type: 'css-value', props: ['width'], units: ['px'] },
+        { type: 'toggle', props: ['sticky'] },
+        { type: 'css-value', props: ['stickyTop'], units: ['px'] },
+        { type: 'number', props: ['hoverTranslateY'], min: -999, max: 999 },
       ],
     },
     {
@@ -257,6 +260,8 @@ test('audit-reference-css resolves variables, expands shorthands, and isolates r
     :root { --ink: #0a0b0d; --pad: 104px; }
     .band { background-color: var(--ink); padding-top: var(--pad); margin: 0 0 1em; }
     .band:hover { background-color: #1e222a; }
+    .card:hover { transform: translateY(-4px); }
+    .sticky { position: sticky; top: 24px; }
     h1 { font-variation-settings: 'wdth' 112; font-size: 78px; }
     .eyebrow::before { width: 28px; height: 2px; background: var(--ink); }
     .wide { max-width: clamp(20px, 5vw, 40px); }
@@ -283,6 +288,14 @@ test('audit-reference-css resolves variables, expands shorthands, and isolates r
   assert.ok(
     residual.some((item) => item.selector.includes(':hover') && item.target === 'child-theme'),
     'stan wskazania trafia do arkusza'
+  );
+  assert.ok(
+    !residual.some((item) => item.selector === '.card:hover' && item.property === 'transform'),
+    'bezpieczny hover lift używa typed propa'
+  );
+  assert.ok(
+    !residual.some((item) => item.selector === '.sticky' && ['position', 'top'].includes(item.property)),
+    'sticky i stickyTop używają typed props tylko w tej samej regule'
   );
   assert.ok(
     residual.some((item) => item.property === 'font-variation-settings' && item.target === 'child-theme'),
@@ -418,9 +431,14 @@ test('extractor reads motion from the reference sheets', () => {
 test('compiler routes measured motion to the residual plan', () => {
   const source = fs.readFileSync(path.join(SCRIPTS, 'spec-to-layout.mjs'), 'utf8');
   assert.match(source, /function collectMotion/);
-  assert.match(source, /motion: collectMotion\(spec\)/);
-  // ruch nie trafia do node mapy — kontrakt nie ma dla niego kontrolek
-  assert.match(source, /residual-plan\.json, nie do node mapy/);
+  assert.match(source, /motion: collectMotion\(spec, compiler\.loweredMotionPaths\)/);
+  assert.match(source, /hoverLift|hoverTranslateY/);
+  assert.match(source, /props\.hoverTranslateY = control\?\.type === 'css-value'[\s\S]*?: Number\(lift\[1\]\)/);
+  assert.match(source, /hasOwnProperty\.call\(this\.kit\.nodes\[containerId\]\?\.props/);
+  assert.match(source, /const residualStates = loweredMotionPaths\.has\(path\)/);
+  assert.doesNotMatch(source, /if \(loweredMotionPaths\.has\(path\)\) \{[\s\S]{0,180}?return;/);
+  // Ruch bez typed props nie trafia do node mapy.
+  assert.match(source, /Tylko ruch bez typed props trafia do residual-plan\.json/);
 
   const guidance = fs.readFileSync(path.join(REFERENCES, 'html-to-monteby.md'), 'utf8');
   assert.match(guidance, /report\.motion\.entries/);
@@ -430,6 +448,47 @@ test('compiler routes measured motion to the residual plan', () => {
   assert.match(guidance, /Zegar, nie klatka animacji/);
   assert.match(guidance, /document\.visibilityState === 'visible'/);
   assert.match(guidance, /Bez skryptu strona jest w pełni widoczna/);
+});
+
+test('compiler lowers a safe hover lift only after the numeric control survives normalization', () => {
+  const dir = tempDir();
+  const contract = writeContract(dir);
+  const specFile = path.join(dir, 'spec.json');
+  const layoutFile = path.join(dir, 'layout.json');
+  const reportFile = path.join(dir, 'report.json');
+  fs.writeFileSync(specFile, JSON.stringify({
+    kind: 'monteby-reference-spec',
+    contentWidth: 1100,
+    sections: [{
+      style: { rect: { w: 1440, h: 400 }, background: '#ffffff', position: 'sticky', top: '8px' },
+      children: [{
+        role: 'box',
+        style: { rect: { w: 1400, h: 180 }, position: 'sticky', top: '12px' },
+        children: [],
+        motion: {
+          states: [{ state: 'hover', declarations: { transform: 'translateY(-4px)' } }],
+        },
+      }],
+    }],
+  }), 'utf8');
+
+  execFileSync(process.execPath, [
+    path.join(SCRIPTS, 'spec-to-layout.mjs'),
+    '--contract', contract,
+    '--spec', specFile,
+    '--out', layoutFile,
+    '--report', reportFile,
+  ], { encoding: 'utf8' });
+
+  const layout = JSON.parse(fs.readFileSync(layoutFile, 'utf8'));
+  const container = Object.values(layout).find((node) => node.type?.resolvedName === 'Container');
+  const report = JSON.parse(fs.readFileSync(reportFile, 'utf8'));
+  assert.equal(container.props.hoverTranslateY, -4);
+  assert.equal(container.props.sticky, true);
+  assert.equal(container.props.stickyTop, '12px');
+  assert.equal(report.motion.states, 0);
+  assert.deepEqual(report.motion.entries, []);
+  assert.ok(report.issues.some((issue) => issue.path === 's0' && issue.target === 'child-theme' && /sticky/.test(issue.issue)));
 });
 
 test('compiler pins typography and keeps marker rows from stacking', async () => {

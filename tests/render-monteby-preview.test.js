@@ -472,6 +472,8 @@ test('preview renderer keeps Section and Container padding inside authored dimen
         paddingRight: '40px',
         innerMaxWidth: '100%',
         innerPaddingX: '32px',
+        innerPaddingXTablet: '24px',
+        innerPaddingXMobile: '16px',
         boxSizing: 'content-box',
       },
       parent: 'ROOT',
@@ -494,7 +496,9 @@ test('preview renderer keeps Section and Container padding inside authored dimen
   }, 'monteby-preview-layout-box-sizing-');
 
   assert.match(html, /<section style="box-sizing:border-box;[^\"]*width:100%;[^\"]*min-height:931px;[^\"]*padding-top:118px;[^\"]*padding-right:40px;[^\"]*padding-left:40px/);
-  assert.match(html, /<div style="box-sizing:border-box;max-width:100%;margin-left:auto;margin-right:auto;padding-left:32px;padding-right:32px">/);
+  assert.match(html, /class="monteby-preview-section__inner" style="box-sizing:border-box;max-width:100%;margin-left:auto;margin-right:auto;padding-left:var\(--monteby-section-inner-padding-x\);padding-right:var\(--monteby-section-inner-padding-x\);--monteby-section-inner-padding-x:32px/);
+  assert.match(html, /--monteby-section-inner-padding-x-tablet:24px/);
+  assert.match(html, /--monteby-section-inner-padding-x-mobile:16px/);
   assert.match(html, /<div style="box-sizing:border-box;[^\"]*width:100%;[^\"]*min-height:931px;[^\"]*padding-top:118px;[^\"]*padding-right:24px;[^\"]*padding-left:24px/);
   assert.doesNotMatch(html, /box-sizing:content-box|boxSizing/);
 });
@@ -1114,7 +1118,7 @@ test('preview renderer applies Section overflow to the outer semantic element', 
     },
   }, 'monteby-preview-section-overflow-');
 
-  assert.match(html, /<section[^>]*style="box-sizing:border-box;[^"]*overflow:hidden[^"]*"[^>]*><div style="box-sizing:border-box;max-width:1200px;margin-left:auto;margin-right:auto;padding-left:24px;padding-right:24px">/);
+  assert.match(html, /<section[^>]*style="box-sizing:border-box;[^"]*overflow:hidden[^"]*"[^>]*><div class="monteby-preview-section__inner" style="box-sizing:border-box;max-width:1200px;[^"]*--monteby-section-inner-padding-x:24px/);
 });
 
 test('preview renderer rejects unsafe Navbar and FormBlock structured values', () => {

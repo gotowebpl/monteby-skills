@@ -3304,12 +3304,12 @@ test('generic measured drafting recognizes a multi-field form as one contract-ba
       paddingLeft: '16px',
     };
     const interactions = [
-      { order: 0, tag: 'input', role: 'textbox', type: 'text', required: true, rect: measuredRect(firstFieldLeft, firstRowTop, fieldWidth, 50), structureKey: '0.0.0.0.0', parentGroupKey: '0.0.0.0', ...controlStyle },
-      { order: 1, tag: 'input', role: 'textbox', type: 'email', required: true, rect: measuredRect(secondFieldLeft, twoColumns ? firstRowTop : firstRowTop + 82, fieldWidth, 50), structureKey: '0.0.0.1.0', parentGroupKey: '0.0.0.1', ...controlStyle },
-      { order: 2, tag: 'input', role: 'textbox', type: 'text', required: false, rect: measuredRect(firstFieldLeft, secondRowTop, fullWidth, 50), structureKey: '0.0.1.0', parentGroupKey: '0.0', ...controlStyle },
-      { order: 3, tag: 'textarea', role: 'textbox', required: true, rect: measuredRect(firstFieldLeft, messageTop, fullWidth, 120), structureKey: '0.0.2.0', parentGroupKey: '0.0', ...controlStyle },
-      { order: 4, tag: 'input', role: 'checkbox', type: 'checkbox', required: true, rect: measuredRect(firstFieldLeft, checkboxTop, 16, 16), structureKey: '0.0.3.0', parentGroupKey: '0.0', ...controlStyle },
-      { order: 5, tag: 'button', role: 'button', type: 'submit', required: false, rect: measuredRect(firstFieldLeft, submitTop, 220, 48), structureKey: '0.0.4', parentGroupKey: '0.0', backgroundColor: 'rgb(37, 99, 235)', color: 'rgb(255, 255, 255)', fontSize: '14px', fontWeight: '600', borderTopColor: 'rgb(37, 99, 235)', borderTopWidth: '0px', borderRadius: '6px', paddingTop: '12px', paddingLeft: '24px' },
+      { order: 0, tag: 'input', role: 'textbox', type: 'text', formId: 'contact_form', name: 'full_name', label: 'Full name', placeholder: 'Jane Doe', required: true, rect: measuredRect(firstFieldLeft, firstRowTop, fieldWidth, 50), structureKey: '0.0.0.0.0', parentGroupKey: '0.0.0.0', ...controlStyle },
+      { order: 1, tag: 'input', role: 'textbox', type: 'email', formId: 'contact_form', name: 'email', label: 'Email address', autocomplete: 'email', required: true, rect: measuredRect(secondFieldLeft, twoColumns ? firstRowTop : firstRowTop + 82, fieldWidth, 50), structureKey: '0.0.0.1.0', parentGroupKey: '0.0.0.1', ...controlStyle },
+      { order: 2, tag: 'select', role: 'combobox', formId: 'contact_form', name: 'district', label: 'District', value: 'north', defaultValue: 'north', options: [{ label: 'North', value: 'north' }, { label: 'South', value: 'south' }], required: false, rect: measuredRect(firstFieldLeft, secondRowTop, fullWidth, 50), structureKey: '0.0.1.0', parentGroupKey: '0.0', ...controlStyle },
+      { order: 3, tag: 'textarea', role: 'textbox', formId: 'contact_form', name: 'message', label: 'Message', required: true, rect: measuredRect(firstFieldLeft, messageTop, fullWidth, 120), structureKey: '0.0.2.0', parentGroupKey: '0.0', ...controlStyle },
+      { order: 4, tag: 'input', role: 'checkbox', type: 'checkbox', formId: 'contact_form', name: 'updates', label: 'Send me updates', checked: false, defaultChecked: false, required: true, rect: measuredRect(firstFieldLeft, checkboxTop, 16, 16), structureKey: '0.0.3.0', parentGroupKey: '0.0', ...controlStyle },
+      { order: 5, tag: 'button', role: 'button', type: 'submit', formId: 'contact_form', required: false, rect: measuredRect(firstFieldLeft, submitTop, 220, 48), structureKey: '0.0.4', parentGroupKey: '0.0', backgroundColor: 'rgb(37, 99, 235)', color: 'rgb(255, 255, 255)', fontSize: '14px', fontWeight: '600', borderTopColor: 'rgb(37, 99, 235)', borderTopWidth: '0px', borderRadius: '6px', paddingTop: '12px', paddingLeft: '24px' },
     ];
     fs.writeFileSync(path.join(directory, file), JSON.stringify({
       viewport: { width, height, scrollHeight: 720 },
@@ -3364,8 +3364,18 @@ test('generic measured drafting recognizes a multi-field form as one contract-ba
   assert.equal(forms.length, 1);
   assert.equal(forms[0].props.formColumns, 2);
   assert.equal(forms[0].props.fields.length, 5);
-  assert.deepEqual(forms[0].props.fields.map((field) => field.type), ['text', 'email', 'text', 'textarea', 'checkbox']);
+  assert.deepEqual(forms[0].props.fields.map((field) => field.type), ['text', 'email', 'select', 'textarea', 'checkbox']);
   assert.deepEqual(forms[0].props.fields.map((field) => field.columnSpan), [1, 1, 2, 2, 2]);
+  assert.deepEqual(forms[0].props.fields.map((field) => field.name), ['full_name', 'email', 'district', 'message', 'updates']);
+  assert.deepEqual(forms[0].props.fields.map((field) => field.label), ['Full name', 'Email address', 'District', 'Message', 'Send me updates']);
+  assert.equal(forms[0].props.fields[0].placeholder, 'Jane Doe');
+  assert.equal(forms[0].props.fields[2].defaultValue, 'north');
+  assert.equal(forms[0].props.fields[2].options, 'North|north\nSouth|south');
+  assert.equal(forms[0].props.fields[2].value, undefined);
+  assert.equal(forms[0].props.fields[4].checked, undefined);
+  assert.equal(forms[0].props.fields[4].defaultChecked, undefined);
+  assert.equal(forms[0].props.formId, 'contact_form');
+  assert.equal(forms[0].props.fields.every((field) => field.linkText === undefined && field.linkUrl === undefined), true);
   assert.equal(forms[0].props.formGap, '20px');
   assert.equal(forms[0].props.formPaddingX, '24px');
   assert.equal(forms[0].props.formPaddingY, '24px');
@@ -3377,8 +3387,8 @@ test('generic measured drafting recognizes a multi-field form as one contract-ba
   assert.notEqual(forms[0].props.inputBgColor, 'rgb(99, 99, 99)');
   assert.equal(forms[0].props.inputBorderColor, 'rgb(212, 216, 222)');
   assert.equal(forms[0].props.buttonBackgroundColor, 'rgb(37, 99, 235)');
-  assert.notEqual(forms[0].props.submitLabel, 'SEND PRIVATE SOURCE DATA');
-  assert.doesNotMatch(JSON.stringify(layout), /SEND PRIVATE SOURCE DATA|className|rawHtml/i);
+  assert.equal(forms[0].props.submitLabel, 'SEND PRIVATE SOURCE DATA');
+  assert.doesNotMatch(JSON.stringify(layout), /className|rawHtml/i);
 
   const subsetContract = contract();
   const subsetForm = subsetContract.components.find((component) => component.name === 'FormBlock');
@@ -3393,7 +3403,7 @@ test('generic measured drafting recognizes a multi-field form as one contract-ba
   ], { encoding: 'utf8' });
   assert.equal(subsetResult.status, 1, subsetResult.stdout);
   assert.match(subsetResult.stderr, /generic_semantic_form_field_type_unsupported/);
-  assert.match(subsetResult.stderr, /textarea, checkbox/);
+  assert.match(subsetResult.stderr, /select, textarea, checkbox/);
 
   for (const [label] of viewports) {
     const file = label === 'desktop' ? 'reference-layout.json' : `reference-layout-${label}.json`;
@@ -8759,7 +8769,7 @@ function contract() {
           props: ['fields'],
           itemControls: [
             { type: 'select', props: ['type'], options: ['text', 'email', 'tel', 'textarea', 'select', 'checkbox'] },
-            { type: 'text', props: ['name', 'label', 'placeholder', 'linkText', 'linkUrl'] },
+            { type: 'text', props: ['name', 'label', 'placeholder', 'defaultValue', 'linkText', 'linkUrl'] },
             { type: 'toggle', props: ['required'] },
             { type: 'number', props: ['rows'], min: 2, max: 30, step: 1 },
             { type: 'textarea', props: ['options'] },

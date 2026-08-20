@@ -595,7 +595,33 @@ function geometryChange(nodeMap, plan, allowedProps, item) {
   }
 
   const updates = {};
-  if (target.height !== null && target.height !== undefined) {
+  const hasRepairProps = Object.prototype.hasOwnProperty.call(target, 'repairProps');
+  const repairProps = isObject(target.repairProps) ? target.repairProps : {};
+  if (Object.keys(repairProps).length > 0) {
+    const expectedProps = new Set([propNames.height, propNames.inset]);
+    for (const [prop, rawValue] of Object.entries(repairProps)) {
+      if (!expectedProps.has(prop) || !allowedProps.has(prop)) {
+        throw new RepairError(
+          'SECTION_GEOMETRY_PROP_UNSUPPORTED',
+          `The live Section contract does not author emitted repair prop ${prop}.`,
+          { viewport, sectionId, prop }
+        );
+      }
+      const value = typeof rawValue === 'number'
+        ? cssPixels(rawValue, `${sectionId}.${viewport}.repairProps.${prop}`)
+        : String(rawValue || '').trim();
+      const match = /^(?:0|(?:\d+(?:\.\d+)?|\.\d+)px)$/u.exec(value);
+      if (!match || Number.parseFloat(value) < 0) {
+        throw new RepairError(
+          'GEOMETRY_TARGET_INVALID',
+          `${sectionId}.${viewport}.repairProps.${prop} must be a finite non-negative pixel value.`,
+          { viewport, sectionId, prop, value: rawValue }
+        );
+      }
+      updates[prop] = value;
+    }
+  }
+  if (!hasRepairProps && target.height !== null && target.height !== undefined) {
     if (!allowedProps.has(propNames.height)) {
       throw new RepairError(
         'SECTION_GEOMETRY_PROP_UNSUPPORTED',
@@ -605,7 +631,7 @@ function geometryChange(nodeMap, plan, allowedProps, item) {
     }
     updates[propNames.height] = cssPixels(target.height, `${sectionId}.${viewport}.height`);
   }
-  if (target.contentInset !== null && target.contentInset !== undefined) {
+  if (!hasRepairProps && target.contentInset !== null && target.contentInset !== undefined) {
     if (!allowedProps.has(propNames.inset)) {
       throw new RepairError(
         'SECTION_GEOMETRY_PROP_UNSUPPORTED',
@@ -974,6 +1000,23 @@ async function applyRepairQueue(options) {
       };
     });
     report.outputLayoutSha256 = nodeMapSha256(nodeMap);
+    if (report.outputLayoutSha256 === report.inputLayoutSha256) {
+      report.ok = false;
+      report.status = 'REPAIR_IDEMPOTENT';
+      report.applied = applied;
+      report.blockers = [{
+        code: 'REPAIR_IDEMPOTENT',
+        message: 'Every queued repair already matches the candidate layout; no output was written and no rerun was scheduled.',
+      }];
+      report.nextAction = nextAction(
+        'blocked_repair_idempotent',
+        '',
+        [],
+        ['NEW_REPAIR_REPORT'],
+        'Stop. Obtain a new visual iteration report with a materially different repair target.'
+      );
+      return report;
+    }
     await atomicWriteJson(options.out, outputPayload);
 
     report.ok = true;

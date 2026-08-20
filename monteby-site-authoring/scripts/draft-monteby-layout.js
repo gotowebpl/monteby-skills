@@ -1155,7 +1155,7 @@ function summarizeReferenceBandContent(band, index, viewportWidth, textBoxes, me
       `[generic_reference_media_limit_exceeded] Captured reference band ${index + 1}${sourceKey ? ` (${sourceKey})` : ''} contains ${bandMediaBoxes.length} meaningful media surfaces; the bounded generic path supports at most ${MAX_GENERIC_REFERENCE_MEDIA_PER_BAND} per band.`
     );
   }
-  const semanticForm = summarizeReferenceForm(interactions, layoutGroups, bandTextBoxes, band, index);
+  const semanticForm = summarizeReferenceForm(interactions, layoutGroups, bandTextBoxes, band);
   const semanticTabs = summarizeReferenceTabs(
     interactions,
     layoutGroups,
@@ -1519,7 +1519,7 @@ function safeReferenceMediaPositionAxis(value, axis) {
   return Number.isFinite(numeric) && Math.abs(numeric) <= limit ? `${numeric}${match[2]}` : '';
 }
 
-function summarizeReferenceForm(interactions, layoutGroups, textBoxes, band, bandIndex) {
+function summarizeReferenceForm(interactions, layoutGroups, textBoxes, band) {
   const controls = (Array.isArray(interactions) ? interactions : [])
     .map((interaction) => ({ ...interaction, rect: normalizeReferenceRect(interaction?.rect) }))
     .filter((interaction) => interaction.rect && referenceBoxBelongsToBand(interaction, band.rect));
@@ -1604,38 +1604,49 @@ function summarizeReferenceForm(interactions, layoutGroups, textBoxes, band, ban
     if (radius <= 20) return 'rounded-2xl';
     return 'rounded-full';
   };
-  const labelsByType = {
-    checkbox: 'I agree to the',
-    email: 'Email address',
-    select: 'Topic',
-    tel: 'Phone number',
-    text: 'Name',
-    textarea: 'Message',
-  };
-  let textFieldIndex = 0;
-  const authoredFields = orderedFields.map((field, index) => {
+  const authoredFields = orderedFields.map((field) => {
     const type = String(field.tag || '').toLowerCase() === 'textarea'
       ? 'textarea'
       : String(field.tag || '').toLowerCase() === 'select'
         ? 'select'
         : String(field.type || 'text').toLowerCase();
-    const repeatedTextLabel = type === 'text' && textFieldIndex > 0 ? 'Subject' : labelsByType[type] || 'Field';
-    if (type === 'text') {
-      textFieldIndex += 1;
-    }
     const spansRow = formColumns === 2 && fieldBounds && field.rect.width >= fieldBounds.width * 0.7;
+    const options = Array.isArray(field.options)
+      ? field.options.map((option) => {
+        const label = String(option?.label || '').trim();
+        const value = String(option?.value || '').trim();
+        return value && value !== label ? `${label}|${value}` : label;
+      }).filter(Boolean).join('\n')
+      : '';
     return {
       type,
-      name: `field_${index + 1}`,
-      label: repeatedTextLabel,
-      placeholder: '',
+      ...(String(field.name || '').trim() ? { name: String(field.name).trim() } : {}),
+      ...(String(field.label || '').trim() ? { label: String(field.label).trim() } : {}),
+      ...(String(field.placeholder || '').trim() ? { placeholder: String(field.placeholder).trim() } : {}),
+      ...(Object.prototype.hasOwnProperty.call(field, 'value') ? { value: field.value } : {}),
+      ...(Object.prototype.hasOwnProperty.call(field, 'defaultValue') ? { defaultValue: field.defaultValue } : {}),
+      ...(String(field.min || '').trim() ? { min: String(field.min).trim() } : {}),
+      ...(String(field.max || '').trim() ? { max: String(field.max).trim() } : {}),
+      ...(String(field.step || '').trim() ? { step: String(field.step).trim() } : {}),
+      ...(String(field.autocomplete || '').trim() ? { autocomplete: String(field.autocomplete).trim() } : {}),
+      ...(String(field.inputMode || '').trim() ? { inputMode: String(field.inputMode).trim() } : {}),
+      ...(Object.prototype.hasOwnProperty.call(field, 'checked') ? { checked: field.checked === true } : {}),
+      ...(Object.prototype.hasOwnProperty.call(field, 'defaultChecked') ? { defaultChecked: field.defaultChecked === true } : {}),
       required: field.required === true,
       ...(type === 'textarea' ? { rows: Math.max(2, Math.min(12, Math.round(field.rect.height / 30))) } : {}),
-      ...(type === 'select' ? { options: 'General enquiry|general\nProject planning|project' } : {}),
+      ...(type === 'select' && options ? { options } : {}),
       ...(formColumns === 2 ? { columnSpan: spansRow || type === 'checkbox' ? 2 : 1 } : {}),
-      ...(type === 'checkbox' ? { linkText: 'privacy policy', linkUrl: '#' } : {}),
     };
   });
+  const capturedFormIds = candidate.fields.concat(candidate.submit)
+    .map((control) => String(control?.formId || '').trim());
+  const formId = capturedFormIds.length > 0
+    && capturedFormIds.every((candidateFormId) => (
+      candidateFormId === capturedFormIds[0]
+      && /^[A-Za-z][A-Za-z0-9_-]{0,63}$/u.test(candidateFormId)
+    ))
+    ? capturedFormIds[0]
+    : '';
 
   return {
     hostGroupKey: candidate.group.key,
@@ -1644,7 +1655,7 @@ function summarizeReferenceForm(interactions, layoutGroups, textBoxes, band, ban
     props: {
       fields: authoredFields,
       formColumns,
-      formId: `contact-form-${bandIndex + 1}`,
+      ...(formId ? { formId } : {}),
       formGap: sourceGap || '18px',
       formMaxWidth: fieldBounds ? `${Math.round(fieldBounds.width * 100) / 100}px` : '100%',
       formAlignItems: 'stretch',
@@ -1880,6 +1891,7 @@ function summarizeReferenceTabs(interactions, layoutGroups, textBoxes, mediaBoxe
       content: String(panelBody?.text || '').trim(),
       image: String(panelMedia?.source || '').trim(),
       ctaLabel: String(panelCta?.text || '').trim(),
+      ctaHref: String(panelCta?.href || '').trim(),
     },
     panelFlow,
     props: {
@@ -2267,6 +2279,7 @@ function summarizeReferenceBox(box) {
     structureKey: String(box.structureKey || ''),
     tag: box.tag || '',
     text: box.text || '',
+    href: box.href || '',
     source: box.source || '',
     rect: box.rect || null,
     firstViewportArea: Number(box.firstViewportArea || 0),
@@ -2879,6 +2892,7 @@ function buildMechanicalLayoutPlan(context, genericPlan) {
   const parityByBand = new Map();
   const bands = genericPlan.bands.map((band) => {
     const generatedSectionId = String(band.generatedSectionId || rootSectionIds[band.index] || '');
+    const generatedSectionProps = layout?.[generatedSectionId]?.props || {};
     const surfaceEvidence = genericMeasuredSurfaceParity(context, band);
     parityByBand.set(band.index, surfaceEvidence);
     return {
@@ -2890,7 +2904,7 @@ function buildMechanicalLayoutPlan(context, genericPlan) {
       surfaceParity: surfaceEvidence.parity,
       viewports: Object.fromEntries(viewportLabels.map((label) => ([
         label,
-        mechanicalBandViewportMeasurement(band.viewportMeasurements?.[label]),
+        mechanicalBandViewportMeasurement(band.viewportMeasurements?.[label], generatedSectionProps, label),
       ]))),
     };
   });
@@ -2960,7 +2974,7 @@ function buildMechanicalLayoutPlan(context, genericPlan) {
   };
 }
 
-function mechanicalBandViewportMeasurement(measurement) {
+function mechanicalBandViewportMeasurement(measurement, generatedSectionProps = {}, viewport = '') {
   const rect = normalizeReferenceRect(measurement?.rect);
   const counts = genericMeasurementEvidenceCounts(measurement);
   const contentBounds = normalizeReferenceRect(measurement?.contentBounds);
@@ -2971,6 +2985,14 @@ function mechanicalBandViewportMeasurement(measurement) {
       ? Math.max(0, Math.round((contentBounds.left - rect.left) * 100) / 100)
       : null;
   const measuredColumns = finitePlanNumber(measurement?.columns);
+  const emittedPropNames = {
+    desktop: ['minHeight', 'innerPaddingX'],
+    tablet: ['minHeightTablet', 'innerPaddingXTablet'],
+    mobile: ['minHeightMobile', 'innerPaddingXMobile'],
+  }[viewport] || [];
+  const repairProps = Object.fromEntries(emittedPropNames
+    .filter((prop) => typeof generatedSectionProps?.[prop] !== 'undefined')
+    .map((prop) => [prop, generatedSectionProps[prop]]));
 
   return {
     rect: rect ? { ...rect } : null,
@@ -2978,6 +3000,7 @@ function mechanicalBandViewportMeasurement(measurement) {
     height: rect?.height ?? null,
     width: rect?.width ?? null,
     contentInset,
+    repairProps,
     columns: measuredColumns === null ? null : measuredColumns,
     display: measurement ? String(measurement.display || '') : '',
     textCount: counts.textCount,
@@ -3944,7 +3967,7 @@ function genericMeasuredNavigationProps(context, navigation, plan, containerName
       logoText,
       menuItems: menuBoxes.map((box, index) => ({
         label: genericMeasuredAuthoringText(box, plan, 0, index + 1),
-        href: '#',
+        href: String(box?.href || '').trim(),
       })),
       mobileMenuBehavior: menuBoxes.length < 2
         ? 'default'
@@ -3955,7 +3978,7 @@ function genericMeasuredNavigationProps(context, navigation, plan, containerName
       menuButtonLabel: 'Menu',
       menuButtonIcon: 'menu',
       ctaLabel,
-      ctaHref: '#',
+      ctaHref: String(ctaBox?.href || '').trim(),
       ctaContentMode: navbarAuthoringProps.has('ctaContentMode') ? desktopCtaContentMode : undefined,
       ctaContentModeTablet: authoredTabletCtaContentMode ? tabletCtaContentMode : undefined,
       ctaContentModeMobile: plan.hasMobile
@@ -5553,8 +5576,13 @@ function addGenericMeasuredGroups(context, parentId, desktopParent, tabletParent
       }
       const supportedFieldTypes = formComponent.propOptions?.get('type');
       const capturedFields = Array.isArray(desktop.props?.fields) ? desktop.props.fields : [];
+      const formAuthoringProps = new Set(formComponent.authoringProps || []);
+      const fieldAuthoringProps = formComponent.repeaterItemProps?.get('fields');
       if (!(supportedFieldTypes instanceof Set) || supportedFieldTypes.size === 0) {
         throw new Error('Generic measured reference contract gaps:\n- [generic_semantic_form_field_contract_missing] FormBlock must expose live repeater item type options before a measured form can be authored.');
+      }
+      if (!formAuthoringProps.has('fields') || !(fieldAuthoringProps instanceof Set) || fieldAuthoringProps.size === 0) {
+        throw new Error('Generic measured reference contract gaps:\n- [generic_semantic_form_field_contract_missing] FormBlock must expose fields and its live repeater item keys before a measured form can be authored.');
       }
       const unsupportedFieldTypes = unique(capturedFields
         .map((field) => String(field?.type || 'text'))
@@ -5562,15 +5590,24 @@ function addGenericMeasuredGroups(context, parentId, desktopParent, tabletParent
       if (unsupportedFieldTypes.length > 0) {
         throw new Error(`Generic measured reference contract gaps:\n- [generic_semantic_form_field_type_unsupported] FormBlock does not expose measured field type(s): ${unsupportedFieldTypes.join(', ')}.`);
       }
-      const submitLabel = genericMeasuredAuthoringText(
-        desktop.submitBox || { tag: 'button', text: 'Send message' },
-        plan,
-        contentIndex,
-        index
-      );
+      const capturedFormFieldKeys = new Set([
+        'type', 'name', 'label', 'placeholder', 'defaultValue', 'min', 'max', 'step',
+        'autocomplete', 'inputMode', 'required', 'rows', 'options', 'columnSpan',
+      ]);
+      const fields = capturedFields.map((field) => Object.fromEntries(
+        Object.entries(field).filter(([key, value]) => (
+          capturedFormFieldKeys.has(key)
+          && fieldAuthoringProps.has(key)
+          && typeof value !== 'undefined'
+          && value !== null
+          && value !== ''
+        ))
+      ));
+      const submitLabel = String(desktop.submitBox?.text || '').trim();
       const formNode = createLeafNode(context, formComponent.name, contentParentId, {
         ...(desktop.props || {}),
-        submitLabel,
+        fields,
+        ...(submitLabel ? { submitLabel } : {}),
       });
       registerGenericMeasuredDescendantSurfaces(
         context,
@@ -5676,7 +5713,7 @@ function addGenericMeasuredGroups(context, parentId, desktopParent, tabletParent
           image: tabIndex === activeIndex ? capturedActivePanel.image : '',
           imageAlt: '',
           ctaLabel: tabIndex === activeIndex ? capturedActivePanel.ctaLabel : '',
-          ctaUrl: '#',
+          ctaUrl: tabIndex === activeIndex ? capturedActivePanel.ctaHref : '',
         }));
       if (itemSources.length < 2 || itemSources.length > 12) {
         throw new Error(`Generic measured reference contract gaps:\n- [generic_semantic_tabs_cardinality_unsupported] Measured tabs require 2-12 items; received ${itemSources.length}.`);
@@ -6425,7 +6462,7 @@ function addGenericMeasuredTextNode(context, parentId, desktop, tablet, mobile, 
   };
 
   if (tag === 'a' || tag === 'button') {
-    return addButton(context, parentId, text, '#', {
+    return addButton(context, parentId, text, String(desktop?.href || '').trim(), {
       ...props,
       paddingTop: '0px',
       paddingRight: '0px',

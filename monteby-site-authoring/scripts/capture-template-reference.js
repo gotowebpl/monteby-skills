@@ -2077,6 +2077,7 @@ function captureRenderedLayout(
   const defaultEvidenceLimits = fullPage
     ? {
       textBoxes: Math.min(2500, Math.max(300, documentScreens * 80)),
+      directTextEntries: Math.min(2500, Math.max(300, documentScreens * 80)),
       mediaBoxes: Math.min(1500, Math.max(200, documentScreens * 40)),
       layoutGroups: Math.min(2000, Math.max(300, documentScreens * 60)),
       landmarks: Math.min(1000, Math.max(160, documentScreens * 30)),
@@ -2084,6 +2085,7 @@ function captureRenderedLayout(
     }
     : {
       textBoxes: 240,
+      directTextEntries: 240,
       mediaBoxes: 160,
       layoutGroups: 240,
       landmarks: 160,
@@ -2579,7 +2581,7 @@ function captureRenderedLayout(
   const excludedGroupTags = new Set([
     'html', 'body', 'script', 'style', 'template', 'noscript', 'img', 'picture', 'video',
     'audio', 'canvas', 'svg', 'source', 'track', 'iframe', 'embed', 'object', 'input',
-    'textarea', 'select', 'option', 'button',
+    'textarea', 'select', 'option', 'button', 'a',
   ]);
   const textContainerTags = new Set([
     'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'span', 'label', 'small', 'strong', 'em', 'b', 'i', 'li',
@@ -2761,6 +2763,14 @@ function captureRenderedLayout(
       };
     })
     .filter(Boolean)
+    .filter(({ element }) => {
+      for (let ancestor = element.parentElement; ancestor; ancestor = ancestor.parentElement) {
+        if (['a', 'button'].includes(elementTag(ancestor))) {
+          return false;
+        }
+      }
+      return true;
+    })
     .filter((item) => {
       const key = JSON.stringify([
         item.tag,
@@ -2813,8 +2823,15 @@ function captureRenderedLayout(
       );
     }
 
+    const rawHref = item.tag === 'a' && typeof element.getAttribute === 'function'
+      ? String(element.getAttribute('href') || '').trim()
+      : '';
+    const href = rawHref.length <= 2048 && !/^\s*(?:data|javascript|vbscript):/iu.test(rawHref)
+      ? rawHref
+      : '';
     return {
       ...item,
+      ...(href ? { href } : {}),
       lines: renderedTextLines(element),
       structureKey: elementPathKey(element),
       parentGroupKey: nearestLayoutGroupKey(element),
@@ -2829,6 +2846,31 @@ function captureRenderedLayout(
       ...controlBackedStyleEvidence(style),
     };
   });
+  const allDirectTextEntries = allDocumentElements
+    .map((element) => {
+      const directText = normalizeText(Array.from(element?.childNodes || [])
+        .filter((node) => Number(node?.nodeType) === 3 || (!node?.tagName && typeof node?.nodeValue === 'string'))
+        .map((node) => node.nodeValue)
+        .join(' '));
+      if (!directText || directText.length > 500) {
+        return null;
+      }
+      const rect = readRect(element);
+      const style = window.getComputedStyle(element);
+      const structureKey = elementPathKey(element);
+      if (!structureKey || !intersectsDocumentCanvas(rect) || !isVisible(element, rect, style)) {
+        return null;
+      }
+      return {
+        structureKey,
+        parentGroupKey: nearestLayoutGroupKey(element),
+        tag: elementTag(element),
+        text: directText,
+        rect,
+      };
+    })
+    .filter(Boolean);
+  const directTextEntries = allDirectTextEntries.slice(0, evidenceLimits.directTextEntries);
 
   const mediaElements = uniqueElements([
     ...Array.from(document.querySelectorAll('img,video,svg,canvas,[style*="background"]')),
@@ -2976,6 +3018,21 @@ function captureRenderedLayout(
     }
     return value === 'mixed' ? 'mixed' : null;
   };
+  const boundedAttribute = (element, name, maximumLength = 500) => {
+    const value = readAttribute(element, name);
+    return value.length <= maximumLength ? value : '';
+  };
+  const associatedLabel = (element) => {
+    const labels = Array.from(element?.labels || []);
+    const closestLabel = typeof element?.closest === 'function' ? element.closest('label') : null;
+    const label = labels[0] || closestLabel;
+    const text = normalizeText(label?.innerText || label?.textContent || '');
+    return text.length <= 500 ? text : '';
+  };
+  const safeHref = (element) => {
+    const href = boundedAttribute(element, 'href', 2048);
+    return href && !/^\s*(?:data|javascript|vbscript):/iu.test(href) ? href : '';
+  };
   const allInteractions = Array.from(document.querySelectorAll(interactionSelector))
     .map((element, order) => {
       const rect = readRect(element);
@@ -3028,12 +3085,77 @@ function captureRenderedLayout(
           ? element.open
           : typeof element.hasAttribute === 'function' && element.hasAttribute('open'))
         : null;
+      const fieldName = ['input', 'select', 'textarea'].includes(tag)
+        ? String(element.name ?? boundedAttribute(element, 'name')).slice(0, 500)
+        : '';
+      const placeholder = ['input', 'textarea'].includes(tag)
+        ? String(element.placeholder ?? boundedAttribute(element, 'placeholder')).slice(0, 500)
+        : '';
+      const fieldAutocomplete = String(element.autocomplete ?? element.autoComplete ?? boundedAttribute(element, 'autocomplete')).slice(0, 100);
+      const sensitivityMarked = ['input', 'select', 'textarea'].includes(tag) && (
+        (tag === 'input' && ['email', 'file', 'hidden', 'password', 'tel'].includes(type))
+        || (fieldAutocomplete !== '' && fieldAutocomplete !== 'off')
+        || /(?:address|card|cc|cvc|cvv|email|iban|login|mobile|name|pass|phone|secret|tel|token|user)/iu.test(fieldName)
+        || ['data-pii', 'data-private', 'data-sensitive'].some((name) => (
+          typeof element.hasAttribute === 'function' && element.hasAttribute(name)
+        ))
+      );
+      const hasFieldValue = !sensitivityMarked && (
+        tag === 'select' || (tag === 'input' && ['checkbox', 'radio'].includes(type))
+      );
+      const value = hasFieldValue
+        ? String(tag === 'select' ? element.value ?? '' : boundedAttribute(element, 'value', 2000)).slice(0, 2000)
+        : '';
+      const hasDefaultValue = !sensitivityMarked && (
+        (['input', 'textarea'].includes(tag) && typeof element.defaultValue !== 'undefined')
+        || (tag === 'select' && hasFieldValue)
+      );
+      const defaultValue = hasDefaultValue
+        ? String(tag === 'select' ? element.value ?? '' : element.defaultValue ?? '').slice(0, 2000)
+        : '';
+      const min = String(element.min ?? boundedAttribute(element, 'min')).slice(0, 100);
+      const max = String(element.max ?? boundedAttribute(element, 'max')).slice(0, 100);
+      const step = String(element.step ?? boundedAttribute(element, 'step')).slice(0, 100);
+      const autocomplete = fieldAutocomplete;
+      const inputMode = String(element.inputMode ?? boundedAttribute(element, 'inputmode')).slice(0, 100);
+      const formIdCandidate = ['button', 'input', 'select', 'textarea'].includes(tag)
+        ? String(element.form?.id || '').trim()
+        : '';
+      const formId = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/u.test(formIdCandidate) ? formIdCandidate : '';
+      const selectOptions = tag === 'select' && !sensitivityMarked
+        ? Array.from(element.options || []).slice(0, 100).map((option) => ({
+          label: normalizeText(option?.label || option?.textContent || '').slice(0, 500),
+          value: String(option?.value ?? '').slice(0, 500),
+          selected: option?.selected === true,
+          disabled: option?.disabled === true,
+        }))
+        : [];
 
       return {
         order,
         tag,
         role,
         ...(type ? { type } : {}),
+        ...(tag === 'a' && safeHref(element) ? { href: safeHref(element) } : {}),
+        ...(fieldName ? { name: fieldName } : {}),
+        ...(['input', 'select', 'textarea'].includes(tag) && associatedLabel(element)
+          ? { label: associatedLabel(element) }
+          : {}),
+        ...(placeholder ? { placeholder } : {}),
+        ...(hasFieldValue ? { value } : {}),
+        ...(hasDefaultValue ? { defaultValue } : {}),
+        ...(min ? { min } : {}),
+        ...(max ? { max } : {}),
+        ...(step ? { step } : {}),
+        ...(autocomplete ? { autocomplete } : {}),
+        ...(inputMode ? { inputMode } : {}),
+        ...(formId ? { formId } : {}),
+        ...(!sensitivityMarked && typeof element.checked === 'boolean' ? { checked: element.checked } : {}),
+        ...(!sensitivityMarked && typeof element.defaultChecked === 'boolean' ? { defaultChecked: element.defaultChecked } : {}),
+        ...(selectOptions.length > 0 ? {
+          options: selectOptions,
+          optionsTruncated: Math.max(0, Number(element.options?.length || 0) - selectOptions.length),
+        } : {}),
         rect,
         structureKey: elementPathKey(element),
         parentGroupKey: nearestLayoutGroupKey(element),
@@ -3049,7 +3171,7 @@ function captureRenderedLayout(
         state: {
           expanded: readAriaState(element, 'aria-expanded'),
           selected: readAriaState(element, 'aria-selected'),
-          checked,
+          checked: sensitivityMarked ? null : checked,
           open,
           disabled: nativeDisabled === null ? ariaDisabled : nativeDisabled || ariaDisabled === true,
         },
@@ -3068,6 +3190,12 @@ function captureRenderedLayout(
       retained: textBoxes.length,
       truncated: Math.max(0, allTextCandidates.length - textBoxes.length),
       limit: evidenceLimits.textBoxes,
+    },
+    directTextEntries: {
+      total: allDirectTextEntries.length,
+      retained: directTextEntries.length,
+      truncated: Math.max(0, allDirectTextEntries.length - directTextEntries.length),
+      limit: evidenceLimits.directTextEntries,
     },
     mediaBoxes: {
       total: allMediaBoxes.length,
@@ -3132,7 +3260,7 @@ function captureRenderedLayout(
   if (lazyMediaWarmup && lazyMediaWarmup.complete === false) {
     reasons.push('lazy-media-warmup-incomplete');
   }
-  const essentialGeometryTruncated = ['textBoxes', 'mediaBoxes', 'layoutGroups', 'landmarks', 'mediaClassCandidates']
+  const essentialGeometryTruncated = ['textBoxes', 'directTextEntries', 'mediaBoxes', 'layoutGroups', 'landmarks', 'mediaClassCandidates']
     .some((name) => categoryCounts[name].truncated > 0);
   const evidenceComplete = reasons.length === 0;
   const evidenceCompleteness = {
@@ -3158,6 +3286,7 @@ function captureRenderedLayout(
     documentStyle,
     contentTextEntries,
     textBoxes,
+    directTextEntries,
     mediaBoxes,
     layoutGroups,
     landmarks,

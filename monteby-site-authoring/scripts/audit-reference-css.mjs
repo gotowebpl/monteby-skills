@@ -111,7 +111,7 @@ const IGNORABLE = new Set([
 const KNOWN_RESIDUAL = {
   'font-variation-settings': 'oś fontu zmiennego — arkusz motywu potomnego + oś w zapytaniu o font',
   'font-stretch': 'oś szerokości fontu — jak wyżej',
-  position: 'sticky/fixed — brak kontrolki na Section; arkusz motywu potomnego',
+  position: 'fixed/absolute — przebuduj strukturę; sticky używa typed props, gdy wystawia je żywy kontrakt',
   'z-index': 'kolejność warstw — użyj paintLayer, w ostateczności arkusz',
   transition: 'czas przejścia stanu — arkusz (kontrakt nie wystawia stanów)',
   animation: 'animacja własna — arkusz lub dedykowany widget',
@@ -252,6 +252,20 @@ function classify(rule, declaration, available, blocked) {
   }
 
   if (isState) {
+    const lift = property === 'transform' && /:hover\b/u.test(rule.selector)
+      ? /^translateY\(\s*(-(?:\d+(?:\.\d+)?|\.\d+))px\s*\)$/iu.exec(value)
+      : null;
+    if (lift && Number(lift[1]) >= -24) {
+      const hoverProp = ['hoverLift', 'hoverTranslateY']
+        .find((prop) => available.has(prop) && !blocked.has(prop));
+      if (hoverProp) {
+        return {
+          bucket: 'contract',
+          props: [hoverProp],
+          reason: 'bezpieczny hover lift ma typed prop w żywym kontrakcie',
+        };
+      }
+    }
     return {
       bucket: 'residual',
       reason: 'stan wskazania/fokusu — kontrakt blokuje propsy hover/active',
@@ -278,6 +292,23 @@ function classify(rule, declaration, available, blocked) {
       reason: 'kolejność/wyrównanie pojedynczego dziecka — ustaw kolejnością węzłów w rodzicu',
       target: 'rebuild-as-node',
     };
+  }
+
+  if (property === 'position' && value.trim().toLowerCase() === 'sticky') {
+    const usable = ['sticky'].filter((prop) => available.has(prop) && !blocked.has(prop));
+    if (usable.length > 0) {
+      return { bucket: 'contract', props: usable };
+    }
+  }
+
+  if (
+    property === 'top'
+    && rule.declarations.some((item) => item.property === 'position' && item.value.trim().toLowerCase() === 'sticky')
+  ) {
+    const usable = ['stickyTop'].filter((prop) => available.has(prop) && !blocked.has(prop));
+    if (usable.length > 0) {
+      return { bucket: 'contract', props: usable };
+    }
   }
 
   if (KNOWN_RESIDUAL[property]) {
