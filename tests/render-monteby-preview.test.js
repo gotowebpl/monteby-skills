@@ -33,6 +33,42 @@ function renderPreview(layout, prefix) {
   return fs.readFileSync(previewPath, 'utf8');
 }
 
+test('preview renderer emits only contract-safe anchorId values on layout targets', () => {
+  const html = renderPreview({
+    ROOT: {
+      type: { resolvedName: 'RootCanvas' },
+      isCanvas: true,
+      props: {},
+      nodes: ['section'],
+    },
+    section: {
+      type: { resolvedName: 'Section' },
+      isCanvas: true,
+      props: { anchorId: 'contact' },
+      parent: 'ROOT',
+      nodes: ['heading', 'invalid'],
+    },
+    heading: {
+      type: { resolvedName: 'Heading' },
+      isCanvas: false,
+      props: { anchorId: 'details', text: 'Details', tag: 'h2' },
+      parent: 'section',
+      nodes: [],
+    },
+    invalid: {
+      type: { resolvedName: 'Container' },
+      isCanvas: true,
+      props: { anchorId: 'bad anchor' },
+      parent: 'section',
+      nodes: [],
+    },
+  }, 'monteby-preview-anchor-');
+
+  assert.match(html, /<section id="contact"/);
+  assert.match(html, /<h2 id="details"/);
+  assert.doesNotMatch(html, /id="bad anchor"/);
+});
+
 test('preview renderer writes safe static HTML from a Monteby node map', () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'monteby-preview-render-'));
   const layoutPath = path.join(directory, 'layout.json');

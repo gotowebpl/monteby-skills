@@ -1127,6 +1127,8 @@ function statsGridLength(value, fallback, defaultUnit = 'px', allowUnitless = fa
 }
 
 function renderElement(tag, props, children, extraAttrs = '', forceBorderBox = false) {
+  const anchorId = safeIdentifier(props.anchorId);
+  const idAttr = anchorId ? ` id="${escapeAttr(anchorId)}"` : '';
   const className = classNameFromProps(props);
   const classAttr = className ? ` class="${escapeAttr(className)}"` : '';
   const style = [
@@ -1134,7 +1136,7 @@ function renderElement(tag, props, children, extraAttrs = '', forceBorderBox = f
     styleFromProps(props),
   ].filter(Boolean).join(';');
   const styleAttr = style ? ` style="${escapeAttr(style)}"` : '';
-  return `<${tag}${classAttr}${styleAttr}${extraAttrs}>${children}</${tag}>`;
+  return `<${tag}${idAttr}${classAttr}${styleAttr}${extraAttrs}>${children}</${tag}>`;
 }
 
 function classNameFromProps(props) {

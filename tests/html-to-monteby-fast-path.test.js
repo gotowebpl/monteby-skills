@@ -23,8 +23,9 @@ const CONTRACT = {
       name: 'Section',
       isCanvas: true,
       allowedParents: ['ROOT'],
-      props: ['background', 'backgroundType', 'backgroundImage', 'paddingTop', 'layoutDisplay', 'gap', 'innerMaxWidth', 'innerPaddingX'],
+      props: ['anchorId', 'background', 'backgroundType', 'backgroundImage', 'paddingTop', 'layoutDisplay', 'gap', 'innerMaxWidth', 'innerPaddingX'],
       controls: [
+        { type: 'text', props: ['anchorId'], pattern: '^(?:|[A-Za-z][A-Za-z0-9_-]{0,63})$' },
         { type: 'select', props: ['backgroundType'], options: ['', 'color', 'gradient', 'image'] },
         { type: 'select', props: ['layoutDisplay'], options: ['', 'flex', 'grid'] },
         { type: 'css-value', props: ['paddingTop'], step: 1, units: ['px'] },
@@ -35,7 +36,7 @@ const CONTRACT = {
       name: 'Container',
       isCanvas: true,
       allowedParents: ['Section', 'Container'],
-      props: ['borderWidth', 'borderTopWidth', 'borderTopColor', 'flexGrow', 'width'],
+      props: ['anchorId', 'borderWidth', 'borderTopWidth', 'borderTopColor', 'flexGrow', 'width'],
       controls: [
         { type: 'number', props: ['flexGrow'], step: 1, min: 0, max: 12 },
         { type: 'css-value', props: ['width'], units: ['px'] },
@@ -45,7 +46,7 @@ const CONTRACT = {
       name: 'Heading',
       isCanvas: false,
       allowedParents: ['Section', 'Container'],
-      props: ['text', 'tag', 'fontSize', 'lineHeight', 'marginTop', 'textTransform'],
+      props: ['anchorId', 'text', 'tag', 'fontSize', 'lineHeight', 'marginTop', 'textTransform'],
       controls: [
         { type: 'css-value', props: ['fontSize'], step: 1, units: ['px'] },
         { type: 'css-value', props: ['lineHeight'], step: 0.1, units: [''] },
@@ -115,6 +116,27 @@ test('layout-kit rejects contract violations and the ListBlock object trap', asy
   assert.throws(() => kit.heading('x', { nieistniejacy: 1 }), /spoza kontraktu/);
   assert.throws(() => kit.node('ListBlock', { items: [{ text: 'a', href: '/a' }] }), /React #31/);
   assert.throws(() => kit.section({}, [kit.section({})]), /niedozwolony/);
+});
+
+test('layout-kit requires same-page links to resolve to one contract anchor target', async () => {
+  const dir = tempDir();
+  const contract = writeContract(dir);
+  const { Kit } = await import(path.join(SCRIPTS, 'layout-kit.mjs'));
+
+  const valid = await Kit.fromContract(contract);
+  const section = valid.section({ anchorId: 'contact' }, [valid.button('Kontakt', '#contact')]);
+  const result = await valid.write(path.join(dir, 'anchor-layout.json'), [section]);
+  const map = JSON.parse(fs.readFileSync(result.path, 'utf8'));
+  assert.equal(map[map.ROOT.nodes[0]].props.anchorId, 'contact');
+
+  const missing = await Kit.fromContract(contract);
+  const missingSection = missing.section({}, [missing.button('Kontakt', '#contact')]);
+  await assert.rejects(missing.write(path.join(dir, 'missing-anchor.json'), [missingSection]), /dokładnie jednego anchorId/);
+
+  const duplicate = await Kit.fromContract(contract);
+  const first = duplicate.section({ anchorId: 'contact' });
+  const second = duplicate.section({ anchorId: 'contact' });
+  await assert.rejects(duplicate.write(path.join(dir, 'duplicate-anchor.json'), [first, second]), /występuje 2 razy/);
 });
 
 test('layout-kit accepts only an environment-variable name for live-site authentication', async () => {

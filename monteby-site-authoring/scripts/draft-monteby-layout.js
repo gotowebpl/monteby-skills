@@ -12,6 +12,11 @@ const {
   measureTwoColumnGrid,
 } = require('./measured-grid-geometry');
 const { googleFontToken } = require('./render-monteby-preview');
+const {
+  buildContentLedger,
+  compareContentLedgers,
+  nodeMapContentEntries,
+} = require('./content-ledger');
 
 const DEFAULT_REPLACEMENT_PROFILE = {
   name: 'generic-service',
@@ -15193,6 +15198,17 @@ function main() {
     const referenceManifest = options.referenceManifest ? readJson(options.referenceManifest) : null;
     const brief = briefWithReferenceMediaRequirements(readBrief(options), referenceManifest, options);
     const draft = draftLayout(buildContractIndex(contract), brief);
+    const expectedContentLedger = referenceManifest?.contentLedger;
+    const contentLedgerComparison = options.preserveSourceText && expectedContentLedger
+      ? compareContentLedgers(
+        expectedContentLedger,
+        buildContentLedger(nodeMapContentEntries(draft.layout))
+      )
+      : null;
+    if (contentLedgerComparison) {
+      draft.mechanicalPlan.contentLedger = contentLedgerComparison;
+      draft.mechanicalPlan.completion.contentLedgerComplete = contentLedgerComparison.complete;
+    }
 
     writeFile(options.out, `${JSON.stringify(draft.layout, null, 2)}\n`);
     if (options.planOut) {
@@ -15201,6 +15217,12 @@ function main() {
     }
     const audit = auditDraft(options);
     const qualityErrors = draftQualityErrors(draft, referenceManifest, options);
+    if (contentLedgerComparison && contentLedgerComparison.complete !== true) {
+      qualityErrors.push({
+        code: 'source_content_ledger_incomplete',
+        message: 'The authored node map does not preserve every full source-text occurrence. Inspect missing, truncatedOrChanged, and duplicateCountMismatch in the mechanical plan.',
+      });
+    }
     const ok = (!audit || audit.ok) && qualityErrors.length === 0;
     if (options.json) {
       console.log(JSON.stringify({

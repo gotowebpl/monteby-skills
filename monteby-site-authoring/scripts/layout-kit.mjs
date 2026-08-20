@@ -33,6 +33,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 
 const TEXT_NODES = new Set(['Heading', 'Text', 'MultilineHeading']);
 const EDGE_WIDTHS = ['borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth'];
+const ANCHOR_ID_PATTERN = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
 
 function snap(value, step) {
   return Number((Math.round(value / step) * step).toFixed(6));
@@ -347,7 +348,53 @@ export class Kit {
       this.nodes[id].parent = 'ROOT';
     }
     this.nodes.ROOT = { type: { resolvedName: 'RootCanvas' }, isCanvas: true, props: {}, nodes: [...sections] };
+    this.#validateAnchorComposition();
     return this.nodes;
+  }
+
+  #validateAnchorComposition() {
+    const targets = new Map();
+    const references = [];
+
+    for (const [nodeId, node] of Object.entries(this.nodes)) {
+      const props = node?.props && typeof node.props === 'object' ? node.props : {};
+      if (typeof props.anchorId === 'string' && props.anchorId !== '') {
+        if (!ANCHOR_ID_PATTERN.test(props.anchorId)) {
+          throw new Error(`${nodeId}.anchorId nie spełnia kontraktu kotwicy`);
+        }
+        const paths = targets.get(props.anchorId) || [];
+        paths.push(`${nodeId}.anchorId`);
+        targets.set(props.anchorId, paths);
+      }
+
+      for (const prop of ['href', 'url']) {
+        const value = props[prop];
+        if (typeof value === 'string' && /^#[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(value)) {
+          references.push({ target: value.slice(1), path: `${nodeId}.${prop}` });
+        }
+      }
+      if (node?.type?.resolvedName === 'TableOfContents' && Array.isArray(props.items)) {
+        props.items.forEach((item, index) => {
+          const target = item && typeof item.anchor === 'string' ? item.anchor : '';
+          if (target !== '') references.push({ target, path: `${nodeId}.items[${index}].anchor` });
+        });
+      }
+    }
+
+    for (const [target, paths] of targets) {
+      if (paths.length !== 1) {
+        throw new Error(`Kotwica ${JSON.stringify(target)} występuje ${paths.length} razy: ${paths.join(', ')}`);
+      }
+    }
+    for (const reference of references) {
+      if (!ANCHOR_ID_PATTERN.test(reference.target)) {
+        throw new Error(`${reference.path} nie wskazuje poprawnej kotwicy`);
+      }
+      const matches = targets.get(reference.target) || [];
+      if (matches.length !== 1) {
+        throw new Error(`${reference.path} wymaga dokładnie jednego anchorId ${JSON.stringify(reference.target)}`);
+      }
+    }
   }
 
   async write(path, sections) {

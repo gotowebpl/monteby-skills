@@ -1,8 +1,22 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
+  "skillVersion": "0.2.0",
+  "minimumBuilderVersion": "1.4.0",
   "contractEndpoint": "/wp-json/monteby/v1/contract",
   "liveContractRequired": true,
   "compatibilityPolicy": "exact-live-contract",
   "bundledBaseline": null,
+  "featureGates": {
+    "providerRenderedWidgetSave": {
+      "minimumBuilderVersion": "1.4.0",
+      "contractPath": "authoring.capabilities.providerRenderedWidgetSave",
+      "expectedValue": true
+    },
+    "queryControls": {
+      "minimumBuilderVersion": "1.3.9",
+      "contractPath": "authoring.relationshipRules.queryControls",
+      "valueType": "object"
+    }
+  },
   "reason": "No verified portable Builder contract snapshot is bundled. Authoring must use the current target site's live contract."
 }

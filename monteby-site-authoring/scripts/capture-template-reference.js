@@ -6,6 +6,7 @@ const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 const { pathToFileURL } = require('url');
+const { buildContentLedger } = require('./content-ledger');
 
 const DEFAULT_VIEWPORTS = [
   { label: 'desktop', width: 1440, height: 1200 },
@@ -2748,7 +2749,7 @@ function captureRenderedLayout(
       const rect = readRect(element);
       const style = window.getComputedStyle(element);
       const text = normalizeText(typeof element.innerText === 'string' ? element.innerText : element.textContent);
-      if (!intersectsDocumentCanvas(rect) || !isVisible(element, rect, style) || !text || text.length > 180) {
+      if (!intersectsDocumentCanvas(rect) || !isVisible(element, rect, style) || !text) {
         return null;
       }
       return {
@@ -2775,6 +2776,22 @@ function captureRenderedLayout(
       renderedTextBoxKeys.add(key);
       return true;
     });
+  const semanticContentTags = new Set(['h1', 'h2', 'h3', 'h4', 'p', 'blockquote', 'button', 'li', 'a']);
+  const contentTextEntries = allTextCandidates
+    .filter(({ element, tag }) => {
+      if (semanticContentTags.has(tag)) return true;
+      for (let ancestor = element.parentElement; ancestor; ancestor = ancestor.parentElement) {
+        if (semanticContentTags.has(String(ancestor.tagName || '').toLowerCase())) return false;
+      }
+      return true;
+    })
+    .map(({ element, text }) => ({
+      structureKey: elementPathKey(element),
+      text,
+    }))
+    .filter((entry, index, entries) => entries.findIndex((candidate) => (
+      candidate.structureKey === entry.structureKey
+    )) === index);
   const textCandidates = allTextCandidates.slice(0, evidenceLimits.textBoxes);
   const fontEvidenceCache = new Map();
   const fontFaceSet = ['timeout', 'error'].includes(captureContext?.fontReadiness)
@@ -3139,6 +3156,7 @@ function captureRenderedLayout(
     viewport,
     horizontalOverflow,
     documentStyle,
+    contentTextEntries,
     textBoxes,
     mediaBoxes,
     layoutGroups,
@@ -4351,6 +4369,19 @@ function writeReferenceArtifacts(options, html, resourceCandidates, screenshots,
   const mediaSurfaces = renderedMediaSurfaces(layoutCapture);
   const requiredMediaRoles = renderedRequiredMediaRoles(mediaSurfaces);
   const semanticMediaCoverage = meaningfulFirstViewportMediaCoverage(mediaSurfaces, layoutCapture);
+  const capturedLayouts = Array.isArray(layoutCapture?.layouts)
+    ? layoutCapture.layouts.map((capture) => capture?.layout).filter(Boolean)
+    : [primaryCapturedLayout(layoutCapture)].filter(Boolean);
+  const contentEntriesByViewportIdentity = new Map();
+  for (const layout of capturedLayouts) {
+    for (const entry of Array.isArray(layout?.contentTextEntries) ? layout.contentTextEntries : []) {
+      const key = JSON.stringify([entry?.structureKey || '', entry?.text || '']);
+      if (!contentEntriesByViewportIdentity.has(key)) {
+        contentEntriesByViewportIdentity.set(key, entry);
+      }
+    }
+  }
+  const contentLedger = buildContentLedger([...contentEntriesByViewportIdentity.values()]);
   const brief = buildReferenceBrief(options, html, media, screenshots, layoutCapture, mediaSurfaces, requiredMediaRoles);
   const evidenceCompleteness = layoutCapture.evidenceCompleteness
     || aggregateEvidenceCompleteness(layoutCapture, options.fullPage === true);
@@ -4427,6 +4458,7 @@ function writeReferenceArtifacts(options, html, resourceCandidates, screenshots,
     },
     screenshotPolicy: 'Screenshots are visual research artifacts only. Do not copy demo HTML, CSS, copy, image URLs, or distinctive sections into Monteby JSON.',
     mediaPolicy: 'Media URLs are evidence of photo pressure only. Use licensed, user-provided, generated, or neutral replacement assets for authored Monteby layouts.',
+    contentLedger,
     resourceCandidateCount: resourceCandidates.length,
     htmlMediaCount: htmlMedia.length,
     renderedMediaCount: renderedMedia.length,

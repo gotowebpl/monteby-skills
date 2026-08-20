@@ -228,8 +228,16 @@ function assertEnvelope(result, {
 
 test('snapshot fetches contract before the page and atomically records both artifacts', async (t) => {
   const requests = [];
-  const contract = { version: 1, components: [{ name: 'Section' }] };
+  const contract = {
+    version: 1,
+    productVersion: '1.4.0',
+    authoring: { capabilities: { providerRenderedWidgetSave: true } },
+    components: [{ name: 'Section' }],
+  };
   const before = {
+    id: 17,
+    postType: 'page',
+    viewUrl: '',
     postModifiedGmt: '2026-07-26 08:00:00',
     nodeMap: NODE_MAP,
     presentation: { layout: 'default', disableGlobalTemplates: false },
@@ -243,9 +251,7 @@ test('snapshot fetches contract before the page and atomically records both arti
     if (request.url === '/wp-json/monteby/v1/contract') {
       sendJson(response, 200, contract);
     } else if (request.url === '/wp-json/monteby/v1/pages/17/layout') {
-      sendJson(response, 200, before);
-    } else if (request.url === '/wp-json/wp/v2/pages/17?context=edit&_fields=id%2Clink') {
-      sendJson(response, 200, { id: 17, link: `${server.site}/page-17/` });
+      sendJson(response, 200, { ...before, viewUrl: `${server.site}/page-17/` });
     } else {
       sendJson(response, 404, { code: 'not_found' });
     }
@@ -267,7 +273,6 @@ test('snapshot fetches contract before the page and atomically records both arti
     [
       'GET /wp-json/monteby/v1/contract',
       'GET /wp-json/monteby/v1/pages/17/layout',
-      'GET /wp-json/wp/v2/pages/17?context=edit&_fields=id%2Clink',
     ]
   );
   assert.ok(requests.every((request) => request.authorization === AUTH));
@@ -279,11 +284,19 @@ test('snapshot fetches contract before the page and atomically records both arti
   assert.equal(savedSnapshot.artifact, 'monteby-page-snapshot');
   assert.equal(savedSnapshot.site, server.site);
   assert.equal(savedSnapshot.pageId, 17);
+  assert.equal(savedSnapshot.postType, 'page');
+  assert.equal(savedSnapshot.viewUrl, `${server.site}/page-17/`);
   assert.equal(savedSnapshot.publicPageUrl, `${server.site}/page-17/`);
   assert.equal(Number.isFinite(Date.parse(savedSnapshot.capturedAt)), true);
-  assert.deepEqual(savedSnapshot.data, before);
+  assert.deepEqual(savedSnapshot.data, { ...before, viewUrl: `${server.site}/page-17/` });
   assert.equal(execution.result.artifacts.snapshot, path.join(outDir, 'layout-before.json'));
-  assert.deepEqual(execution.result.evidence, { publicPageUrl: `${server.site}/page-17/` });
+  assert.deepEqual(execution.result.evidence, {
+    publicPageUrl: `${server.site}/page-17/`,
+    postType: 'page',
+    viewUrl: `${server.site}/page-17/`,
+    renderContextUrl: '',
+    productVersion: '1.4.0',
+  });
   assert.equal(execution.result.nextAction.id, 'validate_candidate');
   assert.deepEqual(
     execution.result.nextAction.args.slice(0, 6),
@@ -296,6 +309,61 @@ test('snapshot fetches contract before the page and atomically records both arti
     'atomic writes leave no temporary artifacts'
   );
   assert.deepEqual(server.errors, []);
+});
+
+test('template snapshot uses only the layout resource and accepts an explicit render context', async (t) => {
+  const requests = [];
+  const server = await startServer(t, (request, response) => {
+    requests.push(`${request.method} ${request.url}`);
+    if (request.url.endsWith('/contract')) {
+      sendJson(response, 200, {
+        productVersion: '1.4.0',
+        authoring: { capabilities: { providerRenderedWidgetSave: true } },
+      });
+      return;
+    }
+    sendJson(response, 200, {
+      id: 41,
+      postType: 'gotoweb_template',
+      viewUrl: `${server.site}/?gotoweb_template=global-header`,
+      postModifiedGmt: '2026-08-20 09:00:00',
+      nodeMap: NODE_MAP,
+    });
+  });
+  const outDir = tempDir(t);
+  const renderContextUrl = `${server.site}/kontakt/`;
+
+  const execution = await runClient([
+    'snapshot', '--site', server.site, '--page-id', '41', '--out-dir', outDir,
+    '--render-context-url', renderContextUrl,
+  ]);
+
+  assert.equal(execution.exitCode, 0);
+  assert.deepEqual(requests, [
+    'GET /wp-json/monteby/v1/contract',
+    'GET /wp-json/monteby/v1/pages/41/layout',
+  ]);
+  const snapshot = JSON.parse(fs.readFileSync(path.join(outDir, 'layout-before.json'), 'utf8'));
+  assert.equal(snapshot.postType, 'gotoweb_template');
+  assert.equal(snapshot.renderContextUrl, renderContextUrl);
+  assert.equal(snapshot.publicPageUrl, renderContextUrl);
+  assert.equal(snapshot.viewUrl, `${server.site}/?gotoweb_template=global-header`);
+});
+
+test('snapshot classifies an outdated Builder before requesting the layout', async (t) => {
+  const requests = [];
+  const server = await startServer(t, (request, response) => {
+    requests.push(`${request.method} ${request.url}`);
+    sendJson(response, 200, { productVersion: '1.3.12' });
+  });
+
+  const execution = await runClient([
+    'snapshot', '--site', server.site, '--page-id', '17', '--out-dir', tempDir(t),
+  ]);
+
+  assert.equal(execution.exitCode, 1);
+  assert.equal(execution.result.code, 'blocked_plugin_version');
+  assert.deepEqual(requests, ['GET /wp-json/monteby/v1/contract']);
 });
 
 test('non-retryable REST failures emit a terminal blocked action instead of looping', async (t) => {
@@ -934,9 +1002,9 @@ test('preview posts nodeMap and writes returned HTML atomically', async (t) => {
   assert.equal(execution.result.nextAction.id, 'verify_canonical_page');
   assert.ok(execution.result.nextAction.args.includes('$MONTEBY_ITERATION_REPORT'));
   assert.ok(execution.result.nextAction.args.includes(previewReportFile));
-  assert.ok(execution.result.nextAction.args.includes('$MONTEBY_PUBLIC_PAGE_URL'));
+  assert.ok(execution.result.nextAction.args.includes(`${server.site}/page-17/`));
   assert.ok(execution.result.nextAction.requires.includes('MONTEBY_ITERATION_REPORT'));
-  assert.ok(execution.result.nextAction.requires.includes('MONTEBY_PUBLIC_PAGE_URL'));
+  assert.equal(execution.result.nextAction.requires.includes('MONTEBY_PUBLIC_PAGE_URL'), false);
   assert.ok(execution.result.nextAction.requires.includes('PUBLIC_PAGE_URL_CONFIRMED'));
   assert.equal(
     fs.readdirSync(directory).some((name) => name.endsWith('.tmp')),

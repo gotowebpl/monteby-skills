@@ -153,6 +153,23 @@ stanu, taksonomie, termy oraz klucze pól własnych wybieraj wyłącznie z bież
 kluczy meta; publiczna kontrolka wybiera tylko zapisany w pętli identyfikator
 opcji sortowania.
 
+## Kotwice i spis treści
+
+Kotwica jest parą, a nie samym linkiem. Najpierw sprawdź w żywym kontrakcie,
+czy docelowy `Section`, `Container` lub `Heading` wystawia kontrolowane pole
+`anchorId`, i zastosuj dokładnie jego `pattern`. Potem ustaw tę samą wartość:
+
+- bez `#` w `anchorId` oraz `TableOfContents.items[].anchor`;
+- z jednym `#` w `ButtonBlock.href`, `Heading.href` lub innym linku do tego
+  samego dokumentu.
+
+Każda wartość docelowa musi wystąpić jako `anchorId` dokładnie raz w całej node
+mapie. `cssId` pozostaje zablokowanym polem zgodności wstecznej i nie wolno go
+używać do authoringu AI. Brak `anchorId` w żywym kontrakcie, brak celu albo
+duplikat to `blocked_product_gap`; nie zastępuj tego klasą, surowym HTML,
+JavaScriptem ani CSS-em potomnym. Po zbudowaniu kandydatury uruchom walidację
+kitu i serwera przed zapisem.
+
 ## SEO i rola strony
 
 Jeżeli brief jawnie określa SEO, rolę treści, FAQ schema albo encję główną,

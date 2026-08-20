@@ -4,12 +4,13 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { createHash, randomUUID } = require('node:crypto');
+const compatibilityManifest = require('../references/site-contract-compatibility.json');
+const { evaluateFeatureGate } = require('./contract-capabilities');
 
 const SCHEMA_VERSION = 1;
 const DEFAULT_AUTH_HEADER_ENV = 'MONTEBY_AUTH_HEADER';
 const DEFAULT_TIMEOUT_MS = 30_000;
 const API_ROOT = '/wp-json/monteby/v1';
-const WORDPRESS_CORE_API_ROOT = '/wp-json/wp/v2';
 const COMMANDS = new Set([
   'snapshot',
   'validate',
@@ -96,6 +97,7 @@ function parseArgs(argv) {
     expectedCandidateLayoutSha256: '',
     authHeaderEnv: DEFAULT_AUTH_HEADER_ENV,
     timeoutMs: DEFAULT_TIMEOUT_MS,
+    renderContextUrl: '',
   };
   const seen = new Set();
 
@@ -150,6 +152,8 @@ function parseArgs(argv) {
       options.authHeaderEnv = requiredValue(argv, index += 1, option);
     } else if (option === '--timeout-ms') {
       options.timeoutMs = parsePositiveInteger(requiredValue(argv, index += 1, option), option);
+    } else if (option === '--render-context-url') {
+      options.renderContextUrl = requiredValue(argv, index += 1, option);
     } else {
       throw new ClientError(`Unknown option: ${option}.`, {
         code: 'CLI_USAGE',
@@ -251,6 +255,20 @@ function validateOptions(options) {
       nextAction: 'Use one presentation layout exposed by the Monteby persistence contract.',
     });
   }
+  if (options.renderContextUrl) {
+    const normalized = normalizePublicPageUrl(options.renderContextUrl, options.site);
+    if (!normalized) {
+      throw new ClientError('--render-context-url must be a same-origin HTTP(S) URL without credentials.', {
+        code: 'CLI_USAGE',
+        stage: options.command,
+        nextAction: 'Provide a public page on the same WordPress origin that renders the edited global template.',
+      });
+    }
+    options.renderContextUrl = normalized;
+  }
+  if (options.command !== 'snapshot') {
+    rejectOption(options, 'renderContextUrl', '--render-context-url');
+  }
 
   if (options.command === 'snapshot') {
     requireOption(options, 'pageId', '--page-id');
@@ -327,7 +345,7 @@ function validateOptions(options) {
 
 function printHelp() {
   process.stdout.write(`Usage:
-  wordpress-layout-client.js snapshot --site URL --page-id ID --out-dir DIR [--out REPORT.json]
+  wordpress-layout-client.js snapshot --site URL --page-id ID --out-dir DIR [--render-context-url URL] [--out REPORT.json]
   wordpress-layout-client.js validate --site URL --layout LAYOUT.json [--out REPORT.json]
   wordpress-layout-client.js save --site URL --page-id ID --layout LAYOUT.json (--out-dir DIR | --snapshot FILE) --expected-layout-sha256 SHA256 --out SAVE-REPORT.json [--presentation-layout NAME]
   wordpress-layout-client.js preview --site URL --layout LAYOUT.json --save-report SAVE-REPORT.json --out PREVIEW.html --report-out PREVIEW-REPORT.json
@@ -413,6 +431,7 @@ function commandArgs(options) {
   }
   if (options.out) args.push('--out', options.out);
   if (options.reportOut) args.push('--report-out', options.reportOut);
+  if (options.renderContextUrl) args.push('--render-context-url', options.renderContextUrl);
   return withCommonArgs(args, options);
 }
 
@@ -436,6 +455,7 @@ function snapshotArgs(options) {
     '--site', options.site,
     '--page-id', String(options.pageId),
     '--out-dir', outDir,
+    ...(options.renderContextUrl ? ['--render-context-url', options.renderContextUrl] : []),
   ], options);
 }
 
@@ -557,13 +577,12 @@ function materializeNextAction(report, options) {
       [
         '--iteration-report', '$MONTEBY_ITERATION_REPORT',
         '--preview-report', options.reportOut,
-        '--public-page-url', '$MONTEBY_PUBLIC_PAGE_URL',
+        '--public-page-url', report.evidence.publicPageUrl,
         '--out-dir', path.join(path.dirname(options.out), 'canonical'),
         '--json',
       ],
       [
         'MONTEBY_ITERATION_REPORT',
-        'MONTEBY_PUBLIC_PAGE_URL',
         'PUBLIC_PAGE_URL_CONFIRMED',
       ],
       'Capture and compare the canonical public page at all required full-page viewports.'
@@ -1252,6 +1271,23 @@ async function runSnapshot(options, authHeader) {
   if (!contractResponse.ok) {
     return httpFailureResult('snapshot', contractResponse, artifacts);
   }
+  const providerSaveGate = evaluateFeatureGate(
+    contractResponse.data,
+    'providerRenderedWidgetSave',
+    compatibilityManifest
+  );
+  if (!providerSaveGate.ok) {
+    return createResult({
+      ok: false,
+      stage: 'snapshot',
+      code: providerSaveGate.code,
+      artifacts,
+      nextAction: providerSaveGate.code === 'blocked_plugin_version'
+        ? 'Upgrade Monteby Builder, then fetch a fresh live contract before authoring.'
+        : 'Stop and repair the Builder live-contract deployment; do not guess the missing capability.',
+      message: providerSaveGate.message,
+    });
+  }
 
   const layoutResponse = await request(options, authHeader, {
     method: 'GET',
@@ -1261,24 +1297,25 @@ async function runSnapshot(options, authHeader) {
     return httpFailureResult('snapshot', layoutResponse, artifacts);
   }
 
-  const pageIdentityResponse = await request(options, authHeader, {
-    method: 'GET',
-    apiRoot: WORDPRESS_CORE_API_ROOT,
-    endpoint: `/pages/${options.pageId}?context=edit&_fields=id%2Clink`,
-  });
-  if (!pageIdentityResponse.ok) {
-    return httpFailureResult('snapshot', pageIdentityResponse, artifacts);
-  }
-  const publicPageUrl = normalizePublicPageUrl(pageIdentityResponse.data?.link, options.site);
-  if (Number(pageIdentityResponse.data?.id) !== options.pageId || !publicPageUrl) {
+  const layoutIdentity = layoutResponse.data;
+  const viewUrl = normalizePublicPageUrl(layoutIdentity?.viewUrl, options.site);
+  const publicPageUrl = options.renderContextUrl || viewUrl;
+  if (
+    Number(layoutIdentity?.id) !== options.pageId
+    || typeof layoutIdentity?.postType !== 'string'
+    || !layoutIdentity.postType.trim()
+    || typeof layoutIdentity?.postModifiedGmt !== 'string'
+    || !layoutIdentity.postModifiedGmt.trim()
+    || !viewUrl
+  ) {
     return createResult({
       ok: false,
       stage: 'snapshot',
-      code: 'PAGE_IDENTITY_INVALID',
+      code: 'LAYOUT_IDENTITY_INVALID',
       artifacts,
-      nextAction: 'Fix the WordPress core page endpoint so this page ID resolves to one same-site public link.',
-      message: 'The WordPress core page response did not bind the requested page ID to a valid same-site public URL.',
-      response: pageIdentityResponse.data,
+      nextAction: 'Repair the versioned layout resource so it returns id, postType, viewUrl, and postModifiedGmt for the requested document.',
+      message: 'The layout resource did not bind the requested document to a complete same-site identity.',
+      response: layoutIdentity,
     });
   }
 
@@ -1287,6 +1324,9 @@ async function runSnapshot(options, authHeader) {
     artifact: 'monteby-page-snapshot',
     site: options.site,
     pageId: options.pageId,
+    postType: layoutIdentity.postType,
+    viewUrl,
+    renderContextUrl: options.renderContextUrl || '',
     publicPageUrl,
     capturedAt: new Date().toISOString(),
     data: redact(layoutResponse.data, authHeader),
@@ -1314,6 +1354,10 @@ async function runSnapshot(options, authHeader) {
     },
     evidence: {
       publicPageUrl,
+      postType: layoutIdentity.postType,
+      viewUrl,
+      renderContextUrl: options.renderContextUrl || '',
+      productVersion: providerSaveGate.productVersion,
     },
   });
 }
