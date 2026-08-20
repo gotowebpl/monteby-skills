@@ -11,6 +11,11 @@ const {
   validateLayoutPlan,
   CANONICAL_VIEWPORTS,
 } = require('./run-visual-iteration.js');
+const {
+  buildSubpixelResidual,
+  evaluateSubpixelFixedPoint,
+  validateSubpixelAuthorization,
+} = require('./subpixel-residual');
 
 function requiredValue(argv, index, option) {
   const value = argv[index];
@@ -29,6 +34,7 @@ function parseArgs(argv) {
     waitMs: '1500',
     playwrightPackage: 'playwright@1.54.1',
     channel: '',
+    subpixelAuthorization: '',
     json: false,
     help: false,
   };
@@ -53,6 +59,8 @@ function parseArgs(argv) {
       options.playwrightPackage = requiredValue(argv, index += 1, option);
     } else if (option === '--channel') {
       options.channel = requiredValue(argv, index += 1, option);
+    } else if (option === '--subpixel-authorization') {
+      options.subpixelAuthorization = path.resolve(requiredValue(argv, index += 1, option));
     } else {
       throw new Error(`Unknown option: ${option}`);
     }
@@ -79,7 +87,7 @@ function parseArgs(argv) {
 
 function usage() {
   return `Usage:
-  run-canonical-verification.js --iteration-report visual-iteration-report.json --preview-report preview-response.json --public-page-url URL --out-dir DIR [--channel chrome] [--wait-ms MS] [--playwright-package PACKAGE] [--json]
+  run-canonical-verification.js --iteration-report visual-iteration-report.json --preview-report preview-response.json --public-page-url URL --out-dir DIR [--subpixel-authorization FILE] [--channel chrome] [--wait-ms MS] [--playwright-package PACKAGE] [--json]
 
 Captures the public WordPress/PHP result at desktop:1440x1200,
 tablet:834x1112, and mobile:390x844, then runs the strict benchmark.
@@ -114,6 +122,22 @@ function nodeMapSha256(value) {
 
 function fileSha256(file) {
   return createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+}
+
+function capturedPageSha256(manifestFile) {
+  const manifest = readJson(manifestFile);
+  const screenshots = Array.isArray(manifest?.screenshots) ? manifest.screenshots : [];
+  const digest = createHash('sha256');
+  let hashed = 0;
+  for (const screenshot of screenshots) {
+    const screenshotFile = path.resolve(path.dirname(manifestFile), String(screenshot?.file || ''));
+    if (!fs.existsSync(screenshotFile)) continue;
+    digest.update(String(screenshot?.label || ''));
+    digest.update('\0');
+    digest.update(fs.readFileSync(screenshotFile));
+    hashed += 1;
+  }
+  return hashed > 0 ? digest.digest('hex') : fileSha256(manifestFile);
 }
 
 function scriptPath(name) {
@@ -265,6 +289,22 @@ function validateIteration(iteration) {
         code: blocker.code,
         message: blocker.message,
       });
+    }
+    if (iteration?.options?.preserveSourceText === true) {
+      try {
+        const contentLedger = readJson(layoutPlanFile)?.contentLedger;
+        if (contentLedger?.complete !== true) {
+          blockers.push({
+            code: 'content_ledger_incomplete',
+            message: 'Canonical verification requires a complete node-map content ledger when preserveSourceText is enabled.',
+          });
+        }
+      } catch {
+        blockers.push({
+          code: 'content_ledger_incomplete',
+          message: 'Canonical verification could not read the required content ledger.',
+        });
+      }
     }
   }
   return blockers;
@@ -544,6 +584,7 @@ function baseReport(options) {
       benchmarkReport: path.join(options.outDir, 'benchmark-report.json'),
       benchmarkMarkdown: path.join(options.outDir, 'BENCHMARK.md'),
       report: path.join(options.outDir, 'canonical-verification-report.json'),
+      subpixelResidual: path.join(options.outDir, 'subpixel-residual.json'),
     },
     steps: {},
     blockers: [],
@@ -564,6 +605,9 @@ function retryAction(options) {
       '--wait-ms', options.waitMs,
       '--playwright-package', options.playwrightPackage,
       ...(options.channel ? ['--channel', options.channel] : []),
+      ...(options.subpixelAuthorization
+        ? ['--subpixel-authorization', options.subpixelAuthorization]
+        : []),
       '--json',
     ],
     ['CANONICAL_FAILURE_RESOLVED'],
@@ -652,6 +696,7 @@ function main() {
 
     const zeroDiffBlockers = canonicalZeroDiffBlockers(benchmark.report);
     const visualBudgetFailed = zeroDiffBlockers.length > 0;
+    let authorizedResidual = null;
     if (benchmark.status !== 0 || benchmark.report?.ok !== true || visualBudgetFailed) {
       report.status = 'CANONICAL_COMPARE_FAILED';
       const benchmarkBlockers = Array.isArray(benchmark.report?.blockers)
@@ -672,27 +717,80 @@ function main() {
           code: 'canonical_benchmark_failed',
           message: benchmark.stderr || 'Canonical benchmark did not pass.',
         }];
-      report.repairQueue = buildRepairQueue({
-        status: 'benchmark_failed',
-        files: iteration.files,
-        blockers: report.blockers,
-        benchmark: {
-          genericGeometry: benchmark.report?.genericGeometry,
-        },
-      });
-      report.nextAction = nextActionFor({
-        ...iteration,
-        status: 'benchmark_failed',
-        repairReportPath: report.files.report,
-        blockers: report.blockers,
-        benchmark: {
-          genericGeometry: benchmark.report?.genericGeometry,
-        },
-      });
-      persist(report);
-      output(report, options);
-      process.exitCode = 1;
-      return;
+      const residualEvaluation = evaluateSubpixelFixedPoint(
+        iteration.benchmark,
+        benchmark.report,
+        report.blockers
+      );
+      if (residualEvaluation.eligible) {
+        const residual = buildSubpixelResidual(residualEvaluation, {
+          pageSha256: capturedPageSha256(report.files.candidateManifest),
+          layoutSha256: nodeMapSha256(readJson(iteration.files.layout)),
+          manifestSha256: fileSha256(iteration.referenceManifest),
+          iterationSha256: fileSha256(options.iterationReport),
+        });
+        writeJson(report.files.subpixelResidual, residual);
+        const authorization = options.subpixelAuthorization && fs.existsSync(options.subpixelAuthorization)
+          ? readJson(options.subpixelAuthorization)
+          : null;
+        const authorizationResult = validateSubpixelAuthorization(authorization, residual);
+        if (authorizationResult.ok) {
+          authorizedResidual = {
+            residual,
+            authorization: {
+              file: options.subpixelAuthorization,
+              authorizedBy: authorizationResult.authorizedBy,
+              authorizedAt: authorizationResult.authorizedAt,
+            },
+          };
+        } else {
+          report.status = options.subpixelAuthorization
+            ? 'SUBPIXEL_AUTHORIZATION_INVALID'
+            : 'CANONICAL_RESIDUAL_AUTHORIZATION_REQUIRED';
+          report.blockers = [{
+            code: options.subpixelAuthorization
+              ? authorizationResult.code
+              : 'blocked_subpixel_authorization_required',
+            message: options.subpixelAuthorization
+              ? 'The supplied subpixel authorization does not bind the exact current residual evidence.'
+              : 'The stable subpixel residual is within policy, but an explicit person/date/hash-bound authorization is required.',
+          }];
+          report.nextAction = nextAction(
+            'authorize_subpixel_residual',
+            '',
+            [],
+            ['NAMED_AUTHORIZER', 'AUTHORIZATION_DATE', 'EXACT_RESIDUAL_SHA256', 'EXACT_EVIDENCE_BINDINGS'],
+            `Review ${report.files.subpixelResidual}, create a monteby-subpixel-authorization file bound to its residualSha256 and bindings, then rerun with --subpixel-authorization.`
+          );
+          persist(report);
+          output(report, options);
+          process.exitCode = 1;
+          return;
+        }
+      }
+      if (!authorizedResidual) {
+        report.repairQueue = buildRepairQueue({
+          status: 'benchmark_failed',
+          files: iteration.files,
+          blockers: report.blockers,
+          benchmark: {
+            genericGeometry: benchmark.report?.genericGeometry,
+          },
+        });
+        report.nextAction = nextActionFor({
+          ...iteration,
+          status: 'benchmark_failed',
+          repairReportPath: report.files.report,
+          blockers: report.blockers,
+          benchmark: {
+            genericGeometry: benchmark.report?.genericGeometry,
+          },
+        });
+        persist(report);
+        output(report, options);
+        process.exitCode = 1;
+        return;
+      }
     }
 
     report.ok = true;
@@ -700,6 +798,9 @@ function main() {
     report.fidelityPassed = true;
     report.canonicalVerification = true;
     report.productReady = true;
+    report.verdict = authorizedResidual
+      ? 'canonical_verified_with_authorized_residual'
+      : 'canonical_verified_1_to_1';
     report.evidence = {
       site: previewReport.scope.site,
       pageId: previewReport.scope.pageId,
@@ -707,13 +808,16 @@ function main() {
       saveReport: previewReport.evidence.saveReport,
       previewReport: options.previewReport,
       publicPageUrl: options.publicPageUrl,
+      ...(authorizedResidual ? { subpixelResidual: authorizedResidual } : {}),
     };
     report.nextAction = nextAction(
       'complete',
       '',
       [],
       [],
-      'Canonical WordPress/PHP output passed the strict three-viewport benchmark. No action remains.'
+      authorizedResidual
+        ? 'Canonical WordPress/PHP output passed with an explicitly authorized subpixel residual. This verdict is not 1:1.'
+        : 'Canonical WordPress/PHP output passed the strict zero-difference three-viewport benchmark. No action remains.'
     );
     persist(report);
     output(report, options);

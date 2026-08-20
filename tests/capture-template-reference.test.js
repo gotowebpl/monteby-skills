@@ -1206,7 +1206,7 @@ test('rendered layout preserves repeated text at different rendered locations', 
   assert.deepEqual(layout.textBoxes.map((textBox) => textBox.text), [text, text]);
 });
 
-test('viewport text evidence filters and deduplicates before bounded retention with disclosure', () => {
+test('viewport text evidence preserves long text and deduplicates before bounded retention with disclosure', () => {
   const hiddenText = 'Hidden candidate';
   const overlongText = 'x'.repeat(181);
   const visibleElements = Array.from({ length: 260 }, (_, index) => {
@@ -1227,26 +1227,43 @@ test('viewport text evidence filters and deduplicates before bounded retention w
     textElement('span', duplicateText, rect(8, 18, 110, 18), duplicateRangeRects),
     ...visibleElements.slice(1),
   ];
-  const expectedRangeCalls = visibleElements
-    .slice(0, 240)
+  const expectedRangeCalls = Array.from(overlongText).length + visibleElements
+    .slice(0, 239)
     .reduce((sum, element) => sum + Array.from(element.innerText).length, 0);
 
   const { layout, rangeCallCount } = captureWithMockDom(elements, [], {}, { scrollHeight: 7000 });
 
   assert.equal(layout.textBoxes.length, 240);
   assert.equal(rangeCallCount, expectedRangeCalls);
-  assert.equal(layout.textBoxes[0].text, 'Candidate 000');
-  assert.equal(layout.textBoxes[239].text, 'Candidate 239');
+  assert.equal(layout.textBoxes[0].text, overlongText);
+  assert.equal(layout.textBoxes[1].text, 'Candidate 000');
+  assert.equal(layout.textBoxes[239].text, 'Candidate 238');
   assert.deepEqual(layout.evidenceCompleteness.categories.textBoxes, {
-    total: 260,
+    total: 261,
     retained: 240,
-    truncated: 20,
+    truncated: 21,
     limit: 240,
   });
   assert.equal(layout.evidenceCompleteness.status, 'bounded');
   assert.equal(layout.evidenceCompleteness.complete, false);
   assert.equal(layout.evidenceCompleteness.essentialGeometryTruncated, true);
   assert.ok(layout.evidenceCompleteness.reasons.includes('textBoxes-truncated'));
+});
+
+test('content ledger capture retains a paragraph longer than 180 characters', () => {
+  const paragraph = `Zażółć gęślą jaźń ${'pełna treść '.repeat(30)}`.trim();
+  const element = textElement(
+    'p',
+    paragraph,
+    rect(8, 18, 300, 120),
+    Array.from(paragraph, (_, index) => rect(10 + (index % 40) * 7, 20 + Math.floor(index / 40) * 16, 7, 14))
+  );
+
+  const { layout } = captureWithMockDom([element]);
+
+  assert.equal(layout.contentTextEntries.length, 1);
+  assert.equal(layout.contentTextEntries[0].text, paragraph);
+  assert.equal(typeof layout.contentTextEntries[0].structureKey, 'string');
 });
 
 test('rendered layout excludes horizontally offscreen text while retaining below-fold evidence', () => {

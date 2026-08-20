@@ -1,5 +1,9 @@
 # Monteby Skills
 
+Current package release: `0.2.0`. Site Authoring 0.2.0 requires Monteby
+Builder 1.4.0 for canonical writes and uses named feature gates from the live
+contract; Query controls remain available from Builder 1.3.9.
+
 Reusable Agent Skills for working with the Monteby ecosystem.
 
 This repository contains two skills:

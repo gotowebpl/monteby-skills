@@ -5,6 +5,13 @@ listę opartą na `QueryLoop`. Nie jest snapshotem produktu. Nazwy komponentów,
 właściwości, enumy, limity i zasoby opisane niżej muszą istnieć w aktualnej
 odpowiedzi `GET /wp-json/monteby/v1/contract`.
 
+Query controls są capability Buildera od `productVersion` 1.3.9. Odczytaj gate
+`queryControls` z manifestu schema 3: wersja poniżej minimum to
+`blocked_plugin_version`; wersja spełniająca minimum bez
+`authoring.relationshipRules.queryControls` to
+`blocked_contract_inconsistency`; dopiero spójny kontrakt, który nie potrafi
+wyrazić wymaganej funkcji listy, jest `blocked_product_gap`.
+
 ## 1. Najpierw odkryj kontrakt grafu
 
 Sprawdź równocześnie:
@@ -19,8 +26,9 @@ Sprawdź równocześnie:
 - `hostBindings`, `controls`, `props`, `defaults` i limity każdej używanej
   właściwości.
 
-Brak wymaganej powierzchni oznacza `blocked_product_gap`. Nie odtwarzaj jej
-klasą, surowym HTML, własnym JavaScriptem, parametrem URL ani child theme.
+Po klasyfikacji wersji i spójności brak wymaganej funkcji oznacza
+`blocked_product_gap`. Nie odtwarzaj jej klasą, surowym HTML, własnym
+JavaScriptem, parametrem URL ani child theme.
 
 ## 2. Zbuduj jeden jednoznaczny graf
 

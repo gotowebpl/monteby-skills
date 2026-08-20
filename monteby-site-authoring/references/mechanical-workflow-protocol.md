@@ -106,7 +106,7 @@ Every artifact is JSON unless its name says otherwise.
 | `layout-draft.json` | `draft-monteby-layout.js` | contract-valid generated node map |
 | `layout.json` | iteration runner | current candidate under repair |
 | `visual-iteration-report.json` | `run-visual-iteration.js` | complete repair queue, exactly one next action, SHA-256 bindings for plan, candidate, both contract files, and both manifests |
-| `layout-before.json` | `wordpress-layout-client.js snapshot` | scoped site/page envelope, node map, presentation, and `postModifiedGmt` |
+| `layout-before.json` | `wordpress-layout-client.js snapshot` | scoped site/document envelope from the layout resource: `id`, `postType`, `viewUrl`, optional `renderContextUrl`, node map, presentation, and `postModifiedGmt` |
 | validation report | `wordpress-layout-client.js validate` | server accepted the exact candidate SHA-256 |
 | save report | `wordpress-layout-client.js save` | scoped site/page, same SHA-256, conflict check, successful save |
 | PHP preview + report | `wordpress-layout-client.js preview` | scoped `PREVIEW_OK`, same save report and SHA-256 |

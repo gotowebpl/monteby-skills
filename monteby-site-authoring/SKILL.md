@@ -78,6 +78,14 @@ reusable across sites belongs in Builder/Core. Return `blocked_product_gap` and 
 `monteby-widget-development`; do not approximate it with classes, raw CSS, or
 theme code.
 
+**Version and contract boundary.** Classify a missing advertised feature before
+authoring: `blocked_plugin_version` when `productVersion` is below the feature's
+`minimumBuilderVersion`; `blocked_contract_inconsistency` when that Builder
+version should expose the feature but the declared capability/schema/component
+is missing; `blocked_product_gap` only when the live contract is internally
+consistent and the requested reusable behavior is genuinely absent. Never use
+one code as a catch-all for the other two.
+
 **Legal copy — `blocked_legal_copy`.** Author a consent checkbox, privacy link,
 or any legal wording only when approved project requirements explicitly include
 it and the user/project approved that exact text and its destination URLs. Do not
@@ -101,6 +109,17 @@ Always fetch `GET /wp-json/monteby/v1/contract` for the target site.
 Never use the compatibility policy, remembered contracts, or bundled snapshots
 as a substitute for the live response — components, controls, host choices, and
 persistence capabilities are authoritative only there.
+Schema 3 also publishes this skill's `skillVersion`, `minimumBuilderVersion`,
+and named feature gates. Compare those gates to the live contract's
+`productVersion`; the contract's existing `version` remains the contract schema
+version and must never be treated as a plugin version.
+
+Before any layout mutation, require
+`authoring.capabilities.providerRenderedWidgetSave: true`. It proves that the
+server, rather than the browser compiler, owns canonical save HTML and can
+persist a live host widget callback. An older Builder is
+`blocked_plugin_version`; a new-enough Builder without the flag is
+`blocked_contract_inconsistency`.
 
 When the live response includes `companyProfile`, treat it as the site's
 authoritative public identity. Prefer matching `dynamicFields.fields` keys that
@@ -214,12 +233,28 @@ never send Custom CSS/JS through this API. Send `seo` only when the same live
 layout resource advertises `layoutPersistence.seo`, its owner is authorable,
 and `references/page-role-and-schema.md` permits the evidence-backed change.
 
-Global header/footer templates are `gotoweb_template` posts resolved **by the
-canonical slugs** `gotoweb-global-header` / `gotoweb-global-footer` (plus the
-`_gotoweb_craft_template_type` meta); a theme-selected template must resolve to
-the same post, or the panel edits a template the site does not render. Compose
+Global header/footer templates are `gotoweb_template` posts. Resolve the active
+document only from the live `globalTemplates.header/footer.activePostId`.
+`canonicalSlug` and `defaultPostId` describe the default candidate;
+`selectionSource: canonical|host-filter` explains why the active post was
+selected. `activeSlug` and `activeStatus` are evidence, not rejection criteria.
+The `_gotoweb_craft_template_type` meta validates the selected post's type; it
+does not activate a template by itself. Never delete, invalidate, or replace a
+theme-selected template merely because its slug is not canonical. Compose
 headers from `SiteBranding`, a host `WPMenu`, and layout nodes — never one
 monolithic `Navbar`.
+
+The versioned layout resource is the sole snapshot identity source. Use its
+`id`, `postType`, `viewUrl`, and `postModifiedGmt`; never assume a document is a
+`page` or call `/wp/v2/pages/{id}` for a `gotoweb_template`. For a global header
+or footer, pass `--render-context-url` with a same-origin public page that
+actually renders it; retain the template's own `viewUrl` as document evidence.
+
+Global Styles are a separate site-wide task. Read
+`references/global-styles-authoring.md` before any such change. Ordinary page or
+template authoring must not alter `globalStyles.customCSS`, page/template/node
+CSS, or any Custom JS. A specifically authorized site-wide Custom CSS update
+uses GET → merge → full save and must reject new `@import` content.
 
 ## Canonical mechanical path
 
@@ -243,6 +278,23 @@ emitted snapshot, validation, versioned save, and PHP preview actions. Only
 `scripts/run-canonical-verification.js`, bound to the successful preview report,
 may upgrade the verdict after comparing the saved canonical WordPress/PHP page
 at all three widths.
+
+Exact zero difference is the only `canonical_verified_1_to_1` result. A stable
+subpixel fixed point may become
+`canonical_verified_with_authorized_residual` only when the local and canonical
+height deltas are identical after 0.01px rounding, each viewport's absolute
+delta sum is at most 1.00px, every single delta is at most 0.50px, and no
+missing/reordered/overflow/media/mechanics/content blocker exists. The canonical
+verifier writes `subpixel-residual.json`; `--subpixel-authorization FILE` must
+name an authorizer, date the decision, and bind the exact residual plus page,
+layout, manifest, and iteration SHA-256 values. This verdict is never 1:1.
+
+When `--preserve-source-text` is active, the independent content ledger is a
+hard gate. It records full normalized atomic text with structure keys, Unicode
+length, SHA-256, and occurrence counts, then compares that multiset with the
+actual node map. `missing`, `truncatedOrChanged`, or
+`duplicateCountMismatch` entries block the run; long paragraphs and inline
+markup are never dropped from the ledger because of a display/evidence limit.
 
 ## Utilities outside the reproduction state machine
 
@@ -315,5 +367,7 @@ only when their primary reference explicitly calls for it.
 
 End every run by naming the mode, the exact verdict, the artifacts produced, the
 report entries worked or carried as `blocked_*`, and any residual exception with
-its authorization record. If the same residual appears on a second site,
-reclassify it as a product gap.
+its authorization record. Keep residual escalation manual: when separately
+reviewed evidence confirms the same residual on a second site, record that fact
+and reclassify it as a product gap. This release does not maintain a shared or
+automatic cross-site residual registry.

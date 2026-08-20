@@ -94,6 +94,44 @@ test('canonical verification refuses DONE without scoped SAVE_OK and PREVIEW_OK 
   assert.equal(fs.existsSync(fixture.spawnLog), false, 'no browser or benchmark action runs');
 });
 
+test('canonical verification requires and then honors exact subpixel authorization', () => {
+  const fixture = createFixture();
+  const iteration = JSON.parse(fs.readFileSync(fixture.files.iteration, 'utf8'));
+  iteration.benchmark = subpixelGeometryReport();
+  fs.writeFileSync(fixture.files.iteration, JSON.stringify(iteration));
+
+  const first = runFixture(fixture, false, false, 'https://site.example.test/page/', false, true);
+  const firstReport = JSON.parse(first.stdout);
+  assert.equal(first.status, 1);
+  assert.equal(firstReport.status, 'CANONICAL_RESIDUAL_AUTHORIZATION_REQUIRED');
+  assert.equal(firstReport.blockers[0].code, 'blocked_subpixel_authorization_required');
+  const residual = JSON.parse(fs.readFileSync(firstReport.files.subpixelResidual, 'utf8'));
+
+  const authorizationFile = path.join(fixture.directory, 'subpixel-authorization.json');
+  fs.writeFileSync(authorizationFile, JSON.stringify({
+    schemaVersion: 1,
+    artifact: 'monteby-subpixel-authorization',
+    authorizedBy: 'Release Owner',
+    authorizedAt: '2026-08-20T12:00:00.000Z',
+    residualSha256: residual.residualSha256,
+    bindings: residual.bindings,
+  }));
+  const second = runFixture(
+    fixture,
+    false,
+    false,
+    'https://site.example.test/page/',
+    false,
+    true,
+    authorizationFile
+  );
+  const secondReport = JSON.parse(second.stdout);
+  assert.equal(second.status, 0, second.stderr || second.stdout);
+  assert.equal(secondReport.status, 'DONE');
+  assert.equal(secondReport.verdict, 'canonical_verified_with_authorized_residual');
+  assert.match(secondReport.nextAction.instruction, /not 1:1/);
+});
+
 test('canonical verification treats screenshot budgets as hard even when structural report is green', () => {
   const fixture = createFixture();
   const result = runFixture(fixture, false, true);
@@ -159,6 +197,21 @@ test('canonical verification revalidates the mechanical plan before DONE', () =>
     true
   );
   assert.equal(fs.existsSync(fixture.spawnLog), false, 'no browser or benchmark action runs');
+});
+
+test('canonical verification blocks an incomplete source-text ledger', () => {
+  const fixture = createFixture();
+  const plan = JSON.parse(fs.readFileSync(fixture.files.plan, 'utf8'));
+  plan.contentLedger.complete = false;
+  plan.contentLedger.missing = [{ text: 'Missing paragraph' }];
+  fs.writeFileSync(fixture.files.plan, JSON.stringify(plan));
+
+  const result = runFixture(fixture, false);
+  const report = JSON.parse(result.stdout);
+  assert.equal(result.status, 1);
+  assert.equal(report.status, 'INPUT_BLOCKED');
+  assert.equal(report.blockers.some((blocker) => blocker.code === 'content_ledger_incomplete'), true);
+  assert.equal(fs.existsSync(fixture.spawnLog), false);
 });
 
 test('canonical verification rejects an input artifact changed after diagnostic_passed', () => {
@@ -272,6 +325,15 @@ function createFixture() {
       omittedText: [],
       omittedGroups: [],
       omittedChildren: [],
+    },
+    contentLedger: {
+      schemaVersion: 1,
+      artifact: 'monteby-content-ledger-comparison',
+      complete: true,
+      matched: [],
+      missing: [],
+      truncatedOrChanged: [],
+      duplicateCountMismatch: [],
     },
   }));
   fs.writeFileSync(files.reference, JSON.stringify({ sourceUrl: 'file:///owned-reference.html' }));
@@ -399,9 +461,11 @@ childProcess.spawnSync = function canonicalHarness(command, args, options) {
   if (script === 'capture-template-reference.js') {
     const outDir = value(args, '--out-dir');
     fs.mkdirSync(outDir, { recursive: true });
+    const subpixel = process.env.MONTEBY_CANONICAL_SUBPIXEL === '1';
+    if (subpixel) fs.writeFileSync(path.join(outDir, 'desktop.png'), 'stable-page-pixels');
     fs.writeFileSync(path.join(outDir, 'reference-manifest.json'), JSON.stringify({
       sourceUrl: value(args, '--url'),
-      screenshots: [],
+      screenshots: subpixel ? [{ label: 'desktop', file: 'desktop.png' }] : [],
       layouts: [],
     }));
     return { status: 0, stdout: 'reference_manifest=ok\\n', stderr: '' };
@@ -409,7 +473,24 @@ childProcess.spawnSync = function canonicalHarness(command, args, options) {
   const failed = process.env.MONTEBY_CANONICAL_FAIL === '1';
   const budgetFailed = process.env.MONTEBY_CANONICAL_BUDGET_FAIL === '1';
   const incompleteZero = process.env.MONTEBY_CANONICAL_INCOMPLETE_ZERO === '1';
-  const report = failed ? {
+  const subpixel = process.env.MONTEBY_CANONICAL_SUBPIXEL === '1';
+  const report = subpixel ? ${JSON.stringify({
+    ok: true,
+    blockers: [],
+    comparison: {
+      ok: false,
+      budgetErrors: [{ code: 'max_percent_exceeded', message: 'Subpixel screenshot residual.' }],
+    },
+    genericGeometry: {
+      ok: true,
+      stats: {
+        viewports: ['desktop', 'tablet', 'mobile'].map((label) => ({
+          label,
+          geometry: { pairs: [{ referenceIndex: 0, candidateIndex: 0, signedHeightDelta: 0.2 }] },
+        })),
+      },
+    },
+  })} : failed ? {
     ok: false,
     blockers: [{
       source: 'generic-geometry',
@@ -490,7 +571,9 @@ function runFixture(
   fail,
   budgetFail = false,
   publicPageUrl = 'https://site.example.test/page/',
-  incompleteZero = false
+  incompleteZero = false,
+  subpixel = false,
+  authorizationFile = ''
 ) {
   return spawnSync(process.execPath, [
     script,
@@ -500,6 +583,7 @@ function runFixture(
     '--out-dir', fixture.outDir,
     '--playwright-package', 'fake',
     '--wait-ms', '0',
+    ...(authorizationFile ? ['--subpixel-authorization', authorizationFile] : []),
     '--json',
   ], {
     cwd: root,
@@ -511,8 +595,24 @@ function runFixture(
       MONTEBY_CANONICAL_FAIL: fail ? '1' : '0',
       MONTEBY_CANONICAL_BUDGET_FAIL: budgetFail ? '1' : '0',
       MONTEBY_CANONICAL_INCOMPLETE_ZERO: incompleteZero ? '1' : '0',
+      MONTEBY_CANONICAL_SUBPIXEL: subpixel ? '1' : '0',
     },
   });
+}
+
+function subpixelGeometryReport() {
+  return {
+    genericGeometry: {
+      stats: {
+        viewports: ['desktop', 'tablet', 'mobile'].map((label) => ({
+          label,
+          geometry: {
+            pairs: [{ referenceIndex: 0, candidateIndex: 0, signedHeightDelta: 0.2 }],
+          },
+        })),
+      },
+    },
+  };
 }
 
 function readSpawns(file) {
