@@ -5,6 +5,7 @@ const test = require('node:test');
 const {
   buildContentLedger,
   compareContentLedgers,
+  mergeDirectTextEntries,
   nodeMapContentEntries,
   normalizeContentText,
 } = require('../monteby-site-authoring/scripts/content-ledger');
@@ -59,6 +60,51 @@ test('node-map ledger keeps duplicate rendered repeater occurrences in one node'
     },
   });
   assert.equal(entries.filter((entry) => entry.text === 'Ta sama etykieta').length, 2);
+});
+
+test('direct text joins the independent ledger without double-counting full element text', () => {
+  const fullEntries = [
+    { structureKey: '0.0', text: 'Pełna treść elementu' },
+    { structureKey: '0.1.0', text: 'Cena 650 000 zł miesięcznie' },
+  ];
+  const directEntries = [
+    { structureKey: '0.0', text: 'Pełna' },
+    { structureKey: '0.1', text: 'od' },
+    { structureKey: '0.1', text: 'od' },
+  ];
+  const merged = mergeDirectTextEntries(fullEntries, directEntries);
+  const expected = buildContentLedger(merged);
+
+  assert.deepEqual(merged.map((entry) => entry.text), ['Pełna treść elementu', 'Cena 650 000 zł miesięcznie', 'od']);
+  assert.equal(expected.totalOccurrences, 3);
+
+  const exact = buildContentLedger(nodeMapContentEntries({
+    prefix: { props: { text: 'od' } },
+    price: { props: { text: 'Cena 650 000 zł miesięcznie' } },
+    full: { props: { text: 'Pełna treść elementu' } },
+  }));
+  assert.equal(compareContentLedgers(expected, exact).complete, true);
+
+  const missing = buildContentLedger(nodeMapContentEntries({
+    price: { props: { text: 'Cena 650 000 zł miesięcznie' } },
+    full: { props: { text: 'Pełna treść elementu' } },
+  }));
+  assert.equal(compareContentLedgers(expected, missing).missing[0].text, 'od');
+
+  const truncated = buildContentLedger(nodeMapContentEntries({
+    prefix: { props: { text: 'od' } },
+    price: { props: { text: 'Cena 650 000 zł' } },
+    full: { props: { text: 'Pełna treść elementu' } },
+  }));
+  assert.equal(compareContentLedgers(expected, truncated).truncatedOrChanged[0].text, 'Cena 650 000 zł miesięcznie');
+
+  const duplicate = buildContentLedger(nodeMapContentEntries({
+    first: { props: { text: 'od' } },
+    second: { props: { text: 'od' } },
+    price: { props: { text: 'Cena 650 000 zł miesięcznie' } },
+    full: { props: { text: 'Pełna treść elementu' } },
+  }));
+  assert.equal(compareContentLedgers(expected, duplicate).duplicateCountMismatch[0].text, 'od');
 });
 
 test('ledger comparison distinguishes missing, changed, and duplicate-count mismatches', () => {

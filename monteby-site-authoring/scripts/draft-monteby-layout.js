@@ -15,6 +15,7 @@ const { googleFontToken } = require('./render-monteby-preview');
 const {
   buildContentLedger,
   compareContentLedgers,
+  mergeDirectTextEntries,
   nodeMapContentEntries,
 } = require('./content-ledger');
 
@@ -597,7 +598,11 @@ function referenceGeometryFromManifest(referenceManifest, manifestPath) {
 }
 
 function summarizeReferenceLayout(layout) {
-  const textBoxes = Array.isArray(layout?.textBoxes) ? layout.textBoxes : [];
+  const textBoxes = mergeDirectTextEntries(
+    Array.isArray(layout?.textBoxes) ? layout.textBoxes : [],
+    (Array.isArray(layout?.directTextEntries) ? layout.directTextEntries : [])
+      .filter((entry) => entry?.geometryComplete !== false)
+  );
   const mediaBoxes = Array.isArray(layout?.meaningfulMediaBoxes)
     ? layout.meaningfulMediaBoxes
     : Array.isArray(layout?.mediaBoxes) ? layout.mediaBoxes : [];
@@ -1155,7 +1160,7 @@ function summarizeReferenceBandContent(band, index, viewportWidth, textBoxes, me
       `[generic_reference_media_limit_exceeded] Captured reference band ${index + 1}${sourceKey ? ` (${sourceKey})` : ''} contains ${bandMediaBoxes.length} meaningful media surfaces; the bounded generic path supports at most ${MAX_GENERIC_REFERENCE_MEDIA_PER_BAND} per band.`
     );
   }
-  const semanticForm = summarizeReferenceForm(interactions, layoutGroups, bandTextBoxes, band);
+  const semanticForms = summarizeReferenceForms(interactions, layoutGroups, bandTextBoxes, band);
   const semanticTabs = summarizeReferenceTabs(
     interactions,
     layoutGroups,
@@ -1163,9 +1168,15 @@ function summarizeReferenceBandContent(band, index, viewportWidth, textBoxes, me
     bandMediaBoxes,
     band
   );
+  const semanticCandidates = [...semanticForms, semanticTabs].filter(Boolean);
+  const duplicateSemanticHost = semanticCandidates.find((candidate, candidateIndex) => (
+    semanticCandidates.findIndex((other) => other.hostGroupKey === candidate.hostGroupKey) !== candidateIndex
+  ));
+  if (duplicateSemanticHost) {
+    throw new Error(`Generic measured reference contract gaps:\n- [generic_semantic_host_ambiguous] Multiple semantic widgets resolve to layout group ${duplicateSemanticHost.hostGroupKey}; exact DOM ownership requires distinct host groups.`);
+  }
   const semanticGroups = new Map(
-    [semanticForm, semanticTabs]
-      .filter(Boolean)
+    semanticCandidates
       .map((semanticGroup) => [semanticGroup.hostGroupKey, semanticGroup])
   );
   const semanticHostKeys = new Set(semanticGroups.keys());
@@ -1519,7 +1530,74 @@ function safeReferenceMediaPositionAxis(value, axis) {
   return Number.isFinite(numeric) && Math.abs(numeric) <= limit ? `${numeric}${match[2]}` : '';
 }
 
-function summarizeReferenceForm(interactions, layoutGroups, textBoxes, band) {
+function groupReferenceFormFields(fields, formKey) {
+  const ordered = (Array.isArray(fields) ? fields : []).slice().sort((left, right) => (
+    left.rect.top - right.rect.top || left.rect.left - right.rect.left
+  ));
+  const checkboxCounts = new Map();
+  const radioGroups = new Map();
+  const grouped = [];
+
+  for (const field of ordered) {
+    const type = String(field?.type || 'text').toLowerCase();
+    const name = String(field?.name || '').trim();
+    if (type === 'checkbox') {
+      const key = name || `unnamed:${String(field?.structureKey || '')}`;
+      checkboxCounts.set(key, (checkboxCounts.get(key) || 0) + 1);
+      grouped.push(field);
+      continue;
+    }
+    if (type !== 'radio') {
+      grouped.push(field);
+      continue;
+    }
+    if (!name) {
+      throw new Error(`Generic measured reference contract gaps:\n- [generic_semantic_radio_name_missing] Form ${formKey} contains a radio control without a stable name; radio grouping cannot be inferred geometrically.`);
+    }
+    const radioGroup = radioGroups.get(name) || [];
+    radioGroup.push(field);
+    radioGroups.set(name, radioGroup);
+  }
+
+  const repeatedCheckbox = [...checkboxCounts.entries()].find(([, count]) => count > 1);
+  if (repeatedCheckbox) {
+    throw new Error(`Generic measured reference contract gaps:\n- [generic_semantic_checkbox_group_unsupported] Form ${formKey} contains ${repeatedCheckbox[1]} checkboxes named ${repeatedCheckbox[0]}; only one-checkbox semantics are portable.`);
+  }
+
+  for (const [name, radios] of radioGroups.entries()) {
+    const rects = radios.map((radio) => normalizeReferenceRect(radio?.rect)).filter(Boolean);
+    if (rects.length !== radios.length) {
+      throw new Error(`Generic measured reference contract gaps:\n- [generic_semantic_radio_geometry_missing] Radio group ${name} in form ${formKey} has incomplete geometry.`);
+    }
+    const left = Math.min(...rects.map((rect) => rect.left));
+    const right = Math.max(...rects.map((rect) => rect.right));
+    const top = Math.min(...rects.map((rect) => rect.top));
+    const bottom = Math.max(...rects.map((rect) => rect.bottom));
+    const first = radios[0];
+    const options = radios.map((radio) => ({
+      label: String(radio?.label || '').trim(),
+      value: String(radio?.value || '').trim(),
+    }));
+    if (options.some((option) => !option.label || !option.value)
+      || new Set(options.map((option) => option.value)).size !== options.length) {
+      throw new Error(`Generic measured reference contract gaps:\n- [generic_semantic_radio_options_invalid] Radio group ${name} in form ${formKey} requires unique non-empty captured labels and values.`);
+    }
+    grouped.push({
+      ...first,
+      type: 'radio',
+      name,
+      label: radios.map((radio) => String(radio?.groupLabel || '').trim()).find(Boolean) || '',
+      fieldId: '',
+      required: radios.some((radio) => radio?.required === true),
+      rect: { left, right, top, bottom, x: left, y: top, width: right - left, height: bottom - top },
+      options,
+    });
+  }
+
+  return grouped.sort((left, right) => left.rect.top - right.rect.top || left.rect.left - right.rect.left);
+}
+
+function summarizeReferenceForms(interactions, layoutGroups, textBoxes, band) {
   const controls = (Array.isArray(interactions) ? interactions : [])
     .map((interaction) => ({ ...interaction, rect: normalizeReferenceRect(interaction?.rect) }))
     .filter((interaction) => interaction.rect && referenceBoxBelongsToBand(interaction, band.rect));
@@ -1528,9 +1606,59 @@ function summarizeReferenceForm(interactions, layoutGroups, textBoxes, band) {
     || (String(interaction.tag || '').toLowerCase() === 'input'
       && !['button', 'hidden', 'image', 'reset', 'submit'].includes(String(interaction.type || 'text').toLowerCase()))
   ));
-  const fields = potentialFields;
   const submits = controls.filter((interaction) => String(interaction.type || '').toLowerCase() === 'submit');
-  if (fields.length < 2 || submits.length === 0) {
+  if (potentialFields.length < 2 || submits.length === 0) {
+    return [];
+  }
+
+  const unownedControls = potentialFields.concat(submits)
+    .filter((control) => !/^\d+(?:\.\d+)*$/u.test(String(control?.formKey || '')));
+  if (unownedControls.length > 0) {
+    throw new Error('Generic measured reference contract gaps:\n- [generic_semantic_form_ownership_missing] Every captured form field and submit control must expose one exact DOM formKey; geometry alone never proves form ownership.');
+  }
+
+  const controlsByForm = new Map();
+  for (const field of potentialFields) {
+    const formKey = String(field.formKey);
+    const group = controlsByForm.get(formKey) || { fields: [], submits: [] };
+    group.fields.push(field);
+    controlsByForm.set(formKey, group);
+  }
+  for (const submit of submits) {
+    const formKey = String(submit.formKey);
+    const group = controlsByForm.get(formKey) || { fields: [], submits: [] };
+    group.submits.push(submit);
+    controlsByForm.set(formKey, group);
+  }
+
+  return [...controlsByForm.entries()].flatMap(([formKey, group]) => {
+    if (group.fields.length < 2 || group.submits.length === 0) {
+      return [];
+    }
+    if (group.submits.length !== 1) {
+      throw new Error(`Generic measured reference contract gaps:\n- [generic_semantic_form_submit_unsupported] Form ${formKey} exposes ${group.submits.length} submit controls; FormBlock requires exactly one deterministic submit.`);
+    }
+    const formIds = unique(group.fields.concat(group.submits)
+      .map((control) => String(control?.formId || '').trim())
+      .filter(Boolean));
+    if (formIds.length > 1) {
+      throw new Error(`Generic measured reference contract gaps:\n- [generic_semantic_form_ownership_mismatch] DOM form ${formKey} carries conflicting stable form IDs: ${formIds.join(', ')}.`);
+    }
+    const summary = summarizeReferenceForm(
+      group.fields,
+      group.submits[0],
+      layoutGroups,
+      textBoxes,
+      band,
+      formKey
+    );
+    return summary ? [summary] : [];
+  });
+}
+
+function summarizeReferenceForm(fields, submit, layoutGroups, textBoxes, band, formKey) {
+  const groupedFields = groupReferenceFormFields(fields, formKey);
+  if (groupedFields.length < 2) {
     return null;
   }
 
@@ -1545,13 +1673,13 @@ function summarizeReferenceForm(interactions, layoutGroups, textBoxes, band) {
       && group.flowParticipation !== 'overlay'
       && referenceRectContains(band.rect, group.rect)
     ));
-  const candidates = submits.flatMap((submit) => groups.map((group) => {
+  const candidates = groups.map((group) => {
     if (!referenceRectContains(group.rect, submit.rect)) {
       return null;
     }
-    const containedFields = fields.filter((field) => referenceRectContains(group.rect, field.rect));
+    const containedFields = groupedFields.filter((field) => referenceRectContains(group.rect, field.rect));
     return containedFields.length >= 2 ? { group, submit, fields: containedFields } : null;
-  })).filter(Boolean).sort((left, right) => (
+  }).filter(Boolean).sort((left, right) => (
     right.fields.length - left.fields.length
     || referenceBoxArea(left.group) - referenceBoxArea(right.group)
   ));
@@ -1620,6 +1748,7 @@ function summarizeReferenceForm(interactions, layoutGroups, textBoxes, band) {
       : '';
     return {
       type,
+      ...(String(field.fieldId || '').trim() ? { fieldId: String(field.fieldId).trim() } : {}),
       ...(String(field.name || '').trim() ? { name: String(field.name).trim() } : {}),
       ...(String(field.label || '').trim() ? { label: String(field.label).trim() } : {}),
       ...(String(field.placeholder || '').trim() ? { placeholder: String(field.placeholder).trim() } : {}),
@@ -1634,7 +1763,7 @@ function summarizeReferenceForm(interactions, layoutGroups, textBoxes, band) {
       ...(Object.prototype.hasOwnProperty.call(field, 'defaultChecked') ? { defaultChecked: field.defaultChecked === true } : {}),
       required: field.required === true,
       ...(type === 'textarea' ? { rows: Math.max(2, Math.min(12, Math.round(field.rect.height / 30))) } : {}),
-      ...(type === 'select' && options ? { options } : {}),
+      ...(['select', 'radio'].includes(type) && options ? { options } : {}),
       ...(formColumns === 2 ? { columnSpan: spansRow || type === 'checkbox' ? 2 : 1 } : {}),
     };
   });
@@ -2456,7 +2585,8 @@ function collectControlMetadata(value) {
 
         const existingRules = repeaterItemRules.get(repeaterProp) || new Map();
         for (const [nestedProp, rule] of nestedMetadata.propRules.entries()) {
-          existingRules.set(nestedProp, rule);
+          const options = nestedMetadata.propOptions.get(nestedProp);
+          existingRules.set(nestedProp, options instanceof Set ? { ...rule, options } : rule);
         }
         repeaterItemRules.set(repeaterProp, existingRules);
       }
@@ -2475,6 +2605,9 @@ function collectControlMetadata(value) {
       }
       if (Array.isArray(item.units)) {
         rule.units = item.units.filter((unit) => typeof unit === 'string');
+      }
+      if (typeof item.pattern === 'string' && item.pattern !== '') {
+        rule.pattern = item.pattern;
       }
 
       for (const prop of itemProps) {
@@ -2892,7 +3025,6 @@ function buildMechanicalLayoutPlan(context, genericPlan) {
   const parityByBand = new Map();
   const bands = genericPlan.bands.map((band) => {
     const generatedSectionId = String(band.generatedSectionId || rootSectionIds[band.index] || '');
-    const generatedSectionProps = layout?.[generatedSectionId]?.props || {};
     const surfaceEvidence = genericMeasuredSurfaceParity(context, band);
     parityByBand.set(band.index, surfaceEvidence);
     return {
@@ -2904,7 +3036,7 @@ function buildMechanicalLayoutPlan(context, genericPlan) {
       surfaceParity: surfaceEvidence.parity,
       viewports: Object.fromEntries(viewportLabels.map((label) => ([
         label,
-        mechanicalBandViewportMeasurement(band.viewportMeasurements?.[label], generatedSectionProps, label),
+        mechanicalBandViewportMeasurement(band.viewportMeasurements?.[label]),
       ]))),
     };
   });
@@ -2974,7 +3106,7 @@ function buildMechanicalLayoutPlan(context, genericPlan) {
   };
 }
 
-function mechanicalBandViewportMeasurement(measurement, generatedSectionProps = {}, viewport = '') {
+function mechanicalBandViewportMeasurement(measurement) {
   const rect = normalizeReferenceRect(measurement?.rect);
   const counts = genericMeasurementEvidenceCounts(measurement);
   const contentBounds = normalizeReferenceRect(measurement?.contentBounds);
@@ -2985,22 +3117,12 @@ function mechanicalBandViewportMeasurement(measurement, generatedSectionProps = 
       ? Math.max(0, Math.round((contentBounds.left - rect.left) * 100) / 100)
       : null;
   const measuredColumns = finitePlanNumber(measurement?.columns);
-  const emittedPropNames = {
-    desktop: ['minHeight', 'innerPaddingX'],
-    tablet: ['minHeightTablet', 'innerPaddingXTablet'],
-    mobile: ['minHeightMobile', 'innerPaddingXMobile'],
-  }[viewport] || [];
-  const repairProps = Object.fromEntries(emittedPropNames
-    .filter((prop) => typeof generatedSectionProps?.[prop] !== 'undefined')
-    .map((prop) => [prop, generatedSectionProps[prop]]));
-
   return {
     rect: rect ? { ...rect } : null,
     top: rect?.top ?? null,
     height: rect?.height ?? null,
     width: rect?.width ?? null,
     contentInset,
-    repairProps,
     columns: measuredColumns === null ? null : measuredColumns,
     display: measurement ? String(measurement.display || '') : '',
     textCount: counts.textCount,
@@ -3967,7 +4089,7 @@ function genericMeasuredNavigationProps(context, navigation, plan, containerName
       logoText,
       menuItems: menuBoxes.map((box, index) => ({
         label: genericMeasuredAuthoringText(box, plan, 0, index + 1),
-        href: String(box?.href || '').trim(),
+        href: plan.preserveSourceText ? String(box?.href || '').trim() : '#',
       })),
       mobileMenuBehavior: menuBoxes.length < 2
         ? 'default'
@@ -3978,7 +4100,7 @@ function genericMeasuredNavigationProps(context, navigation, plan, containerName
       menuButtonLabel: 'Menu',
       menuButtonIcon: 'menu',
       ctaLabel,
-      ctaHref: String(ctaBox?.href || '').trim(),
+      ctaHref: plan.preserveSourceText ? String(ctaBox?.href || '').trim() : '#',
       ctaContentMode: navbarAuthoringProps.has('ctaContentMode') ? desktopCtaContentMode : undefined,
       ctaContentModeTablet: authoredTabletCtaContentMode ? tabletCtaContentMode : undefined,
       ctaContentModeMobile: plan.hasMobile
@@ -5320,6 +5442,88 @@ function addGenericMeasuredBandItems(context, parentId, band, plan, fallbackText
   return created;
 }
 
+function neutralFormField(field, index) {
+  const type = String(field?.type || 'text').trim().toLowerCase();
+  const labels = {
+    email: 'Email field',
+    number: 'Number field',
+    radio: 'Choice field',
+    select: 'Select field',
+    tel: 'Phone field',
+    text: 'Text field',
+    textarea: 'Message field',
+  };
+  const optionCount = Math.max(0, String(field?.options || '').split('\n').filter(Boolean).length);
+  const options = ['radio', 'select'].includes(type) && optionCount > 0
+    ? Array.from({ length: optionCount }, (_item, optionIndex) => (
+      `Option ${optionIndex + 1}|option-${optionIndex + 1}`
+    )).join('\n')
+    : '';
+
+  return {
+    type,
+    name: `field_${index + 1}`,
+    fieldId: `field-${index + 1}`,
+    label: labels[type] || 'Field',
+    required: field?.required === true,
+    ...(String(field?.min || '').trim() ? { min: field.min } : {}),
+    ...(String(field?.max || '').trim() ? { max: field.max } : {}),
+    ...(String(field?.step || '').trim() ? { step: field.step } : {}),
+    ...(String(field?.autocomplete || '').trim() ? { autocomplete: field.autocomplete } : {}),
+    ...(String(field?.inputMode || '').trim() ? { inputMode: field.inputMode } : {}),
+    ...(typeof field?.rows !== 'undefined' ? { rows: field.rows } : {}),
+    ...(typeof field?.columnSpan !== 'undefined' ? { columnSpan: field.columnSpan } : {}),
+    ...(options ? { options } : {}),
+  };
+}
+
+function normalizeCapturedFormFieldValue(rule, prop, value, path) {
+  if (['name', 'fieldId'].includes(prop) && !/^[A-Za-z][A-Za-z0-9_-]{0,63}$/u.test(String(value))) {
+    throw new Error(`Generic measured reference contract gaps:\n- [generic_semantic_form_field_value_invalid] ${path}.${prop} is not a safe stable identifier.`);
+  }
+  if (!rule || typeof rule !== 'object') {
+    return value;
+  }
+  if (rule.options instanceof Set && isScalar(value)) {
+    const comparable = normalizeComparableValue(value);
+    if (!rule.options.has(comparable)) {
+      throw new Error(`Generic measured reference contract gaps:\n- [generic_semantic_form_field_value_invalid] ${path}.${prop} is not allowed by the live nested control options.`);
+    }
+    value = comparable;
+  }
+  if (rule.type === 'number') {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) {
+      throw new Error(`Generic measured reference contract gaps:\n- [generic_semantic_form_field_value_invalid] ${path}.${prop} must be a finite number.`);
+    }
+    const step = Number(rule.step);
+    const base = Number.isFinite(Number(rule.min)) ? Number(rule.min) : 0;
+    const normalized = Number.isFinite(step) && step > 0
+      ? Number((base + Math.round((numeric - base) / step) * step).toFixed(8))
+      : numeric;
+    if ((Number.isFinite(Number(rule.min)) && normalized < Number(rule.min))
+      || (Number.isFinite(Number(rule.max)) && normalized > Number(rule.max))) {
+      throw new Error(`Generic measured reference contract gaps:\n- [generic_semantic_form_field_value_invalid] ${path}.${prop} is outside the live nested control range.`);
+    }
+    return normalized;
+  }
+  if (rule.type === 'toggle' && typeof value !== 'boolean') {
+    throw new Error(`Generic measured reference contract gaps:\n- [generic_semantic_form_field_value_invalid] ${path}.${prop} must be boolean.`);
+  }
+  if (typeof rule.pattern === 'string' && rule.pattern !== '') {
+    let pattern;
+    try {
+      pattern = new RegExp(rule.pattern, 'u');
+    } catch {
+      throw new Error(`Generic measured reference contract gaps:\n- [generic_semantic_form_field_contract_invalid] ${path}.${prop} publishes an invalid pattern.`);
+    }
+    if (!pattern.test(String(value))) {
+      throw new Error(`Generic measured reference contract gaps:\n- [generic_semantic_form_field_value_invalid] ${path}.${prop} does not match the live nested control pattern.`);
+    }
+  }
+  return value;
+}
+
 function addGenericMeasuredGroups(context, parentId, desktopParent, tabletParent, mobileParent, plan, fallbackTextColor, containerName, contentIndex, orderEntries = null) {
   const desktopGroups = Array.isArray(desktopParent?.groups)
     ? desktopParent.groups.filter((group) => group?.flowParticipation !== 'overlay')
@@ -5585,6 +5789,9 @@ function addGenericMeasuredGroups(context, parentId, desktopParent, tabletParent
       if (!formAuthoringProps.has('fields') || !(fieldAuthoringProps instanceof Set) || fieldAuthoringProps.size === 0) {
         throw new Error('Generic measured reference contract gaps:\n- [generic_semantic_form_field_contract_missing] FormBlock must expose fields and its live repeater item keys before a measured form can be authored.');
       }
+      if (!plan.preserveSourceText && capturedFields.some((field) => String(field?.type || '') === 'checkbox')) {
+        throw new Error('blocked_legal_copy: a captured checkbox requires approved owned copy and destination evidence; external reference wording is never copied or replaced with invented consent text.');
+      }
       const unsupportedFieldTypes = unique(capturedFields
         .map((field) => String(field?.type || 'text'))
         .filter((type) => !supportedFieldTypes.has(type)));
@@ -5592,32 +5799,68 @@ function addGenericMeasuredGroups(context, parentId, desktopParent, tabletParent
         throw new Error(`Generic measured reference contract gaps:\n- [generic_semantic_form_field_type_unsupported] FormBlock does not expose measured field type(s): ${unsupportedFieldTypes.join(', ')}.`);
       }
       const capturedFormFieldKeys = new Set([
-        'type', 'name', 'label', 'placeholder', 'defaultValue', 'min', 'max', 'step',
+        'type', 'fieldId', 'name', 'label', 'placeholder', 'defaultValue', 'min', 'max', 'step',
         'autocomplete', 'inputMode', 'required', 'rows', 'options', 'columnSpan',
       ]);
-      const fields = capturedFields.map((field) => Object.fromEntries(
-        Object.entries(field).flatMap(([key, value]) => {
+      for (const requiredFieldProp of ['type', 'name', 'label']) {
+        if (!fieldAuthoringProps.has(requiredFieldProp)) {
+          throw new Error(`Generic measured reference contract gaps:\n- [generic_semantic_form_field_contract_missing] FormBlock.fields does not expose required nested prop ${requiredFieldProp}.`);
+        }
+      }
+      const fields = capturedFields.map((capturedField, fieldIndex) => {
+        const field = plan.preserveSourceText ? capturedField : neutralFormField(capturedField, fieldIndex);
+        for (const requiredFieldProp of ['type', 'name', 'label']) {
+          if (!String(field?.[requiredFieldProp] || '').trim()) {
+            throw new Error(`Generic measured reference contract gaps:\n- [generic_semantic_form_field_value_invalid] ${formComponent.name}.fields[${fieldIndex}].${requiredFieldProp} is required for deterministic authoring.`);
+          }
+        }
+        if (['radio', 'select'].includes(String(field.type)) && !String(field.options || '').trim()) {
+          throw new Error(`Generic measured reference contract gaps:\n- [generic_semantic_form_field_value_invalid] ${formComponent.name}.fields[${fieldIndex}].options requires at least one captured or neutral option.`);
+        }
+        const entries = Object.entries(field).flatMap(([key, value]) => {
           if (
             !capturedFormFieldKeys.has(key)
-            || !fieldAuthoringProps.has(key)
             || typeof value === 'undefined'
             || value === null
             || value === ''
           ) {
             return [];
           }
-          const rule = fieldAuthoringRules instanceof Map ? fieldAuthoringRules.get(key) : null;
-          if (rule?.type === 'number') {
-            const numericValue = Number(value);
-            return Number.isFinite(numericValue) ? [[key, numericValue]] : [];
+          if (!fieldAuthoringProps.has(key)) {
+            if (plan.preserveSourceText) {
+              throw new Error(`Generic measured reference contract gaps:\n- [generic_semantic_form_field_contract_missing] FormBlock.fields does not expose captured nested prop ${key}.`);
+            }
+            return [];
           }
-          return [[key, value]];
-        })
-      ));
-      const submitLabel = String(desktop.submitBox?.text || '').trim();
+          const rule = fieldAuthoringRules instanceof Map ? fieldAuthoringRules.get(key) : null;
+          return [[key, normalizeCapturedFormFieldValue(
+            rule,
+            key,
+            value,
+            `${formComponent.name}.fields[${fieldIndex}]`
+          )]];
+        });
+        return Object.fromEntries(entries);
+      });
+      const submitLabel = genericMeasuredAuthoringText(
+        desktop.submitBox || { tag: 'button', text: 'Send message' },
+        plan,
+        contentIndex,
+        index
+      );
+      const rawFormId = plan.preserveSourceText
+        ? String(desktop.props?.formId || '').trim()
+        : `form-${contentIndex + 1}-${index + 1}`;
+      if (!/^[A-Za-z][A-Za-z0-9_-]{0,63}$/u.test(rawFormId)) {
+        throw new Error('Generic measured reference contract gaps:\n- [generic_semantic_form_id_invalid] Captured FormBlock formId is not a safe stable identifier.');
+      }
+      const measuredFormProps = { ...(desktop.props || {}) };
+      delete measuredFormProps.fields;
+      delete measuredFormProps.formId;
       const formNode = createLeafNode(context, formComponent.name, contentParentId, {
-        ...(desktop.props || {}),
+        ...measuredFormProps,
         fields,
+        ...(formAuthoringProps.has('formId') ? { formId: rawFormId } : {}),
         ...(submitLabel ? { submitLabel } : {}),
       });
       registerGenericMeasuredDescendantSurfaces(
@@ -6473,7 +6716,7 @@ function addGenericMeasuredTextNode(context, parentId, desktop, tablet, mobile, 
   };
 
   if (tag === 'a' || tag === 'button') {
-    return addButton(context, parentId, text, String(desktop?.href || '').trim(), {
+    return addButton(context, parentId, text, plan.preserveSourceText ? String(desktop?.href || '').trim() : '#', {
       ...props,
       paddingTop: '0px',
       paddingRight: '0px',

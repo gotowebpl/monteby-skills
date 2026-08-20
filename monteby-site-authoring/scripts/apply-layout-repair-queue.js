@@ -595,33 +595,7 @@ function geometryChange(nodeMap, plan, allowedProps, item) {
   }
 
   const updates = {};
-  const hasRepairProps = Object.prototype.hasOwnProperty.call(target, 'repairProps');
-  const repairProps = isObject(target.repairProps) ? target.repairProps : {};
-  if (Object.keys(repairProps).length > 0) {
-    const expectedProps = new Set([propNames.height, propNames.inset]);
-    for (const [prop, rawValue] of Object.entries(repairProps)) {
-      if (!expectedProps.has(prop) || !allowedProps.has(prop)) {
-        throw new RepairError(
-          'SECTION_GEOMETRY_PROP_UNSUPPORTED',
-          `The live Section contract does not author emitted repair prop ${prop}.`,
-          { viewport, sectionId, prop }
-        );
-      }
-      const value = typeof rawValue === 'number'
-        ? cssPixels(rawValue, `${sectionId}.${viewport}.repairProps.${prop}`)
-        : String(rawValue || '').trim();
-      const match = /^(?:0|(?:\d+(?:\.\d+)?|\.\d+)px)$/u.exec(value);
-      if (!match || Number.parseFloat(value) < 0) {
-        throw new RepairError(
-          'GEOMETRY_TARGET_INVALID',
-          `${sectionId}.${viewport}.repairProps.${prop} must be a finite non-negative pixel value.`,
-          { viewport, sectionId, prop, value: rawValue }
-        );
-      }
-      updates[prop] = value;
-    }
-  }
-  if (!hasRepairProps && target.height !== null && target.height !== undefined) {
+  if (target.height !== null && target.height !== undefined) {
     if (!allowedProps.has(propNames.height)) {
       throw new RepairError(
         'SECTION_GEOMETRY_PROP_UNSUPPORTED',
@@ -631,7 +605,7 @@ function geometryChange(nodeMap, plan, allowedProps, item) {
     }
     updates[propNames.height] = cssPixels(target.height, `${sectionId}.${viewport}.height`);
   }
-  if (!hasRepairProps && target.contentInset !== null && target.contentInset !== undefined) {
+  if (target.contentInset !== null && target.contentInset !== undefined) {
     if (!allowedProps.has(propNames.inset)) {
       throw new RepairError(
         'SECTION_GEOMETRY_PROP_UNSUPPORTED',

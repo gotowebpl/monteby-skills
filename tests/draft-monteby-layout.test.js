@@ -3304,12 +3304,12 @@ test('generic measured drafting recognizes a multi-field form as one contract-ba
       paddingLeft: '16px',
     };
     const interactions = [
-      { order: 0, tag: 'input', role: 'spinbutton', type: 'number', formId: 'contact_form', name: 'full_name', label: 'Full name', placeholder: 'Jane Doe', min: '0', required: true, rect: measuredRect(firstFieldLeft, firstRowTop, fieldWidth, 50), structureKey: '0.0.0.0.0', parentGroupKey: '0.0.0.0', ...controlStyle },
-      { order: 1, tag: 'input', role: 'textbox', type: 'email', formId: 'contact_form', name: 'email', label: 'Email address', autocomplete: 'email', required: true, rect: measuredRect(secondFieldLeft, twoColumns ? firstRowTop : firstRowTop + 82, fieldWidth, 50), structureKey: '0.0.0.1.0', parentGroupKey: '0.0.0.1', ...controlStyle },
-      { order: 2, tag: 'select', role: 'combobox', formId: 'contact_form', name: 'district', label: 'District', value: 'north', defaultValue: 'north', options: [{ label: 'North', value: 'north' }, { label: 'South', value: 'south' }], required: false, rect: measuredRect(firstFieldLeft, secondRowTop, fullWidth, 50), structureKey: '0.0.1.0', parentGroupKey: '0.0', ...controlStyle },
-      { order: 3, tag: 'textarea', role: 'textbox', formId: 'contact_form', name: 'message', label: 'Message', required: true, rect: measuredRect(firstFieldLeft, messageTop, fullWidth, 120), structureKey: '0.0.2.0', parentGroupKey: '0.0', ...controlStyle },
-      { order: 4, tag: 'input', role: 'checkbox', type: 'checkbox', formId: 'contact_form', name: 'updates', label: 'Send me updates', checked: false, defaultChecked: false, required: true, rect: measuredRect(firstFieldLeft, checkboxTop, 16, 16), structureKey: '0.0.3.0', parentGroupKey: '0.0', ...controlStyle },
-      { order: 5, tag: 'button', role: 'button', type: 'submit', formId: 'contact_form', required: false, rect: measuredRect(firstFieldLeft, submitTop, 220, 48), structureKey: '0.0.4', parentGroupKey: '0.0', backgroundColor: 'rgb(37, 99, 235)', color: 'rgb(255, 255, 255)', fontSize: '14px', fontWeight: '600', borderTopColor: 'rgb(37, 99, 235)', borderTopWidth: '0px', borderRadius: '6px', paddingTop: '12px', paddingLeft: '24px' },
+      { order: 0, tag: 'input', role: 'spinbutton', type: 'number', formKey: '0.0', formId: 'contact_form', fieldId: 'full-name', name: 'full_name', label: 'Full name', placeholder: 'Jane Doe', min: '0', required: true, rect: measuredRect(firstFieldLeft, firstRowTop, fieldWidth, 50), structureKey: '0.0.0.0.0', parentGroupKey: '0.0.0.0', ...controlStyle },
+      { order: 1, tag: 'input', role: 'textbox', type: 'email', formKey: '0.0', formId: 'contact_form', fieldId: 'email-address', name: 'email', label: 'Email address', autocomplete: 'email', required: true, rect: measuredRect(secondFieldLeft, twoColumns ? firstRowTop : firstRowTop + 82, fieldWidth, 50), structureKey: '0.0.0.1.0', parentGroupKey: '0.0.0.1', ...controlStyle },
+      { order: 2, tag: 'select', role: 'combobox', formKey: '0.0', formId: 'contact_form', fieldId: 'district', name: 'district', label: 'District', value: 'north', defaultValue: 'north', options: [{ label: 'North', value: 'north' }, { label: 'South', value: 'south' }], required: false, rect: measuredRect(firstFieldLeft, secondRowTop, fullWidth, 50), structureKey: '0.0.1.0', parentGroupKey: '0.0', ...controlStyle },
+      { order: 3, tag: 'textarea', role: 'textbox', formKey: '0.0', formId: 'contact_form', fieldId: 'message', name: 'message', label: 'Message', required: true, rect: measuredRect(firstFieldLeft, messageTop, fullWidth, 120), structureKey: '0.0.2.0', parentGroupKey: '0.0', ...controlStyle },
+      { order: 4, tag: 'input', role: 'checkbox', type: 'checkbox', formKey: '0.0', formId: 'contact_form', fieldId: 'updates', name: 'updates', label: 'Send me updates', checked: false, defaultChecked: false, required: true, rect: measuredRect(firstFieldLeft, checkboxTop, 16, 16), structureKey: '0.0.3.0', parentGroupKey: '0.0', ...controlStyle },
+      { order: 5, tag: 'button', role: 'button', type: 'submit', formKey: '0.0', formId: 'contact_form', required: false, rect: measuredRect(firstFieldLeft, submitTop, 220, 48), structureKey: '0.0.4', parentGroupKey: '0.0', backgroundColor: 'rgb(37, 99, 235)', color: 'rgb(255, 255, 255)', fontSize: '14px', fontWeight: '600', borderTopColor: 'rgb(37, 99, 235)', borderTopWidth: '0px', borderRadius: '6px', paddingTop: '12px', paddingLeft: '24px' },
     ];
     fs.writeFileSync(path.join(directory, file), JSON.stringify({
       viewport: { width, height, scrollHeight: 720 },
@@ -3326,6 +3326,15 @@ test('generic measured drafting recognizes a multi-field form as one contract-ba
         tag: 'button', text: 'SEND PRIVATE SOURCE DATA', structureKey: '0.0.4', parentGroupKey: '0.0',
         rect: measuredRect(firstFieldLeft, submitTop, 220, 48), fontSize: '14px', fontWeight: '600',
         color: 'rgb(255, 255, 255)', backgroundColor: 'rgb(37, 99, 235)', borderRadius: '6px',
+      }, {
+        tag: 'a', text: 'Open form', href: '#contact_form', structureKey: '0.2', parentGroupKey: '0',
+        rect: measuredRect(24, 12, 90, 24), fontSize: '14px', fontWeight: '600',
+        color: 'rgb(37, 99, 235)', backgroundColor: 'rgba(0, 0, 0, 0)',
+      }],
+      directTextEntries: [{
+        tag: 'div', text: 'od', structureKey: '0.1', parentGroupKey: '0',
+        rect: measuredRect(Math.max(8, formLeft - 48), 12, 24, 18), fontSize: '14px', fontWeight: '400',
+        color: 'rgb(17, 24, 39)', backgroundColor: 'rgb(255, 245, 230)', borderRadius: '8px', geometryComplete: true,
       }],
       interactions,
       mediaBoxes: [],
@@ -3340,6 +3349,7 @@ test('generic measured drafting recognizes a multi-field form as one contract-ba
     media: { surfaces: [], requiredRoles: [] },
     authoringRequirements: {
       requiredMediaRoles: [],
+      preserveSourceText: true,
       referenceClassification: { kind: 'generic-measured-reference', family: '', familyMechanics: false },
     },
   }));
@@ -3367,6 +3377,7 @@ test('generic measured drafting recognizes a multi-field form as one contract-ba
   assert.deepEqual(forms[0].props.fields.map((field) => field.type), ['number', 'email', 'select', 'textarea', 'checkbox']);
   assert.deepEqual(forms[0].props.fields.map((field) => field.columnSpan), [1, 1, 2, 2, 2]);
   assert.deepEqual(forms[0].props.fields.map((field) => field.name), ['full_name', 'email', 'district', 'message', 'updates']);
+  assert.deepEqual(forms[0].props.fields.map((field) => field.fieldId), ['full-name', 'email-address', 'district', 'message', 'updates']);
   assert.deepEqual(forms[0].props.fields.map((field) => field.label), ['Full name', 'Email address', 'District', 'Message', 'Send me updates']);
   assert.equal(forms[0].props.fields[0].placeholder, 'Jane Doe');
   assert.equal(forms[0].props.fields[0].min, 0);
@@ -3389,7 +3400,50 @@ test('generic measured drafting recognizes a multi-field form as one contract-ba
   assert.equal(forms[0].props.inputBorderColor, 'rgb(212, 216, 222)');
   assert.equal(forms[0].props.buttonBackgroundColor, 'rgb(37, 99, 235)');
   assert.equal(forms[0].props.submitLabel, 'SEND PRIVATE SOURCE DATA');
+  const directTextNode = Object.values(layout).find((node) => node?.props?.text === 'od');
+  assert.ok(directTextNode);
+  assert.equal(layout[directTextNode.parent].props.backgroundColor, 'rgb(255, 245, 230)');
+  assert.equal(Object.values(layout).some((node) => node?.type?.resolvedName === 'ButtonBlock' && node?.props?.href === '#contact_form'), true);
   assert.doesNotMatch(JSON.stringify(layout), /className|rawHtml/i);
+
+  const externalBriefPath = path.join(directory, 'external-visual-brief.json');
+  const externalBrief = JSON.parse(fs.readFileSync(briefPath, 'utf8'));
+  externalBrief.authoringRequirements.preserveSourceText = false;
+  fs.writeFileSync(externalBriefPath, JSON.stringify(externalBrief));
+  const blockedLegalResult = spawnSync(process.execPath, [
+    draftScript, '--contract', contractPath, '--brief-json', externalBriefPath,
+    '--out', path.join(directory, 'layout-external-checkbox.json'),
+    '--reference-manifest', manifestPath, '--json',
+  ], { encoding: 'utf8' });
+  assert.equal(blockedLegalResult.status, 1, blockedLegalResult.stdout);
+  assert.match(blockedLegalResult.stderr, /blocked_legal_copy/);
+
+  const originalViewportLayouts = new Map();
+  for (const [label] of viewports) {
+    const file = label === 'desktop' ? 'reference-layout.json' : `reference-layout-${label}.json`;
+    const measuredLayout = JSON.parse(fs.readFileSync(path.join(directory, file), 'utf8'));
+    originalViewportLayouts.set(file, structuredClone(measuredLayout));
+    measuredLayout.interactions = measuredLayout.interactions.filter((interaction) => interaction.type !== 'checkbox');
+    fs.writeFileSync(path.join(directory, file), JSON.stringify(measuredLayout));
+  }
+  const neutralLayoutPath = path.join(directory, 'layout-external-neutral.json');
+  const neutralResult = spawnSync(process.execPath, [
+    draftScript, '--contract', contractPath, '--brief-json', externalBriefPath,
+    '--out', neutralLayoutPath, '--reference-manifest', manifestPath, '--json',
+  ], { encoding: 'utf8' });
+  assert.equal(neutralResult.status, 0, neutralResult.stderr || neutralResult.stdout);
+  const neutralLayout = JSON.parse(fs.readFileSync(neutralLayoutPath, 'utf8'));
+  const neutralForm = Object.values(neutralLayout).find((node) => node?.type?.resolvedName === 'FormBlock');
+  assert.ok(neutralForm);
+  assert.deepEqual(neutralForm.props.fields.map((field) => field.label), [
+    'Number field', 'Email field', 'Select field', 'Message field',
+  ]);
+  assert.equal(neutralForm.props.submitLabel === 'SEND PRIVATE SOURCE DATA', false);
+  assert.equal(neutralForm.props.formId, 'form-1-1');
+  assert.equal(Object.values(neutralLayout).some((node) => node?.props?.href === '#contact_form'), false);
+  for (const [file, measuredLayout] of originalViewportLayouts.entries()) {
+    fs.writeFileSync(path.join(directory, file), JSON.stringify(measuredLayout));
+  }
 
   const subsetContract = contract();
   const subsetForm = subsetContract.components.find((component) => component.name === 'FormBlock');
@@ -3440,6 +3494,103 @@ test('generic measured drafting recognizes a multi-field form as one contract-ba
   assert.equal(nonSubmitResult.status, 0, nonSubmitResult.stderr || nonSubmitResult.stdout);
   const nonSubmitLayout = JSON.parse(fs.readFileSync(nonSubmitLayoutPath, 'utf8'));
   assert.equal(Object.values(nonSubmitLayout).some((node) => node?.type?.resolvedName === 'FormBlock'), false);
+});
+
+test('generic form drafting partitions exact form owners, groups radios, and blocks checkbox groups', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'monteby-draft-form-ownership-'));
+  const contractPath = path.join(directory, 'contract.json');
+  const briefPath = path.join(directory, 'brief.json');
+  const layoutPath = path.join(directory, 'layout.json');
+  const manifestPath = path.join(directory, 'manifest.json');
+  const referenceLayoutPath = path.join(directory, 'reference-layout.json');
+  const controlStyle = {
+    backgroundColor: 'rgb(255, 255, 255)', color: 'rgb(17, 24, 39)', fontSize: '16px',
+    fontWeight: '400', borderTopColor: 'rgb(209, 213, 219)', borderTopWidth: '1px',
+    borderRadius: '6px', paddingTop: '10px', paddingLeft: '12px',
+  };
+  const formAFields = [
+    { order: 0, tag: 'input', type: 'text', formKey: '0.0', formId: 'first-form', fieldId: 'first-name', name: 'first_name', label: 'First name', rect: measuredRect(40, 80, 260, 44), structureKey: '0.0.0', parentGroupKey: '0.0', ...controlStyle },
+    { order: 1, tag: 'input', type: 'email', formKey: '0.0', formId: 'first-form', fieldId: 'first-email', name: 'first_email', label: 'Email', rect: measuredRect(40, 140, 260, 44), structureKey: '0.0.1', parentGroupKey: '0.0', ...controlStyle },
+  ];
+  const formARadio = [
+    { order: 3, tag: 'input', type: 'radio', formKey: '0.1', formId: 'second-form', fieldId: 'plan-basic', name: 'plan', groupLabel: 'Plan', label: 'Basic', value: 'basic', rect: measuredRect(380, 80, 22, 22), structureKey: '0.1.0', parentGroupKey: '0.1', ...controlStyle },
+    { order: 4, tag: 'input', type: 'radio', formKey: '0.1', formId: 'second-form', fieldId: 'plan-pro', name: 'plan', groupLabel: 'Plan', label: 'Pro', value: 'pro', rect: measuredRect(380, 116, 22, 22), structureKey: '0.1.1', parentGroupKey: '0.1', ...controlStyle },
+    { order: 5, tag: 'textarea', type: '', formKey: '0.1', formId: 'second-form', fieldId: 'plan-note', name: 'plan_note', label: 'Note', rect: measuredRect(380, 156, 260, 80), structureKey: '0.1.2', parentGroupKey: '0.1', ...controlStyle },
+  ];
+  const submits = [
+    { order: 2, tag: 'button', role: 'button', type: 'submit', formKey: '0.0', formId: 'first-form', rect: measuredRect(40, 210, 160, 44), structureKey: '0.0.2', parentGroupKey: '0.0', ...controlStyle },
+    { order: 6, tag: 'button', role: 'button', type: 'submit', formKey: '0.1', formId: 'second-form', rect: measuredRect(380, 252, 160, 44), structureKey: '0.1.3', parentGroupKey: '0.1', ...controlStyle },
+  ];
+  const referenceLayout = {
+    viewport: { width: 900, height: 600, scrollHeight: 420 },
+    documentStyle: { backgroundColor: '#ffffff', color: '#111827' },
+    landmarks: [{ tag: 'section', groupKey: '0', rect: measuredRect(0, 0, 900, 420), backgroundColor: '#ffffff' }],
+    layoutGroups: [
+      { key: '0', parentKey: '', tag: 'section', rect: measuredRect(0, 0, 900, 420), display: 'block', backgroundColor: '#ffffff' },
+      { key: '0.0', parentKey: '0', tag: 'form', rect: measuredRect(20, 40, 320, 300), display: 'flex', flexDirection: 'column', gap: '16px', backgroundColor: '#ffffff' },
+      { key: '0.1', parentKey: '0', tag: 'form', rect: measuredRect(360, 40, 320, 300), display: 'flex', flexDirection: 'column', gap: '16px', backgroundColor: '#ffffff' },
+    ],
+    textBoxes: [
+      { tag: 'button', text: 'Send first', structureKey: '0.0.2', parentGroupKey: '0.0', rect: submits[0].rect, ...controlStyle },
+      { tag: 'button', text: 'Send second', structureKey: '0.1.3', parentGroupKey: '0.1', rect: submits[1].rect, ...controlStyle },
+    ],
+    interactions: [...formAFields, submits[0], ...formARadio, submits[1]],
+    mediaBoxes: [],
+    summary: { firstViewportTextBoxes: 2, firstViewportMediaBoxes: 0, firstViewportMediaCoverage: 0 },
+  };
+  fs.writeFileSync(contractPath, JSON.stringify(contract()));
+  fs.writeFileSync(briefPath, JSON.stringify({
+    ...visualBrief({ target: { variant: 'split-hero', archetype: '', referenceStyle: '' } }),
+    media: { surfaces: [], requiredRoles: [] },
+    authoringRequirements: {
+      requiredMediaRoles: [], preserveSourceText: true,
+      referenceClassification: { kind: 'generic-measured-reference', family: '', familyMechanics: false },
+    },
+  }));
+  fs.writeFileSync(referenceLayoutPath, JSON.stringify(referenceLayout));
+  fs.writeFileSync(manifestPath, JSON.stringify({
+    sourceUrl: 'file:///tmp/owned-two-forms.html', mediaSurfaces: [], requiredMediaRoles: [],
+    layouts: [{ label: 'desktop', file: 'reference-layout.json', status: 'ok' }],
+  }));
+
+  const result = spawnSync(process.execPath, [
+    draftScript, '--contract', contractPath, '--brief-json', briefPath,
+    '--reference-manifest', manifestPath, '--out', layoutPath, '--json',
+  ], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const layout = JSON.parse(fs.readFileSync(layoutPath, 'utf8'));
+  const forms = Object.values(layout).filter((node) => node?.type?.resolvedName === 'FormBlock');
+  assert.equal(forms.length, 2);
+  assert.deepEqual(forms.map((form) => form.props.formId).sort(), ['first-form', 'second-form']);
+  const radioForm = forms.find((form) => form.props.formId === 'second-form');
+  assert.deepEqual(radioForm.props.fields.map((field) => field.type), ['radio', 'textarea']);
+  assert.equal(radioForm.props.fields[0].name, 'plan');
+  assert.equal(radioForm.props.fields[0].label, 'Plan');
+  assert.equal(radioForm.props.fields[0].options, 'Basic|basic\nPro|pro');
+
+  const checkboxLayout = structuredClone(referenceLayout);
+  checkboxLayout.interactions = checkboxLayout.interactions.map((interaction) => (
+    interaction.formKey === '0.1' && interaction.type === 'radio'
+      ? { ...interaction, type: 'checkbox' }
+      : interaction
+  ));
+  fs.writeFileSync(referenceLayoutPath, JSON.stringify(checkboxLayout));
+  const checkboxResult = spawnSync(process.execPath, [
+    draftScript, '--contract', contractPath, '--brief-json', briefPath,
+    '--reference-manifest', manifestPath, '--out', path.join(directory, 'checkbox-layout.json'), '--json',
+  ], { encoding: 'utf8' });
+  assert.equal(checkboxResult.status, 1, checkboxResult.stdout);
+  assert.match(checkboxResult.stderr, /generic_semantic_checkbox_group_unsupported/);
+
+  const mixedLayout = structuredClone(referenceLayout);
+  mixedLayout.interactions[0].formKey = '0.1';
+  fs.writeFileSync(referenceLayoutPath, JSON.stringify(mixedLayout));
+  const mixedResult = spawnSync(process.execPath, [
+    draftScript, '--contract', contractPath, '--brief-json', briefPath,
+    '--reference-manifest', manifestPath, '--out', path.join(directory, 'mixed-layout.json'), '--json',
+  ], { encoding: 'utf8' });
+  assert.equal(mixedResult.status, 1, mixedResult.stdout);
+  assert.match(mixedResult.stderr, /generic_semantic_form_ownership_mismatch/);
 });
 
 test('generic measured drafting recognizes generated program tabs as one editable TabsBlock', () => {
@@ -8769,8 +8920,10 @@ function contract() {
           type: 'repeater',
           props: ['fields'],
           itemControls: [
-            { type: 'select', props: ['type'], options: ['text', 'email', 'tel', 'number', 'textarea', 'select', 'checkbox'] },
-            { type: 'text', props: ['name', 'label', 'placeholder', 'defaultValue', 'linkText', 'linkUrl'] },
+            { type: 'select', props: ['type'], options: ['text', 'email', 'tel', 'number', 'textarea', 'select', 'checkbox', 'radio'] },
+            { type: 'text', props: ['fieldId'], pattern: '^[A-Za-z][A-Za-z0-9_-]{0,63}$' },
+            { type: 'text', props: ['name'], pattern: '^[A-Za-z][A-Za-z0-9_-]{0,63}$' },
+            { type: 'text', props: ['label', 'placeholder', 'defaultValue', 'linkText', 'linkUrl', 'autocomplete', 'inputMode'] },
             { type: 'toggle', props: ['required'] },
             { type: 'number', props: ['min', 'max', 'step'] },
             { type: 'number', props: ['rows'], min: 2, max: 30, step: 1 },

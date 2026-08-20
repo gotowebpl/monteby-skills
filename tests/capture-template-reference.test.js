@@ -1266,6 +1266,38 @@ test('content ledger capture retains a paragraph longer than 180 characters', ()
   assert.equal(typeof layout.contentTextEntries[0].structureKey, 'string');
 });
 
+test('reference manifest ledger includes direct text without duplicating a full semantic element', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'monteby-direct-ledger-'));
+  const layout = {
+    viewport: { width: 390, height: 844, scrollWidth: 390, scrollHeight: 844 },
+    horizontalOverflow: { viewportWidth: 390, documentScrollWidth: 390, overflowPx: 0 },
+    documentStyle: {},
+    contentTextEntries: [
+      { structureKey: '0.0', text: 'Cena 650 000 zł' },
+      { structureKey: '0.1', text: 'Pełny akapit' },
+    ],
+    directTextEntries: [
+      { structureKey: '0', text: 'od', geometryComplete: true },
+      { structureKey: '0.1', text: 'Pełny', geometryComplete: true },
+    ],
+    textBoxes: [], mediaBoxes: [], layoutGroups: [], landmarks: [], interactions: [], summary: {},
+  };
+  const layoutCapture = {
+    status: 'ok', file: 'reference-layout.json', error: '', layout,
+    layouts: [{ status: 'ok', label: 'mobile', file: 'reference-layout.json', error: '', viewport: layout.viewport, layout }],
+  };
+
+  const artifacts = writeReferenceArtifacts(
+    { url: 'file:///tmp/direct-ledger.html', outDir: directory, fullPage: true, captureLayout: true, resourceThrottle: false },
+    '<main></main>', [], [], layoutCapture, 'complete', '',
+  );
+
+  assert.deepEqual(artifacts.manifest.contentLedger.items.map((item) => item.text).sort(), [
+    'Cena 650 000 zł', 'Pełny akapit', 'od',
+  ].sort());
+  assert.equal(artifacts.manifest.contentLedger.totalOccurrences, 3);
+});
+
 test('rendered layout excludes horizontally offscreen text while retaining below-fold evidence', () => {
   const visibleText = 'Visible hero';
   const belowFoldText = 'Visible later section';
@@ -2017,6 +2049,7 @@ test('capture preserves anchor ownership, bounded direct text, and native form s
 
   const label = { innerText: 'Preferred budget' };
   const amount = controlElement('input', rect(20, 90, 180, 44), { type: 'number', required: '' }, {
+    id: 'budget-field',
     name: 'budget',
     labels: [label],
     placeholder: '500000',
@@ -2034,26 +2067,27 @@ test('capture preserves anchor ownership, bounded direct text, and native form s
     defaultChecked: false,
   });
   const district = controlElement('select', rect(20, 200, 180, 44), {}, {
+    id: 'district-field',
     name: 'district',
     value: 'north',
     options: [
-      { label: 'Choose district', value: '', selected: false, disabled: true },
-      { label: 'North', value: 'north', selected: true, disabled: false },
-      { label: 'South', value: 'south', selected: false, disabled: false },
+      { label: 'Choose district', value: '', selected: false, defaultSelected: false, disabled: true },
+      { label: 'North', value: 'north', selected: true, defaultSelected: true, disabled: false },
+      { label: 'South', value: 'south', selected: false, defaultSelected: false, disabled: false },
     ],
   });
-  const nativeForm = { id: 'property-search' };
-  amount.form = nativeForm;
-  consent.form = nativeForm;
-  district.form = nativeForm;
   const price = layoutElement('div', rect(20, 270, 220, 48), [
     textElement('span', '650 000 zł', rect(48, 270, 140, 48), [], {}),
   ], { display: 'flex' });
-  price.childNodes = [{ nodeType: 3, nodeValue: 'od' }];
+  price.childNodes = [{ nodeType: 3, nodeValue: 'od', rangeRects: [rect(20, 282, 18, 18)] }];
   const form = layoutElement('form', rect(0, 70, 320, 200), [amount, consent, district], {
     display: 'flex',
     flexDirection: 'column',
   });
+  form.id = 'property-search';
+  amount.form = form;
+  consent.form = form;
+  district.form = form;
   const main = layoutElement('main', rect(0, 0, 320, 400), [anchor, form, price]);
 
   const { layout } = captureWithMockDom([anchor, inline], [], {}, {
@@ -2068,10 +2102,11 @@ test('capture preserves anchor ownership, bounded direct text, and native form s
     tag: box.tag,
     href: box.href,
   })), [{ tag: 'a', href: '/homes?status=available#list' }]);
-  assert.deepEqual(layout.directTextEntries.map((entry) => entry.text), ['od']);
+  assert.deepEqual(layout.directTextEntries.map((entry) => [entry.text, entry.geometrySource]), [['od', 'range']]);
   assert.deepEqual(layout.interactions[1], {
     ...layout.interactions[1],
     name: 'budget',
+    fieldId: 'budget-field',
     label: 'Preferred budget',
     placeholder: '500000',
     defaultValue: '500000',
@@ -2080,6 +2115,7 @@ test('capture preserves anchor ownership, bounded direct text, and native form s
     step: '10000',
     autocomplete: 'off',
     inputMode: 'numeric',
+    formKey: '0.1',
     formId: 'property-search',
   });
   assert.equal(layout.interactions[2].checked, true);
@@ -2088,10 +2124,35 @@ test('capture preserves anchor ownership, bounded direct text, and native form s
   assert.equal(layout.interactions[3].defaultValue, 'north');
   assert.equal(layout.interactions[3].formId, 'property-search');
   assert.deepEqual(layout.interactions[3].options, [
-    { label: 'Choose district', value: '', selected: false, disabled: true },
-    { label: 'North', value: 'north', selected: true, disabled: false },
-    { label: 'South', value: 'south', selected: false, disabled: false },
+    { label: 'Choose district', value: '', selected: false, defaultSelected: false, disabled: true },
+    { label: 'North', value: 'north', selected: true, defaultSelected: true, disabled: false },
+    { label: 'South', value: 'south', selected: false, defaultSelected: false, disabled: false },
   ]);
+});
+
+test('direct text keeps long source copy and discloses missing Range geometry', () => {
+  const longText = `Pełna treść ${'długiego akapitu '.repeat(40)}`.trim();
+  const measured = layoutElement('div', rect(20, 20, 280, 120), []);
+  measured.childNodes = [{ nodeType: 3, nodeValue: longText, rangeRects: [rect(24, 24, 260, 96)] }];
+  const fallback = layoutElement('div', rect(20, 180, 280, 80), []);
+  fallback.childNodes = [{ nodeType: 3, nodeValue: 'Tekst bez geometrii Range' }];
+  const main = layoutElement('main', rect(0, 0, 320, 320), [measured, fallback]);
+
+  const { layout } = captureWithMockDom([], [], {}, {
+    bodyChildren: [main],
+    landmarkElements: [main],
+    scrollHeight: 320,
+  });
+
+  assert.equal(longText.length > 500, true);
+  assert.equal(layout.directTextEntries[0].text, longText);
+  assert.equal(layout.directTextEntries[0].geometryComplete, true);
+  assert.equal(layout.directTextEntries[0].geometrySource, 'range');
+  assert.equal(layout.directTextEntries[1].geometryComplete, false);
+  assert.equal(layout.directTextEntries[1].geometrySource, 'element-bounds');
+  assert.equal(layout.evidenceCompleteness.complete, false);
+  assert.equal(layout.evidenceCompleteness.essentialGeometryTruncated, true);
+  assert.ok(layout.evidenceCompleteness.reasons.includes('direct-text-geometry-incomplete'));
 });
 
 test('capture never persists live sensitive or autofilled form values', () => {
@@ -2150,6 +2211,32 @@ test('capture never persists live sensitive or autofilled form values', () => {
   assert.equal(layout.interactions[5].checked, undefined);
   assert.equal(layout.interactions[5].defaultChecked, undefined);
   assert.equal(layout.interactions[5].state.checked, null);
+});
+
+test('capture marks truncated select options as incomplete evidence', () => {
+  const select = controlElement('select', rect(20, 20, 240, 44), {}, {
+    name: 'large_catalog',
+    options: Array.from({ length: 101 }, (_item, index) => ({
+      label: `Option ${index + 1}`,
+      value: `option-${index + 1}`,
+      selected: index === 0,
+      defaultSelected: index === 0,
+      disabled: false,
+    })),
+  });
+  const form = layoutElement('form', rect(0, 0, 320, 100), [select], { display: 'flex' });
+  form.id = 'large-form';
+  select.form = form;
+  const main = layoutElement('main', rect(0, 0, 320, 120), [form]);
+
+  const { layout } = captureWithMockDom([], [], {}, {
+    bodyChildren: [main], interactionElements: [select], landmarkElements: [main], scrollHeight: 120,
+  });
+
+  assert.equal(layout.interactions[0].options.length, 100);
+  assert.equal(layout.interactions[0].optionsTruncated, 1);
+  assert.equal(layout.evidenceCompleteness.complete, false);
+  assert.ok(layout.evidenceCompleteness.reasons.includes('formOptions-truncated'));
 });
 
 test('rendered layout inventories standard ARIA control roles without actions or labels', () => {

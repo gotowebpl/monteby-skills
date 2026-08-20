@@ -1,6 +1,6 @@
 # Monteby Skills
 
-Current package release: `0.2.1`. Site Authoring 0.2.1 requires Monteby
+Current package release: `0.2.2`. Site Authoring 0.2.2 requires Monteby
 Builder 1.4.0 for canonical writes and uses named feature gates from the live
 contract; Query controls remain available from Builder 1.3.9.
 

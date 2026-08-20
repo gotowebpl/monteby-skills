@@ -322,8 +322,7 @@ test('returns terminal REPAIR_IDEMPOTENT without writing or scheduling a rerun',
       generatedSectionId: 'section-a',
       viewports: {
         desktop: {
-          ...viewport(900, 120),
-          repairProps: { minHeight: '420px', innerPaddingX: '32px' },
+          ...viewport(420, 32),
         },
       },
     }],
