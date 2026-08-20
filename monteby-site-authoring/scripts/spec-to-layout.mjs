@@ -162,7 +162,7 @@ function backgroundProps(style, report, path, mediaToReplace) {
 }
 
 /** Wspólne propsy pudełka z policzonych stylów. */
-function boxProps(style, report, path, mediaToReplace) {
+function boxProps(style, report, path, mediaToReplace, targetProps = null) {
   const props = { ...backgroundProps(style, report, path, mediaToReplace) };
 
   if (style.padding) {
@@ -209,8 +209,21 @@ function boxProps(style, report, path, mediaToReplace) {
   if (style.flexGrow) props.flexGrow = Math.round(style.flexGrow);
   if (style.flexShrink === 0) props.flexShrink = 0;
   if (style.flexBasis && /[\d.]+(px|%)/.test(style.flexBasis)) props.flexBasis = style.flexBasis;
-  if (style.position) {
-    report.push({ path, issue: `position: ${style.position} — poza kontraktem`, target: style.position === 'sticky' ? 'child-theme' : 'rebuild-as-node' });
+  if (style.position === 'sticky') {
+    const requiredProps = [
+      'sticky',
+      ...(style.stickyTop || style.top ? ['stickyTop'] : []),
+      ...(style.stickyResetAt ? ['stickyResetAt'] : []),
+    ];
+    if (targetProps instanceof Set && requiredProps.every((prop) => targetProps.has(prop))) {
+      props.sticky = true;
+      if (style.stickyTop || style.top) props.stickyTop = style.stickyTop || style.top;
+      if (style.stickyResetAt) props.stickyResetAt = style.stickyResetAt;
+    } else {
+      report.push({ path, issue: 'position: sticky — brak pełnego kontraktu sticky dla docelowego komponentu', target: 'child-theme' });
+    }
+  } else if (style.position) {
+    report.push({ path, issue: `position: ${style.position} — poza kontraktem`, target: 'rebuild-as-node' });
   }
   if (style.boxShadow) {
     report.push({ path, issue: 'boxShadow z makiety — przenieś ręcznie na kontrolki boxShadow*', target: 'manual-controls' });
@@ -260,6 +273,7 @@ class Compiler {
     this.report = [];
     this.mediaToReplace = [];
     this.fvsSeen = new Set();
+    this.loweredMotionPaths = new Set();
   }
 
   node(specNode, path) {
@@ -458,7 +472,33 @@ class Compiler {
 
   box(specNode, path) {
     const style = specNode.style;
-    const props = boxProps(style, this.report, path, this.mediaToReplace);
+    const containerProps = new Set(this.kit.components.get('Container')?.props || []);
+    const props = boxProps(style, this.report, path, this.mediaToReplace, containerProps);
+    const hoverState = (specNode.motion?.states || []).find((state) => (
+      state?.state === 'hover'
+      && !state.media
+      && Object.keys(state.declarations || {}).length === 1
+      && typeof state.declarations.transform === 'string'
+    ));
+    const lift = hoverState
+      ? /^translateY\(\s*(-(?:\d+(?:\.\d+)?|\.\d+))px\s*\)$/iu.exec(hoverState.declarations.transform.trim())
+      : null;
+    let loweredHoverProp = '';
+    if (lift && Number(lift[1]) >= -24) {
+      if (containerProps.has('hoverLift') && !this.kit.blocked.has('hoverLift')) {
+        const control = this.kit.controls.get('Container.hoverLift');
+        props.hoverLift = control?.type === 'css-value'
+          ? `${Math.abs(Number(lift[1]))}px`
+          : Math.abs(Number(lift[1]));
+        loweredHoverProp = 'hoverLift';
+      } else if (containerProps.has('hoverTranslateY') && !this.kit.blocked.has('hoverTranslateY')) {
+        const control = this.kit.controls.get('Container.hoverTranslateY');
+        props.hoverTranslateY = control?.type === 'css-value'
+          ? `${Number(lift[1])}px`
+          : Number(lift[1]);
+        loweredHoverProp = 'hoverTranslateY';
+      }
+    }
     const children = (specNode.children || []).map((child, i) => this.node(child, `${path}.${i}`));
 
     if (style.display === 'grid') {
@@ -493,13 +533,18 @@ class Compiler {
         }
       }
     }
-    return this.kit.box(this.fit('Container', props, path), children);
+    const containerId = this.kit.box(this.fit('Container', props, path), children);
+    if (loweredHoverProp && Object.prototype.hasOwnProperty.call(this.kit.nodes[containerId]?.props || {}, loweredHoverProp)) {
+      this.loweredMotionPaths.add(path);
+    }
+    return containerId;
   }
 
   section(specNode, index) {
     const path = `s${index}`;
     const style = specNode.style;
-    const props = boxProps(style, this.report, path, this.mediaToReplace);
+    const sectionProps = new Set(this.kit.components.get('Section')?.props || []);
+    const props = boxProps(style, this.report, path, this.mediaToReplace, sectionProps);
     if (!props.background && !props.backgroundType && style.effectiveBackground) {
       props.background = color(style.effectiveBackground);
     }
@@ -588,7 +633,7 @@ class Compiler {
  * Węzeł jest wskazywany tak, jak umie to plan residualny: tekstem nagłówka lub
  * odnośnika, a w ostateczności ścieżką w drzewie sekcji.
  */
-function collectMotion(spec) {
+function collectMotion(spec, loweredMotionPaths = new Set()) {
   const entries = [];
   let states = 0;
   let transitions = 0;
@@ -608,12 +653,27 @@ function collectMotion(spec) {
         animations += 1;
       }
       if (node.motion.states) {
-        entry.states = node.motion.states;
-        states += node.motion.states.length;
+        const residualStates = loweredMotionPaths.has(path)
+          ? node.motion.states.filter((state) => {
+            if (state?.state !== 'hover' || state.media || Object.keys(state.declarations || {}).length !== 1) {
+              return true;
+            }
+            const lift = typeof state.declarations?.transform === 'string'
+              ? /^translateY\(\s*(-(?:\d+(?:\.\d+)?|\.\d+))px\s*\)$/iu.exec(state.declarations.transform.trim())
+              : null;
+            return !lift || Number(lift[1]) < -24;
+          })
+          : node.motion.states;
+        if (residualStates.length > 0) {
+          entry.states = residualStates;
+          states += residualStates.length;
+        }
       }
-      entries.push(entry);
+      if (entry.transition || entry.animation || entry.states) {
+        entries.push(entry);
+      }
     }
-    (node.children || []).forEach((child, index) => visit(child, `${path}/${index}`));
+    (node.children || []).forEach((child, index) => visit(child, `${path}.${index}`));
   };
 
   (spec.sections || []).forEach((section, index) => visit(section, `s${index}`));
@@ -654,7 +714,7 @@ async function main() {
     kitNotes: result.notes,
     issues: compiler.report,
     mediaToReplace: compiler.mediaToReplace,
-    motion: collectMotion(spec),
+    motion: collectMotion(spec, compiler.loweredMotionPaths),
   };
   if (args.report && typeof args.report === 'string') {
     await writeFile(args.report, JSON.stringify(report, null, 2), 'utf8');
@@ -667,7 +727,7 @@ async function main() {
       `Ruch do planu residualnego: ${report.motion.entries.length} węzłów ` +
         `(stany: ${report.motion.states}, przejścia: ${report.motion.transitions}, animacje: ${report.motion.animations})`
     );
-    console.log('  Kontrakt nie wystawia kontrolek ruchu — te pozycje idą do residual-plan.json, nie do node mapy.');
+    console.log('  Tylko ruch bez typed props trafia do residual-plan.json; bezpieczny hover lift i sticky są obniżane do żywego kontraktu.');
   }
   for (const issue of compiler.report.slice(0, 25)) {
     console.log(`  [${issue.target}] ${issue.path}: ${issue.issue}`);

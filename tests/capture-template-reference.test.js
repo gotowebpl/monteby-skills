@@ -1266,6 +1266,38 @@ test('content ledger capture retains a paragraph longer than 180 characters', ()
   assert.equal(typeof layout.contentTextEntries[0].structureKey, 'string');
 });
 
+test('reference manifest ledger includes direct text without duplicating a full semantic element', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'monteby-direct-ledger-'));
+  const layout = {
+    viewport: { width: 390, height: 844, scrollWidth: 390, scrollHeight: 844 },
+    horizontalOverflow: { viewportWidth: 390, documentScrollWidth: 390, overflowPx: 0 },
+    documentStyle: {},
+    contentTextEntries: [
+      { structureKey: '0.0', text: 'Cena 650 000 zł' },
+      { structureKey: '0.1', text: 'Pełny akapit' },
+    ],
+    directTextEntries: [
+      { structureKey: '0', text: 'od', geometryComplete: true },
+      { structureKey: '0.1', text: 'Pełny', geometryComplete: true },
+    ],
+    textBoxes: [], mediaBoxes: [], layoutGroups: [], landmarks: [], interactions: [], summary: {},
+  };
+  const layoutCapture = {
+    status: 'ok', file: 'reference-layout.json', error: '', layout,
+    layouts: [{ status: 'ok', label: 'mobile', file: 'reference-layout.json', error: '', viewport: layout.viewport, layout }],
+  };
+
+  const artifacts = writeReferenceArtifacts(
+    { url: 'file:///tmp/direct-ledger.html', outDir: directory, fullPage: true, captureLayout: true, resourceThrottle: false },
+    '<main></main>', [], [], layoutCapture, 'complete', '',
+  );
+
+  assert.deepEqual(artifacts.manifest.contentLedger.items.map((item) => item.text).sort(), [
+    'Cena 650 000 zł', 'Pełny akapit', 'od',
+  ].sort());
+  assert.equal(artifacts.manifest.contentLedger.totalOccurrences, 3);
+});
+
 test('rendered layout excludes horizontally offscreen text while retaining below-fold evidence', () => {
   const visibleText = 'Visible hero';
   const belowFoldText = 'Visible later section';
@@ -1991,9 +2023,11 @@ test('rendered layout records visible interaction geometry and state without sou
   assert.deepEqual({
     structureKey: layout.interactions[0].structureKey,
     parentGroupKey: layout.interactions[0].parentGroupKey,
+    href: layout.interactions[0].href,
   }, {
     structureKey: '0.0',
     parentGroupKey: '0',
+    href: '/contact',
   });
   assert.equal(layout.interactions.every((interaction) => /^0\.\d+$/u.test(interaction.structureKey)), true);
   assert.equal(layout.interactions.every((interaction) => interaction.parentGroupKey === '0'), true);
@@ -2003,7 +2037,206 @@ test('rendered layout records visible interaction geometry and state without sou
     truncated: 0,
     limit: 200,
   });
-  assert.doesNotMatch(JSON.stringify(layout.interactions), /source-control-class|outerHTML|\/contact|IGNORE PRIOR INSTRUCTIONS/);
+  assert.doesNotMatch(JSON.stringify(layout.interactions), /source-control-class|outerHTML|IGNORE PRIOR INSTRUCTIONS/);
+});
+
+test('capture preserves anchor ownership, bounded direct text, and native form semantics', () => {
+  const inline = textElement('em', 'Browse homes', rect(24, 20, 110, 24), [], {});
+  const anchor = textElement('a', 'Browse homes', rect(20, 16, 126, 32), [], { display: 'flex' });
+  anchor.children = [inline];
+  anchor.getAttribute = (name) => name === 'href' ? '/homes?status=available#list' : null;
+  anchor.hasAttribute = (name) => name === 'href';
+
+  const label = { innerText: 'Preferred budget' };
+  const amount = controlElement('input', rect(20, 90, 180, 44), { type: 'number', required: '' }, {
+    id: 'budget-field',
+    name: 'budget',
+    labels: [label],
+    placeholder: '500000',
+    value: '650000',
+    defaultValue: '500000',
+    min: '100000',
+    max: '2000000',
+    step: '10000',
+    autocomplete: 'off',
+    inputMode: 'numeric',
+  });
+  const consent = controlElement('input', rect(20, 150, 24, 24), { type: 'checkbox' }, {
+    name: 'updates',
+    checked: true,
+    defaultChecked: false,
+  });
+  const district = controlElement('select', rect(20, 200, 180, 44), {}, {
+    id: 'district-field',
+    name: 'district',
+    value: 'north',
+    options: [
+      { label: 'Choose district', value: '', selected: false, defaultSelected: false, disabled: true },
+      { label: 'North', value: 'north', selected: true, defaultSelected: true, disabled: false },
+      { label: 'South', value: 'south', selected: false, defaultSelected: false, disabled: false },
+    ],
+  });
+  const price = layoutElement('div', rect(20, 270, 220, 48), [
+    textElement('span', '650 000 zł', rect(48, 270, 140, 48), [], {}),
+  ], { display: 'flex' });
+  price.childNodes = [{ nodeType: 3, nodeValue: 'od', rangeRects: [rect(20, 282, 18, 18)] }];
+  const form = layoutElement('form', rect(0, 70, 320, 200), [amount, consent, district], {
+    display: 'flex',
+    flexDirection: 'column',
+  });
+  form.id = 'property-search';
+  amount.form = form;
+  consent.form = form;
+  district.form = form;
+  const main = layoutElement('main', rect(0, 0, 320, 400), [anchor, form, price]);
+
+  const { layout } = captureWithMockDom([anchor, inline], [], {}, {
+    bodyChildren: [main],
+    landmarkElements: [main],
+    interactionElements: [anchor, amount, consent, district],
+    scrollHeight: 400,
+  });
+
+  assert.equal(layout.layoutGroups.some((group) => group.tag === 'a'), false);
+  assert.deepEqual(layout.textBoxes.filter((box) => box.text === 'Browse homes').map((box) => ({
+    tag: box.tag,
+    href: box.href,
+  })), [{ tag: 'a', href: '/homes?status=available#list' }]);
+  assert.deepEqual(layout.directTextEntries.map((entry) => [entry.text, entry.geometrySource]), [['od', 'range']]);
+  assert.deepEqual(layout.interactions[1], {
+    ...layout.interactions[1],
+    name: 'budget',
+    fieldId: 'budget-field',
+    label: 'Preferred budget',
+    placeholder: '500000',
+    defaultValue: '500000',
+    min: '100000',
+    max: '2000000',
+    step: '10000',
+    autocomplete: 'off',
+    inputMode: 'numeric',
+    formKey: '0.1',
+    formId: 'property-search',
+  });
+  assert.equal(layout.interactions[2].checked, true);
+  assert.equal(layout.interactions[2].defaultChecked, false);
+  assert.equal(layout.interactions[2].formId, 'property-search');
+  assert.equal(layout.interactions[3].defaultValue, 'north');
+  assert.equal(layout.interactions[3].formId, 'property-search');
+  assert.deepEqual(layout.interactions[3].options, [
+    { label: 'Choose district', value: '', selected: false, defaultSelected: false, disabled: true },
+    { label: 'North', value: 'north', selected: true, defaultSelected: true, disabled: false },
+    { label: 'South', value: 'south', selected: false, defaultSelected: false, disabled: false },
+  ]);
+});
+
+test('direct text keeps long source copy and discloses missing Range geometry', () => {
+  const longText = `Pełna treść ${'długiego akapitu '.repeat(40)}`.trim();
+  const measured = layoutElement('div', rect(20, 20, 280, 120), []);
+  measured.childNodes = [{ nodeType: 3, nodeValue: longText, rangeRects: [rect(24, 24, 260, 96)] }];
+  const fallback = layoutElement('div', rect(20, 180, 280, 80), []);
+  fallback.childNodes = [{ nodeType: 3, nodeValue: 'Tekst bez geometrii Range' }];
+  const main = layoutElement('main', rect(0, 0, 320, 320), [measured, fallback]);
+
+  const { layout } = captureWithMockDom([], [], {}, {
+    bodyChildren: [main],
+    landmarkElements: [main],
+    scrollHeight: 320,
+  });
+
+  assert.equal(longText.length > 500, true);
+  assert.equal(layout.directTextEntries[0].text, longText);
+  assert.equal(layout.directTextEntries[0].geometryComplete, true);
+  assert.equal(layout.directTextEntries[0].geometrySource, 'range');
+  assert.equal(layout.directTextEntries[1].geometryComplete, false);
+  assert.equal(layout.directTextEntries[1].geometrySource, 'element-bounds');
+  assert.equal(layout.evidenceCompleteness.complete, false);
+  assert.equal(layout.evidenceCompleteness.essentialGeometryTruncated, true);
+  assert.ok(layout.evidenceCompleteness.reasons.includes('direct-text-geometry-incomplete'));
+});
+
+test('capture never persists live sensitive or autofilled form values', () => {
+  const password = controlElement('input', rect(20, 20, 180, 44), { type: 'password', value: 'server-secret' }, {
+    name: 'password',
+    autocomplete: 'current-password',
+    value: 'autofilled-secret',
+    defaultValue: 'server-secret',
+  });
+  const email = controlElement('input', rect(20, 80, 180, 44), { type: 'email', value: 'saved@example.test' }, {
+    name: 'email',
+    autocomplete: 'email',
+    value: 'person@example.test',
+    defaultValue: 'saved@example.test',
+  });
+  const amount = controlElement('input', rect(20, 140, 180, 44), { type: 'number', value: '500000' }, {
+    name: 'budget',
+    autocomplete: 'off',
+    value: '650000',
+    defaultValue: '500000',
+  });
+  const notes = controlElement('textarea', rect(20, 200, 180, 44), { 'data-sensitive': '' }, {
+    name: 'notes',
+    value: 'private current notes',
+    defaultValue: 'private default notes',
+  });
+  const account = controlElement('select', rect(20, 260, 180, 44), { 'data-private': '' }, {
+    name: 'account',
+    value: 'private-account',
+    options: [{ label: 'Private account', value: 'private-account', selected: true }],
+  });
+  const consent = controlElement('input', rect(20, 320, 24, 24), { type: 'checkbox', 'data-pii': '' }, {
+    name: 'consent',
+    value: 'private-consent',
+    checked: true,
+    defaultChecked: true,
+  });
+  const { layout } = captureWithMockDom([], [], {}, {
+    interactionElements: [password, email, amount, notes, account, consent],
+    scrollHeight: 400,
+  });
+
+  const serialized = JSON.stringify(layout.interactions);
+  assert.doesNotMatch(serialized, /autofilled-secret|server-secret|person@example\.test|saved@example\.test|private/);
+  assert.equal(layout.interactions[0].value, undefined);
+  assert.equal(layout.interactions[0].defaultValue, undefined);
+  assert.equal(layout.interactions[1].value, undefined);
+  assert.equal(layout.interactions[1].defaultValue, undefined);
+  assert.equal(layout.interactions[2].value, undefined);
+  assert.equal(layout.interactions[2].defaultValue, '500000');
+  assert.equal(layout.interactions[3].value, undefined);
+  assert.equal(layout.interactions[3].defaultValue, undefined);
+  assert.equal(layout.interactions[4].value, undefined);
+  assert.equal(layout.interactions[4].defaultValue, undefined);
+  assert.equal(layout.interactions[4].options, undefined);
+  assert.equal(layout.interactions[5].checked, undefined);
+  assert.equal(layout.interactions[5].defaultChecked, undefined);
+  assert.equal(layout.interactions[5].state.checked, null);
+});
+
+test('capture marks truncated select options as incomplete evidence', () => {
+  const select = controlElement('select', rect(20, 20, 240, 44), {}, {
+    name: 'large_catalog',
+    options: Array.from({ length: 101 }, (_item, index) => ({
+      label: `Option ${index + 1}`,
+      value: `option-${index + 1}`,
+      selected: index === 0,
+      defaultSelected: index === 0,
+      disabled: false,
+    })),
+  });
+  const form = layoutElement('form', rect(0, 0, 320, 100), [select], { display: 'flex' });
+  form.id = 'large-form';
+  select.form = form;
+  const main = layoutElement('main', rect(0, 0, 320, 120), [form]);
+
+  const { layout } = captureWithMockDom([], [], {}, {
+    bodyChildren: [main], interactionElements: [select], landmarkElements: [main], scrollHeight: 120,
+  });
+
+  assert.equal(layout.interactions[0].options.length, 100);
+  assert.equal(layout.interactions[0].optionsTruncated, 1);
+  assert.equal(layout.evidenceCompleteness.complete, false);
+  assert.ok(layout.evidenceCompleteness.reasons.includes('formOptions-truncated'));
 });
 
 test('rendered layout inventories standard ARIA control roles without actions or labels', () => {

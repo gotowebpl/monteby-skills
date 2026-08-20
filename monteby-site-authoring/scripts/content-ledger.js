@@ -91,6 +91,32 @@ function buildContentLedger(entries) {
   };
 }
 
+function mergeDirectTextEntries(contentEntries, directTextEntries) {
+  const content = Array.isArray(contentEntries) ? contentEntries.filter(Boolean) : [];
+  const coveredStructureKeys = new Set(content
+    .map((entry) => String(entry?.structureKey || '').trim())
+    .filter(Boolean));
+  const seenDirectEntries = new Set();
+  const direct = [];
+
+  for (const entry of Array.isArray(directTextEntries) ? directTextEntries : []) {
+    const structureKey = String(entry?.structureKey || '').trim();
+    const text = normalizeContentText(entry?.text);
+    if (!structureKey || !text || coveredStructureKeys.has(structureKey)) {
+      continue;
+    }
+
+    const identity = `${structureKey}\0${text}`;
+    if (seenDirectEntries.has(identity)) {
+      continue;
+    }
+    seenDirectEntries.add(identity);
+    direct.push(entry);
+  }
+
+  return content.concat(direct);
+}
+
 function nodeMapContentEntries(nodeMap) {
   const entries = [];
   for (const [nodeId, node] of Object.entries(nodeMap && typeof nodeMap === 'object' ? nodeMap : {})) {
@@ -190,6 +216,7 @@ function closestChangedEntry(expected, candidateItems) {
 module.exports = {
   buildContentLedger,
   compareContentLedgers,
+  mergeDirectTextEntries,
   nodeMapContentEntries,
   normalizeContentText,
 };

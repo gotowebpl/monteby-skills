@@ -1461,14 +1461,19 @@ function buildRepairQueue(report) {
       });
     }
 
-    const pairs = Array.isArray(viewport?.geometry?.pairs) ? viewport.geometry.pairs : [];
+    const geometryErrorCodes = new Set((Array.isArray(viewport?.errors) ? viewport.errors : [])
+      .map((error) => String(error?.code || ''))
+      .filter((code) => /^generic_geometry_band_(?:top|height|width)_mismatch$/u.test(code)));
+    const pairs = geometryErrorCodes.size > 0 && Array.isArray(viewport?.geometry?.pairs)
+      ? viewport.geometry.pairs
+      : [];
     const rankedPairs = pairs
       .map((pair) => ({
         ...pair,
         severity: Math.max(
-          Number(pair.topDelta) || 0,
-          Number(pair.heightDelta) || 0,
-          Number(pair.widthDelta) || 0
+          geometryErrorCodes.has('generic_geometry_band_top_mismatch') ? Number(pair.topDelta) || 0 : 0,
+          geometryErrorCodes.has('generic_geometry_band_height_mismatch') ? Number(pair.heightDelta) || 0 : 0,
+          geometryErrorCodes.has('generic_geometry_band_width_mismatch') ? Number(pair.widthDelta) || 0 : 0
         ),
       }))
       .filter((pair) => pair.severity > 0)

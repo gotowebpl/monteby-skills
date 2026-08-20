@@ -201,9 +201,14 @@ async function main() {
   ];
 
   const missing = [];
+  const contractLowered = [];
   let emitted = 0;
 
   for (const rule of plan.rules || []) {
+    if (rule?.loweredToContract === true || rule?.bucket === 'contract' || (rule?.target && rule.target !== 'child-theme')) {
+      contractLowered.push(rule);
+      continue;
+    }
     const target = locate(items, rule.locate || {});
     if (!target) {
       missing.push(rule);
@@ -222,6 +227,9 @@ async function main() {
   await writeFile(args.out, lines.join('\n'), 'utf8');
 
   console.log(`Reguł w planie: ${(plan.rules || []).length} | zapisanych: ${emitted}`);
+  if (contractLowered.length > 0) {
+    console.log(`Pominięte jako obsłużone poza residuum: ${contractLowered.length}`);
+  }
   if (missing.length) {
     console.log(`Nieodnalezione węzły: ${missing.length}`);
     for (const rule of missing.slice(0, 10)) {

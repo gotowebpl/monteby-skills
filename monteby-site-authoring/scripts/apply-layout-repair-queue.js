@@ -974,6 +974,23 @@ async function applyRepairQueue(options) {
       };
     });
     report.outputLayoutSha256 = nodeMapSha256(nodeMap);
+    if (report.outputLayoutSha256 === report.inputLayoutSha256) {
+      report.ok = false;
+      report.status = 'REPAIR_IDEMPOTENT';
+      report.applied = applied;
+      report.blockers = [{
+        code: 'REPAIR_IDEMPOTENT',
+        message: 'Every queued repair already matches the candidate layout; no output was written and no rerun was scheduled.',
+      }];
+      report.nextAction = nextAction(
+        'blocked_repair_idempotent',
+        '',
+        [],
+        ['NEW_REPAIR_REPORT'],
+        'Stop. Obtain a new visual iteration report with a materially different repair target.'
+      );
+      return report;
+    }
     await atomicWriteJson(options.out, outputPayload);
 
     report.ok = true;

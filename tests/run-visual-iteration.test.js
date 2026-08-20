@@ -187,6 +187,7 @@ test('repair queue maps measured geometry failures to stable section ids', () =>
         stats: {
           viewports: [{
             label: 'mobile',
+            errors: [{ code: 'generic_geometry_band_top_mismatch' }, { code: 'generic_geometry_band_height_mismatch' }],
             bands: {
               missing: [{ index: 1, tags: ['section'], top: 0.3, height: 0.2, width: 1 }],
               extra: [{
@@ -231,6 +232,7 @@ test('repair queue maps measured geometry failures to stable section ids', () =>
         stats: {
           viewports: [{
             label: 'desktop',
+            errors: [{ code: 'generic_geometry_band_top_mismatch' }],
             bands: {
               missing: [],
               extra: [{
@@ -289,6 +291,7 @@ test('repair queue retains every geometry mismatch beyond the former per-viewpor
         stats: {
           viewports: [{
             label: 'desktop',
+            errors: [{ code: 'generic_geometry_band_top_mismatch' }],
             bands: { missing: [], extra: [] },
             geometry: {
               pairs: bands.map((band, index) => ({
@@ -347,6 +350,7 @@ test('repair queue defers only visual budget summaries when actionable geometry 
         stats: {
           viewports: [{
             label: 'desktop',
+            errors: [{ code: 'generic_geometry_band_height_mismatch' }],
             bands: { missing: [], extra: [] },
             geometry: {
               pairs: [{

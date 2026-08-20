@@ -71,7 +71,13 @@ test('canonical comparison failure returns to local repair and cannot emit DONE'
   );
   assert.equal(report.nextAction.args.includes('--out'), true);
   assert.deepEqual(report.nextAction.requires, []);
-  assert.ok(report.repairQueue.some((item) => item.sectionId === 'section-hero'));
+  assert.equal(
+    report.repairQueue.some((item) => item.sectionId === 'section-hero'),
+    false,
+    'a screenshot-only failure must not invent a geometry mutation target'
+  );
+  assert.ok(report.repairQueue.length > 0);
+  assert.equal(report.repairQueue.every((item) => item.sectionId === ''), true);
 });
 
 test('canonical verification refuses DONE without scoped SAVE_OK and PREVIEW_OK evidence', () => {

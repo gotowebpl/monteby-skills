@@ -16,7 +16,7 @@ test('site contract compatibility manifest requires the exact live contract with
 
   assert.deepEqual(manifest, {
     schemaVersion: 3,
-    skillVersion: '0.2.1',
+    skillVersion: '0.2.2',
     minimumBuilderVersion: '1.4.0',
     contractEndpoint: '/wp-json/monteby/v1/contract',
     liveContractRequired: true,
