@@ -5578,6 +5578,7 @@ function addGenericMeasuredGroups(context, parentId, desktopParent, tabletParent
       const capturedFields = Array.isArray(desktop.props?.fields) ? desktop.props.fields : [];
       const formAuthoringProps = new Set(formComponent.authoringProps || []);
       const fieldAuthoringProps = formComponent.repeaterItemProps?.get('fields');
+      const fieldAuthoringRules = formComponent.repeaterItemRules?.get('fields');
       if (!(supportedFieldTypes instanceof Set) || supportedFieldTypes.size === 0) {
         throw new Error('Generic measured reference contract gaps:\n- [generic_semantic_form_field_contract_missing] FormBlock must expose live repeater item type options before a measured form can be authored.');
       }
@@ -5595,13 +5596,23 @@ function addGenericMeasuredGroups(context, parentId, desktopParent, tabletParent
         'autocomplete', 'inputMode', 'required', 'rows', 'options', 'columnSpan',
       ]);
       const fields = capturedFields.map((field) => Object.fromEntries(
-        Object.entries(field).filter(([key, value]) => (
-          capturedFormFieldKeys.has(key)
-          && fieldAuthoringProps.has(key)
-          && typeof value !== 'undefined'
-          && value !== null
-          && value !== ''
-        ))
+        Object.entries(field).flatMap(([key, value]) => {
+          if (
+            !capturedFormFieldKeys.has(key)
+            || !fieldAuthoringProps.has(key)
+            || typeof value === 'undefined'
+            || value === null
+            || value === ''
+          ) {
+            return [];
+          }
+          const rule = fieldAuthoringRules instanceof Map ? fieldAuthoringRules.get(key) : null;
+          if (rule?.type === 'number') {
+            const numericValue = Number(value);
+            return Number.isFinite(numericValue) ? [[key, numericValue]] : [];
+          }
+          return [[key, value]];
+        })
       ));
       const submitLabel = String(desktop.submitBox?.text || '').trim();
       const formNode = createLeafNode(context, formComponent.name, contentParentId, {

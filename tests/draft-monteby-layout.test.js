@@ -3304,7 +3304,7 @@ test('generic measured drafting recognizes a multi-field form as one contract-ba
       paddingLeft: '16px',
     };
     const interactions = [
-      { order: 0, tag: 'input', role: 'textbox', type: 'text', formId: 'contact_form', name: 'full_name', label: 'Full name', placeholder: 'Jane Doe', required: true, rect: measuredRect(firstFieldLeft, firstRowTop, fieldWidth, 50), structureKey: '0.0.0.0.0', parentGroupKey: '0.0.0.0', ...controlStyle },
+      { order: 0, tag: 'input', role: 'spinbutton', type: 'number', formId: 'contact_form', name: 'full_name', label: 'Full name', placeholder: 'Jane Doe', min: '0', required: true, rect: measuredRect(firstFieldLeft, firstRowTop, fieldWidth, 50), structureKey: '0.0.0.0.0', parentGroupKey: '0.0.0.0', ...controlStyle },
       { order: 1, tag: 'input', role: 'textbox', type: 'email', formId: 'contact_form', name: 'email', label: 'Email address', autocomplete: 'email', required: true, rect: measuredRect(secondFieldLeft, twoColumns ? firstRowTop : firstRowTop + 82, fieldWidth, 50), structureKey: '0.0.0.1.0', parentGroupKey: '0.0.0.1', ...controlStyle },
       { order: 2, tag: 'select', role: 'combobox', formId: 'contact_form', name: 'district', label: 'District', value: 'north', defaultValue: 'north', options: [{ label: 'North', value: 'north' }, { label: 'South', value: 'south' }], required: false, rect: measuredRect(firstFieldLeft, secondRowTop, fullWidth, 50), structureKey: '0.0.1.0', parentGroupKey: '0.0', ...controlStyle },
       { order: 3, tag: 'textarea', role: 'textbox', formId: 'contact_form', name: 'message', label: 'Message', required: true, rect: measuredRect(firstFieldLeft, messageTop, fullWidth, 120), structureKey: '0.0.2.0', parentGroupKey: '0.0', ...controlStyle },
@@ -3364,11 +3364,12 @@ test('generic measured drafting recognizes a multi-field form as one contract-ba
   assert.equal(forms.length, 1);
   assert.equal(forms[0].props.formColumns, 2);
   assert.equal(forms[0].props.fields.length, 5);
-  assert.deepEqual(forms[0].props.fields.map((field) => field.type), ['text', 'email', 'select', 'textarea', 'checkbox']);
+  assert.deepEqual(forms[0].props.fields.map((field) => field.type), ['number', 'email', 'select', 'textarea', 'checkbox']);
   assert.deepEqual(forms[0].props.fields.map((field) => field.columnSpan), [1, 1, 2, 2, 2]);
   assert.deepEqual(forms[0].props.fields.map((field) => field.name), ['full_name', 'email', 'district', 'message', 'updates']);
   assert.deepEqual(forms[0].props.fields.map((field) => field.label), ['Full name', 'Email address', 'District', 'Message', 'Send me updates']);
   assert.equal(forms[0].props.fields[0].placeholder, 'Jane Doe');
+  assert.equal(forms[0].props.fields[0].min, 0);
   assert.equal(forms[0].props.fields[2].defaultValue, 'north');
   assert.equal(forms[0].props.fields[2].options, 'North|north\nSouth|south');
   assert.equal(forms[0].props.fields[2].value, undefined);
@@ -8768,9 +8769,10 @@ function contract() {
           type: 'repeater',
           props: ['fields'],
           itemControls: [
-            { type: 'select', props: ['type'], options: ['text', 'email', 'tel', 'textarea', 'select', 'checkbox'] },
+            { type: 'select', props: ['type'], options: ['text', 'email', 'tel', 'number', 'textarea', 'select', 'checkbox'] },
             { type: 'text', props: ['name', 'label', 'placeholder', 'defaultValue', 'linkText', 'linkUrl'] },
             { type: 'toggle', props: ['required'] },
+            { type: 'number', props: ['min', 'max', 'step'] },
             { type: 'number', props: ['rows'], min: 2, max: 30, step: 1 },
             { type: 'textarea', props: ['options'] },
             { type: 'number', props: ['columnSpan'], min: 1, max: 2, step: 1 },
