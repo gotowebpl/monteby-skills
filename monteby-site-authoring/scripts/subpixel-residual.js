@@ -6,11 +6,7 @@ const MAX_VIEWPORT_SUM_PX = 1;
 const MAX_SINGLE_DELTA_PX = 0.5;
 const ALLOWED_RESIDUAL_BLOCKERS = new Set([
   'canonical_zero_diff_evidence_missing',
-  'canonical_visual_budget_failed',
   'generic_geometry_band_height_mismatch',
-  'max_percent_exceeded',
-  'max_viewport_percent_exceeded',
-  'visual_budget_failed',
 ]);
 
 function roundHundredth(value) {
