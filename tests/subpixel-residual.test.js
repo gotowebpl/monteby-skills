@@ -29,7 +29,7 @@ function geometry(deltasByViewport) {
 
 test('subpixel fixed point accepts stable 0.99px sums and rejects 1.01px', () => {
   const stable = geometry({ desktop: [0.49, 0.5], tablet: [0.2], mobile: [-0.4] });
-  const eligible = evaluateSubpixelFixedPoint(stable, stable, [{ code: 'max_percent_exceeded' }]);
+  const eligible = evaluateSubpixelFixedPoint(stable, stable, [{ code: 'canonical_zero_diff_evidence_missing' }]);
   assert.equal(eligible.eligible, true);
   assert.equal(eligible.viewports[0].sumAbsoluteDelta, 0.99);
 
@@ -42,6 +42,8 @@ test('subpixel fixed point rejects unstable measurements and semantic blockers',
   const changed = geometry({ desktop: [0.21] });
   assert.equal(evaluateSubpixelFixedPoint(local, changed, []).stableAtHundredthPixel, false);
   assert.equal(evaluateSubpixelFixedPoint(local, local, [{ code: 'content_ledger_incomplete' }]).eligible, false);
+  assert.equal(evaluateSubpixelFixedPoint(local, local, [{ code: 'max_percent_exceeded' }]).eligible, false);
+  assert.equal(evaluateSubpixelFixedPoint(local, local, [{ code: 'visual_budget_failed' }]).eligible, false);
 });
 
 test('authorization binds the exact residual and all evidence hashes', () => {

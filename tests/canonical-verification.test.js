@@ -478,8 +478,18 @@ childProcess.spawnSync = function canonicalHarness(command, args, options) {
     ok: true,
     blockers: [],
     comparison: {
-      ok: false,
-      budgetErrors: [{ code: 'max_percent_exceeded', message: 'Subpixel screenshot residual.' }],
+      ok: true,
+      budgetErrors: [],
+      mismatched: 3,
+      total: 30000,
+      percent: 0.01,
+      maxPercent: 0.01,
+      results: ['desktop', 'tablet', 'mobile'].map((label) => ({
+        label,
+        mismatched: 1,
+        total: 10000,
+        percent: 0.01,
+      })),
     },
     genericGeometry: {
       ok: true,
