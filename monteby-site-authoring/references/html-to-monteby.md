@@ -125,6 +125,7 @@ discriminator the document validates cleanly and paints nothing.
 | Uniform vertical band rhythm that matches a preset | `sectionRhythmPreset` (`compact`, `standard`, `spacious`, `hero`) with `Tablet`/`Mobile` variants instead of hand-copied `paddingTop*`/`paddingBottom*` values; keep explicit paddings when the measured rhythm does not match a preset |
 | Sibling overlap or pull-up of a following section/container | `Container.layerPull` plus `layerIndex` (and `paintLayer`) instead of negative-margin improvisation |
 | Linked heading | `Heading.href` for a static link, `Heading.dynamicHref` for a host-resolved link; no wrapper button or raw anchor |
+| Entire linked card or box | `Container.tag: "a"` together with `Container.href` or `Container.dynamicHref`; a link prop on the default `div` is invalid and must never be authored alone |
 | Multi-step form with conditional fields | FormBlock v2: `fields[].fieldId`, `steps[]` with `stepId`/`fieldIds`, `progress`, `visibleWhen` on fields, result/redirect props, `attributionMode`, and `collectionNoticeMode`/`collectionNotice` for the information shown at data collection |
 
 The product-gap rule remains for behavior the contract still cannot express,

@@ -69,6 +69,41 @@ test('preview renderer emits only contract-safe anchorId values on layout target
   assert.doesNotMatch(html, /id="bad anchor"/);
 });
 
+test('preview renderer links a Container only when its tag is the anchor contract', () => {
+  const html = renderPreview({
+    ROOT: {
+      type: { resolvedName: 'RootCanvas' },
+      isCanvas: true,
+      props: {},
+      nodes: ['section'],
+    },
+    section: {
+      type: { resolvedName: 'Section' },
+      isCanvas: true,
+      props: {},
+      parent: 'ROOT',
+      nodes: ['linked', 'plain'],
+    },
+    linked: {
+      type: { resolvedName: 'Container' },
+      isCanvas: true,
+      props: { tag: 'a', href: '/details' },
+      parent: 'section',
+      nodes: [],
+    },
+    plain: {
+      type: { resolvedName: 'Container' },
+      isCanvas: true,
+      props: { tag: 'div', href: '/ignored' },
+      parent: 'section',
+      nodes: [],
+    },
+  }, 'monteby-preview-container-link-');
+
+  assert.match(html, /<a[^>]*href="\/details"/);
+  assert.doesNotMatch(html, /href="\/ignored"/);
+});
+
 test('preview renderer writes safe static HTML from a Monteby node map', () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'monteby-preview-render-'));
   const layoutPath = path.join(directory, 'layout.json');

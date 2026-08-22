@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.3 - 2026-08-22
+
+- Author linked Containers only with the complete `tag: "a"` plus
+  `href`/`dynamicHref` contract and mirror that behavior in diagnostic preview.
+- Accept only the exact reviewable `increase-text-contrast` operation published
+  by the live accessibility audit; never invent a replacement color.
+
 ## 0.2.2 - 2026-08-20
 
 - Route visible direct text through measured drafting and the independent content ledger without duplicating complete semantic text.
