@@ -274,7 +274,15 @@ function renderNode(nodeMap, nodeId) {
     return renderSection(nodeMap, nodeId, props);
   }
   if (type === 'Container') {
-    return renderElement('div', props, renderChildren(nodeMap, nodeId), '', true);
+    const tag = safeContainerTag(props.tag);
+    const href = tag === 'a' ? safeUrlValue(props.href, BUTTON_URL_SCHEMES) || '#' : '';
+    return renderElement(
+      tag,
+      props,
+      renderChildren(nodeMap, nodeId),
+      href ? ` href="${escapeAttr(href)}"` : '',
+      true,
+    );
   }
   if (type === 'Heading') {
     const tag = safeHeadingTag(props.tag);
@@ -1761,6 +1769,12 @@ function safeExpertHeadingTag(value) {
 
 function safeSectionTag(value) {
   return ['section', 'header', 'footer', 'main', 'aside', 'nav'].includes(value) ? value : 'section';
+}
+
+function safeContainerTag(value) {
+  return ['div', 'section', 'article', 'header', 'footer', 'main', 'aside', 'nav', 'a'].includes(value)
+    ? value
+    : 'div';
 }
 
 function escapeHtml(value) {

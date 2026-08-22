@@ -23,6 +23,9 @@ carry a deterministic proposal, but it never authorizes a mutation.
 
 Never invent an alternative text, label, color, ARIA value, or patch for a
 finding that has no `fix`. Never convert a warning into a repair by judgment.
+The `increase-text-contrast` proposal is valid only when the audit publishes it
+for a solid, measurable foreground/background pair. Apply its exact returned
+color; never substitute a remembered brand color or compute another shade.
 
 ## Human review is the write boundary
 
