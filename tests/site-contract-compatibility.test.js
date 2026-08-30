@@ -13,10 +13,11 @@ const manifestPath = path.join(root, manifestRelativePath);
 
 test('site contract compatibility manifest requires the exact live contract without a phantom baseline', () => {
   const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+  const packageMetadata = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
 
   assert.deepEqual(manifest, {
     schemaVersion: 3,
-    skillVersion: '0.2.3',
+    skillVersion: '0.3.0',
     minimumBuilderVersion: '1.4.0',
     contractEndpoint: '/wp-json/monteby/v1/contract',
     liveContractRequired: true,
@@ -33,9 +34,17 @@ test('site contract compatibility manifest requires the exact live contract with
         contractPath: 'authoring.relationshipRules.queryControls',
         valueType: 'object',
       },
+      designTokens: {
+        minimumBuilderVersion: '1.5.0',
+        contractPath: 'designTokens',
+        valueType: 'object',
+        optional: true,
+        fallback: 'globalStyles-and-neutral-archetype',
+      },
     },
     reason: "No verified portable Builder contract snapshot is bundled. Authoring must use the current target site's live contract.",
   });
+  assert.equal(manifest.skillVersion, packageMetadata.version);
 });
 
 test('site contract compatibility manifest ships in the npm package', () => {
@@ -63,6 +72,11 @@ test('site contract compatibility manifest ships in the npm package', () => {
     packedPaths.includes('monteby-site-authoring/references/expert-content-authoring.md'),
     true,
     'expert-content guidance must ship in the npm package'
+  );
+  assert.equal(
+    packedPaths.includes('monteby-site-authoring/scripts/resolved-design-profile.js'),
+    true,
+    'the shared design profile resolver must ship in the npm package'
   );
   assert.equal(
     packedPaths.some((file) => file.startsWith('audit-evidence/')),

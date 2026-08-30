@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.3.0 - 2026-08-30
+
+- Resolve project tokens, live global styles, component design tokens, and
+  neutral fallbacks through one shared design profile used by layout-kit,
+  measured drafting, normalization, and explicit repair.
+- Preserve local node overrides while applying contract-backed color,
+  typography, button, form, radius, shadow, and content-width bindings only to
+  missing props.
+- Report global-style and design-token conflicts deterministically, keep global
+  colors and typography authoritative, and exclude Custom CSS from resolution.
+- Detect literals that exactly match a live global reference and allow repair
+  only through an explicit exact-match operation.
+- Add an optional Builder 1.5.0 `designTokens` feature gate while keeping older
+  live contracts compatible through global styles and neutral fallbacks.
+
 ## 0.2.3 - 2026-08-22
 
 - Author linked Containers only with the complete `tag: "a"` plus

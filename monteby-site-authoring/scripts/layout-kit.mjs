@@ -30,6 +30,12 @@
  */
 
 import { readFile, writeFile } from 'node:fs/promises';
+import designProfileModule from './resolved-design-profile.js';
+
+const {
+  applyResolvedDesignDefaults,
+  buildResolvedDesignProfile,
+} = designProfileModule;
 
 const TEXT_NODES = new Set(['Heading', 'Text', 'MultilineHeading']);
 const EDGE_WIDTHS = ['borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth'];
@@ -40,8 +46,9 @@ function snap(value, step) {
 }
 
 export class Kit {
-  constructor(contract) {
+  constructor(contract, options = {}) {
     this.contract = contract;
+    this.designProfile = buildResolvedDesignProfile(contract, options.projectTokens || {});
     this.components = new Map((contract.components || []).map((c) => [c.name, c]));
     this.blocked = new Set(contract.authoring?.blockedProps || []);
     this.rootComponents = new Set(contract.authoring?.topLevelRootComponents || ['Section']);
@@ -74,10 +81,13 @@ export class Kit {
     this.nodes = {};
     this.counter = 0;
     this.notes = [];
+    this.notes.push(...this.designProfile.conflicts.map((conflict) => (
+      `${conflict.code}: ${conflict.token}; globalStyles=${conflict.globalStylesValue}; designTokens=${conflict.designTokensValue}`
+    )));
   }
 
-  static async fromContract(path) {
-    return new Kit(JSON.parse(await readFile(path, 'utf8')));
+  static async fromContract(path, options = {}) {
+    return new Kit(JSON.parse(await readFile(path, 'utf8')), options);
   }
 
   /**
@@ -203,13 +213,19 @@ export class Kit {
   }
 
   /** Dowolny komponent z kontraktu. */
-  node(component, props = {}, children = []) {
+  node(component, props = {}, children = [], semanticRole = '') {
     const definition = this.components.get(component);
     if (!definition) throw new Error(`Komponent spoza kontraktu: ${component}`);
 
     const allowed = new Set(definition.props || []);
     const out = {};
-    for (const [prop, raw] of Object.entries(props)) {
+    const resolvedProps = applyResolvedDesignDefaults(
+      component,
+      props,
+      this.designProfile,
+      semanticRole
+    );
+    for (const [prop, raw] of Object.entries(resolvedProps)) {
       if (raw === undefined || raw === null || raw === '') continue;
       if (this.blocked.has(prop)) throw new Error(`Prop zablokowany przez kontrakt: ${component}.${prop}`);
       if (!allowed.has(prop)) {
@@ -305,9 +321,15 @@ export class Kit {
   // ---- skróty na najczęstsze węzły -------------------------------------
   section(props, children) { return this.node('Section', props, children); }
   box(props, children) { return this.node('Container', props, children); }
-  heading(text, props = {}) { return this.node('Heading', { text, ...props }); }
-  text(value, props = {}) { return this.node('Text', { text: value, ...props }); }
-  button(label, href, props = {}) { return this.node('ButtonBlock', { label, href, ...props }); }
+  heading(text, props = {}) {
+    const { typographyRole, ...nodeProps } = props;
+    return this.node('Heading', { text, ...nodeProps }, [], typographyRole || (props.tag === 'h1' ? 'h1' : 'h2'));
+  }
+  text(value, props = {}) {
+    const { typographyRole = 'body', ...nodeProps } = props;
+    return this.node('Text', { text: value, ...nodeProps }, [], typographyRole);
+  }
+  button(label, href, props = {}) { return this.node('ButtonBlock', { label, href, ...props }, [], 'button'); }
   image(src, props = {}) { return this.node('ImageBlock', { src, ...props }); }
   icon(name, props = {}) { return this.node('IconBlock', { icon: name, ...props }); }
 
@@ -331,7 +353,7 @@ export class Kit {
   shell(props, children) {
     return this.section(
       {
-        innerMaxWidth: props.innerMaxWidth ?? '1280px',
+        innerMaxWidth: props.innerMaxWidth ?? this.designProfile.layout.contentWidth ?? '1280px',
         innerPaddingX: props.innerPaddingX ?? '56px',
         innerPaddingXTablet: props.innerPaddingXTablet ?? '40px',
         innerPaddingXMobile: props.innerPaddingXMobile ?? '20px',

@@ -4,6 +4,20 @@ Use this workflow only when the user explicitly requests a site-wide Global
 Styles change. It is not part of page authoring, template authoring, visual
 repair, or an ordinary benchmark.
 
+Read-only consumption is different from changing Global Styles. Every authoring
+mode may read `globalStyles` and optional `designTokens` from the exact live Site
+Contract through `scripts/resolved-design-profile.js`. This never authorizes a
+Global Styles write and never consumes `customCSS`. Existing node values and
+exact measurements stay local overrides; new missing values may use published
+references instead of copied literals.
+
+`normalize-layout.js` reports an exact copied value as
+`global-style-literal-match` without changing the layout. Relink only through an
+explicit repair: either `--fix OUT --relink-global-tokens` for a reviewed local
+pre-flight or a `relink_global_style_literal` operation already present in the
+mechanically bound repair queue. Both paths re-check the current literal against
+the current live contract and fail closed when the value changed.
+
 ## Allowed operation
 
 1. Fetch the current authenticated Global Styles document from the exact live

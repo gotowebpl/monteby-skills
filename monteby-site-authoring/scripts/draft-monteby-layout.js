@@ -18,6 +18,11 @@ const {
   mergeDirectTextEntries,
   nodeMapContentEntries,
 } = require('./content-ledger');
+const {
+  applyResolvedDesignDefaults,
+  buildResolvedDesignProfile,
+  firstTokenReference,
+} = require('./resolved-design-profile');
 
 const DEFAULT_REPLACEMENT_PROFILE = {
   name: 'generic-service',
@@ -2679,10 +2684,15 @@ function visit(value, callback) {
   }
 }
 
-function draftLayout(contractIndex, brief) {
+function draftLayout(contractIndex, brief, contractPayload = {}) {
   const genericMeasuredReference = isGenericMeasuredReferenceBrief(brief);
+  const designProfile = buildResolvedDesignProfile(
+    contractPayload,
+    brief.projectTokens || brief.designTokens || brief.authoringRequirements?.projectTokens || {}
+  );
   const context = {
     contractIndex,
+    designProfile,
     brief,
     nodeMap: {
       ROOT: {
@@ -2703,8 +2713,11 @@ function draftLayout(contractIndex, brief) {
     genericMeasuredLoweredMediaKeys: new Set(),
     replacementProfile: genericMeasuredReference ? DEFAULT_REPLACEMENT_PROFILE : replacementProfileForBrief(brief),
   };
-  context.styleProfile = styleProfileForBrief(brief, context.replacementProfile);
-  context.geometryProfile = geometryProfileForBrief(brief, context.replacementProfile);
+  context.warnings.push(...designProfile.conflicts.map((conflict) => (
+    `${conflict.code}: ${conflict.token}; globalStyles is authoritative over designTokens.`
+  )));
+  context.styleProfile = styleProfileForBrief(brief, context.replacementProfile, designProfile);
+  context.geometryProfile = geometryProfileForBrief(brief, context.replacementProfile, designProfile);
 
   const section = requireComponent(context, ['Section']);
   const container = requireComponent(context, ['Container']);
@@ -14699,7 +14712,11 @@ function createNode(context, componentName, parentId, props, isCanvas) {
   const node = {
     type: { resolvedName: componentName },
     isCanvas,
-    props: filterAllowedProps(context, componentName, props),
+    props: filterAllowedProps(
+      context,
+      componentName,
+      applyResolvedDesignDefaults(componentName, props, context.designProfile)
+    ),
     parent: resolvedParentId,
     nodes: [],
   };
@@ -15113,7 +15130,7 @@ function proofCopy(profile) {
   };
 }
 
-function styleProfileForBrief(brief, replacementProfile) {
+function styleProfileForBrief(brief, replacementProfile, designProfile) {
   const base = {
     ...DEFAULT_REPLACEMENT_PROFILE.style,
     ...(replacementProfile.style || {}),
@@ -15121,12 +15138,30 @@ function styleProfileForBrief(brief, replacementProfile) {
   const variables = brief.visualSignals?.rootVariables && typeof brief.visualSignals.rootVariables === 'object'
     ? brief.visualSignals.rootVariables
     : {};
-  const bg = cssColorValue(variables['--bg'], base.bg);
-  const panel = cssColorValue(variables['--panel'], base.panel);
-  const ink = cssColorValue(variables['--ink'], base.ink);
-  const muted = cssColorValue(variables['--muted'], base.muted);
-  const accent = cssColorValue(variables['--accent'], base.accent);
-  const accent2 = cssColorValue(variables['--accent-2'], base.accent2);
+  const bg = cssColorValue(
+    variables['--bg'],
+    firstTokenReference(designProfile, ['colors.paper', 'colors.background']) || base.bg
+  );
+  const panel = cssColorValue(
+    variables['--panel'],
+    firstTokenReference(designProfile, ['colors.soft', 'colors.paper']) || base.panel
+  );
+  const ink = cssColorValue(
+    variables['--ink'],
+    firstTokenReference(designProfile, ['colors.text', 'colors.ink']) || base.ink
+  );
+  const muted = cssColorValue(
+    variables['--muted'],
+    firstTokenReference(designProfile, ['colors.secondary', 'colors.muted']) || base.muted
+  );
+  const accent = cssColorValue(
+    variables['--accent'],
+    firstTokenReference(designProfile, ['colors.accent', 'colors.primary']) || base.accent
+  );
+  const accent2 = cssColorValue(
+    variables['--accent-2'],
+    firstTokenReference(designProfile, ['colors.secondary', 'colors.accent_strong']) || base.accent2
+  );
 
   return {
     name: replacementProfile.name,
@@ -15136,17 +15171,17 @@ function styleProfileForBrief(brief, replacementProfile) {
     muted,
     accent,
     accent2,
-    badgeBackground: cssColorValue(variables['--wash'], cssColorValue(variables['--soft'], base.badgeBackground)),
-    navBackground: cssColorValue(variables['--secondary-bg'], base.navBackground || panel),
-    cardBackground: cssColorValue(variables['--service-bg'], cssColorValue(variables['--surface'], base.cardBackground || panel)),
+    badgeBackground: cssColorValue(variables['--wash'], cssColorValue(variables['--soft'], firstTokenReference(designProfile, ['colors.soft']) || base.badgeBackground)),
+    navBackground: cssColorValue(variables['--secondary-bg'], firstTokenReference(designProfile, ['colors.paper']) || base.navBackground || panel),
+    cardBackground: cssColorValue(variables['--service-bg'], cssColorValue(variables['--surface'], firstTokenReference(designProfile, ['colors.paper', 'colors.soft']) || base.cardBackground || panel)),
     cardInk: cssColorValue(variables['--service-ink'], base.cardInk || ink),
     cardMuted: muted || base.cardMuted,
-    buttonBg: cssColorValue(variables['--button-bg'], base.buttonBg || ink),
-    buttonFg: cssColorValue(variables['--button-fg'], base.buttonFg || '#ffffff'),
+    buttonBg: cssColorValue(variables['--button-bg'], firstTokenReference(designProfile, ['buttons.background', 'colors.accent', 'colors.primary']) || base.buttonBg || ink),
+    buttonFg: cssColorValue(variables['--button-fg'], firstTokenReference(designProfile, ['buttons.text', 'colors.paper']) || base.buttonFg || '#ffffff'),
   };
 }
 
-function geometryProfileForBrief(brief, replacementProfile) {
+function geometryProfileForBrief(brief, replacementProfile, designProfile) {
   const base = {
     ...DEFAULT_REPLACEMENT_PROFILE.geometry,
     ...(replacementProfile.geometry || {}),
@@ -15157,8 +15192,13 @@ function geometryProfileForBrief(brief, replacementProfile) {
   const isCareglo = replacementProfile.name === 'luxury-car-care';
   const isLumen = replacementProfile.name === 'lumen-eye-care-editorial';
   const referenceGeometry = brief.authoringRequirements?.referenceGeometry;
-  const maxWidth = isCareglo ? '1400px' : cssLengthValue(variables['--max'], base.maxWidth);
-  const radius = cssLengthValue(variables['--radius'], base.radius);
+  const maxWidth = isCareglo
+    ? '1400px'
+    : cssLengthValue(variables['--max'], designProfile?.layout?.contentWidth || base.maxWidth);
+  const radius = cssLengthValue(
+    variables['--radius'],
+    firstTokenReference(designProfile, ['radius']) || base.radius
+  );
   const heroMinHeight = cssLengthValue(variables['--hero-min'], base.heroMinHeight);
   const visualMinHeight = cssLengthValue(variables['--visual-min'], base.visualMinHeight);
   const secondaryMinHeight = cssLengthValue(
@@ -15488,7 +15528,7 @@ function main() {
     const contract = readJson(options.contract);
     const referenceManifest = options.referenceManifest ? readJson(options.referenceManifest) : null;
     const brief = briefWithReferenceMediaRequirements(readBrief(options), referenceManifest, options);
-    const draft = draftLayout(buildContractIndex(contract), brief);
+    const draft = draftLayout(buildContractIndex(contract), brief, contract);
     const expectedContentLedger = referenceManifest?.contentLedger;
     const contentLedgerComparison = options.preserveSourceText && expectedContentLedger
       ? compareContentLedgers(

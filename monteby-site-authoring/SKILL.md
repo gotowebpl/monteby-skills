@@ -109,6 +109,15 @@ Always fetch `GET /wp-json/monteby/v1/contract` for the target site.
 Never use the compatibility policy, remembered contracts, or bundled snapshots
 as a substitute for the live response — components, controls, host choices, and
 persistence capabilities are authoritative only there.
+
+For new node authoring, resolve the live `globalStyles` and optional
+`designTokens` through `scripts/resolved-design-profile.js`. Existing local
+props or exact measurements stay authoritative, followed by approved project
+tokens, `globalStyles`, `designTokens`, and finally the mode's neutral fallback.
+`globalStyles` wins overlapping color or typography conflicts and the conflict
+must be reported. Never consume `globalStyles.customCSS` as an authoring token.
+An older live contract without `designTokens` remains valid; do not invent the
+missing host values.
 Schema 3 also publishes this skill's `skillVersion`, `minimumBuilderVersion`,
 and named feature gates. Compare those gates to the live contract's
 `productVersion`; the contract's existing `version` remains the contract schema
