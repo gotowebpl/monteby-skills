@@ -1,6 +1,6 @@
 {
   "schemaVersion": 3,
-  "skillVersion": "0.2.3",
+  "skillVersion": "0.3.0",
   "minimumBuilderVersion": "1.4.0",
   "contractEndpoint": "/wp-json/monteby/v1/contract",
   "liveContractRequired": true,

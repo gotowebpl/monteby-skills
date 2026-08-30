@@ -45,6 +45,7 @@ test('installer bundles screenshot comparison runtime dependencies for site auth
   assert.equal(fs.existsSync(path.join(skillDir, 'scripts', 'wordpress-layout-client.js')), true);
   assert.equal(fs.existsSync(path.join(skillDir, 'scripts', 'run-canonical-verification.js')), true);
   assert.equal(fs.existsSync(path.join(skillDir, 'scripts', 'render-monteby-preview.js')), true);
+  assert.equal(fs.existsSync(path.join(skillDir, 'scripts', 'resolved-design-profile.js')), true);
   assert.equal(fs.existsSync(path.join(skillDir, 'references', 'mechanical-workflow-protocol.md')), true);
   assert.equal(fs.existsSync(path.join(skillDir, 'references', 'client-site-handoff.md')), true);
   assert.equal(fs.existsSync(path.join(skillDir, 'references', 'expert-content-authoring.md')), true);
