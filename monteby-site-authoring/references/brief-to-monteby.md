@@ -26,12 +26,20 @@ stacków fontów (`fontFamily`), których nie waliduje ani kontrakt, ani żadne
 narzędzie: skopiuj dokładny string z `globalStyles.typography.fonts` albo
 z layoutu wzorcowego.
 
+Nowe węzły bez jawnej wartości korzystają z powiązań opublikowanych przez live
+contract: `var(--gcb-color-*)`, `var(--gcb-font-*)`,
+`var(--monteby-token-*)` oraz `typographyPreset`. Nie kopiuj ich obliczonej
+wartości jako literału. Kolejność jest stała: wartość istniejąca lub dokładny
+pomiar, zatwierdzone tokeny projektu, `globalStyles`, `designTokens`, neutralny
+fallback. Konflikt koloru lub typografii rozstrzyga `globalStyles` i trafia do
+uwag kitu. `customCSS` nigdy nie jest wejściem profilu.
+
 ## Procedura
 
 | Faza | Komenda / czynność | Warunek przejścia |
 |---|---|---|
-| 0 Tokeny | wczytaj tokeny marki projektu: `.monteby/design-tokens.mjs` i `brand.json` (albo `handoff.json` z przekazania, patrz `references/design-handoff.md`) | kolory, fonty i skala odstępów pochodzą z tokenów, nie z pamięci; brak plików tokenów odnotuj jawnie w raporcie |
-| 1 Kontrakt | `GET /wp-json/monteby/v1/contract` → `.monteby/contract.json` | HTTP 200, jest `components` |
+| 0 Tokeny | wczytaj zatwierdzone tokeny marki projektu: `.monteby/design-tokens.mjs` i `brand.json` (albo `handoff.json` z przekazania, patrz `references/design-handoff.md`) | kolory, fonty i skala odstępów pochodzą z tokenów, nie z pamięci; brak plików tokenów odnotuj jawnie w raporcie |
+| 1 Kontrakt | `GET /wp-json/monteby/v1/contract` → `.monteby/contract.json`; zbuduj `resolvedDesignProfile` | HTTP 200, jest `components`; pełne `globalStyles` i opcjonalne `designTokens` pochodzą z tego samego live response |
 | 2 Wzorzec | `GET .../pages/{wzorzec}/layout` → zapisz jako `.monteby/pattern.json` | masz wartości propów sekcji, których będziesz używać |
 | 3 Treść | zbierz treść w jednym pliku JSON (jeden obiekt na stronę) | teksty 1:1 z briefu, bez skracania i parafraz |
 | 4 Build per sekcja | `node .monteby/build-<slug>.mjs` na `layout-kit.mjs`, sekcja po sekcji z szybkim podglądem (niżej) | każda sekcja obejrzana w podglądzie zanim powstanie następna |

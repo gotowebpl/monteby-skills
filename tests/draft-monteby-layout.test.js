@@ -97,6 +97,82 @@ test('draft layout self-audits clean Monteby JSON against media role requirement
   assertLeafNodesKeepCraftNodesArray(layout, ['Heading', 'Text', 'ButtonBlock', 'StatsGrid']);
 });
 
+test('draft layout consumes live global styles and design bindings before archetype fallbacks', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'monteby-draft-global-design-'));
+  const contractPath = path.join(directory, 'contract.json');
+  const briefPath = path.join(directory, 'visual-brief.json');
+  const layoutPath = path.join(directory, 'layout-draft.json');
+  const liveContract = contract();
+  liveContract.components = liveContract.components.map((component) => (
+    ['Heading', 'Text', 'ButtonBlock'].includes(component.name)
+      ? {
+          ...component,
+          props: [...component.props, 'typographyPreset'],
+          aiProps: [...component.aiProps, 'typographyPreset'],
+        }
+      : component
+  ));
+  liveContract.globalStyles = {
+    colors: {
+      primary: '#123456',
+      accent: '#f0aa00',
+      text: '#18202a',
+      secondary: '#536170',
+      paper: '#fffdf8',
+      soft: '#f1eee7',
+    },
+    typography: {
+      fonts: { body: { label: 'Audit Sans', value: '"Audit Sans", sans-serif' } },
+      presets: {
+        h1: { label: 'H1', fontFamily: 'var(--gcb-font-body)', fontSize: '61px' },
+        h2: { label: 'H2', fontFamily: 'var(--gcb-font-body)', fontSize: '39px' },
+        body: { label: 'Body', fontFamily: 'var(--gcb-font-body)', fontSize: '18px' },
+        button: { label: 'Button', fontFamily: 'var(--gcb-font-body)', fontSize: '15px' },
+      },
+    },
+    customCSS: '.forbidden-copy{color:red}',
+  };
+  liveContract.designTokens = {
+    version: 1,
+    tokens: {
+      'buttons.radius': {
+        value: '17px',
+        cssVariable: '--monteby-token-buttons-radius',
+        reference: 'var(--monteby-token-buttons-radius)',
+      },
+    },
+    bindings: {
+      ButtonBlock: { borderRadius: 'buttons.radius' },
+    },
+    layout: { contentWidth: '1332px' },
+  };
+  const brief = visualBrief({ visualSignals: { rootVariables: {} } });
+  fs.writeFileSync(contractPath, JSON.stringify(liveContract));
+  fs.writeFileSync(briefPath, JSON.stringify(brief));
+
+  const result = spawnSync(process.execPath, [
+    draftScript,
+    '--contract', contractPath,
+    '--brief-json', briefPath,
+    '--out', layoutPath,
+    '--json',
+  ], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const layout = JSON.parse(fs.readFileSync(layoutPath, 'utf8'));
+  const serialized = JSON.stringify(layout);
+  const headings = Object.values(layout).filter((node) => node?.type?.resolvedName === 'Heading');
+  const texts = Object.values(layout).filter((node) => node?.type?.resolvedName === 'Text');
+  const buttons = Object.values(layout).filter((node) => node?.type?.resolvedName === 'ButtonBlock');
+
+  assert.equal(headings.some((node) => node.props.typographyPreset === 'h1'), true);
+  assert.equal(headings.some((node) => node.props.typographyPreset === 'h2'), true);
+  assert.equal(texts.every((node) => node.props.typographyPreset === 'body'), true);
+  assert.equal(buttons.every((node) => node.props.typographyPreset === 'button'), true);
+  assert.match(serialized, /var\(--gcb-color-(?:primary|accent|text|secondary|paper|soft)\)/);
+  assert.equal(serialized.includes('forbidden-copy'), false);
+  assert.equal(serialized.includes('className'), false);
+});
+
 test('draft layout uses archetype-specific replacement media for Envato-style families', () => {
   const scenarios = [
     {

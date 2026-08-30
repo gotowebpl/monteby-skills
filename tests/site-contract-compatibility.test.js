@@ -33,6 +33,13 @@ test('site contract compatibility manifest requires the exact live contract with
         contractPath: 'authoring.relationshipRules.queryControls',
         valueType: 'object',
       },
+      designTokens: {
+        minimumBuilderVersion: '1.5.0',
+        contractPath: 'designTokens',
+        valueType: 'object',
+        optional: true,
+        fallback: 'globalStyles-and-neutral-archetype',
+      },
     },
     reason: "No verified portable Builder contract snapshot is bundled. Authoring must use the current target site's live contract.",
   });

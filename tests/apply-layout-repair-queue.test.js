@@ -343,6 +343,94 @@ test('returns terminal REPAIR_IDEMPOTENT without writing or scheduling a rerun',
   assert.equal(fs.existsSync(fixture.out), false);
 });
 
+test('relinks one explicitly approved exact global-style literal and rejects stale local overrides', () => {
+  const layout = {
+    ROOT: { type: { resolvedName: 'ROOT' }, nodes: ['section-a'], props: {} },
+    'section-a': node('Section', 'ROOT', [], { backgroundColor: '#112233' }),
+  };
+  const contract = {
+    ...sectionContract(),
+    components: sectionContract().components.map((component) => (
+      component.name === 'Section'
+        ? { ...component, aiProps: [...component.aiProps, 'backgroundColor'] }
+        : component
+    )),
+    globalStyles: {
+      colors: { accent: '#112233' },
+      typography: { fonts: {}, presets: {} },
+      customCSS: '.not-an-authoring-token{color:red}',
+    },
+    designTokens: {
+      version: 1,
+      tokens: {
+        'colors.accent': {
+          value: '#ff0000',
+          cssVariable: '--monteby-token-colors-accent',
+          reference: 'var(--monteby-token-colors-accent)',
+        },
+      },
+      bindings: {
+        Section: { backgroundColor: 'colors.accent' },
+      },
+    },
+  };
+  const bands = [{
+    order: 0,
+    generatedSectionId: 'section-a',
+    viewports: { desktop: viewport(420, 32) },
+  }];
+  const fixture = createFixture({
+    sourceLayout: layout,
+    candidateLayout: layout,
+    bands,
+    contract,
+    repairQueue: [{
+      code: 'relink_global_style_literal',
+      nodeId: 'section-a',
+      prop: 'backgroundColor',
+      token: 'colors.accent',
+      evidence: { literal: '#112233' },
+    }],
+  });
+
+  const result = runFixture(fixture);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const report = JSON.parse(result.stdout);
+  const repaired = JSON.parse(fs.readFileSync(fixture.out, 'utf8'));
+  assert.equal(repaired['section-a'].props.backgroundColor, 'var(--gcb-color-accent)');
+  assert.deepEqual(report.applied.find((item) => item.code === 'relink_global_style_literal'), {
+    code: 'relink_global_style_literal',
+    nodeId: 'section-a',
+    component: 'Section',
+    prop: 'backgroundColor',
+    token: 'colors.accent',
+    before: '#112233',
+    after: 'var(--gcb-color-accent)',
+  });
+
+  const changed = JSON.parse(JSON.stringify(layout));
+  changed['section-a'].props.backgroundColor = '#abcdef';
+  const staleFixture = createFixture({
+    sourceLayout: layout,
+    candidateLayout: changed,
+    bands,
+    contract,
+    repairQueue: [{
+      code: 'relink_global_style_literal',
+      nodeId: 'section-a',
+      prop: 'backgroundColor',
+      token: 'colors.accent',
+      evidence: { literal: '#112233' },
+    }],
+  });
+  const staleResult = runFixture(staleFixture);
+  assert.equal(staleResult.status, 1, staleResult.stderr || staleResult.stdout);
+  const staleReport = JSON.parse(staleResult.stdout);
+  assert.equal(staleReport.status, 'REPAIR_BLOCKED');
+  assert.equal(staleReport.blockers.some((blocker) => blocker.code === 'GLOBAL_STYLE_RELINK_EVIDENCE_STALE'), true);
+  assert.equal(fs.existsSync(staleFixture.out), false);
+});
+
 test('blocks recursive restore when a source subtree ID is reachable from an unrelated root', () => {
   const sourceLayout = {
     ROOT: {

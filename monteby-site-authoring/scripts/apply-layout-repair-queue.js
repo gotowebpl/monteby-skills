@@ -5,6 +5,10 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { createHash, randomUUID } = require('node:crypto');
 const { iterationArgsFor } = require('./run-visual-iteration.js');
+const {
+  buildResolvedDesignProfile,
+  globalStyleLiteralMatch,
+} = require('./resolved-design-profile');
 
 const SCHEMA_VERSION = 1;
 const ARTIFACT = 'monteby-layout-repair-application';
@@ -12,6 +16,7 @@ const ACTIONABLE_CODES = new Set([
   'restore_measured_band',
   'remove_or_merge_extra_band',
   'match_band_geometry',
+  'relink_global_style_literal',
 ]);
 const VIEWPORT_PROPS = {
   desktop: {
@@ -93,6 +98,7 @@ Applies only deterministic repairQueue operations:
   - restore_measured_band recursively restores the plan-owned Section subtree
   - match_band_geometry writes measured, contract-supported Section geometry
   - remove_or_merge_extra_band removes only a mechanically proven duplicate
+  - relink_global_style_literal replaces one approved exact literal match with a published global reference
 
 Unknown blockers and ambiguous content scope are hard stops. The output layout is
 published atomically only after every repair operation passes.`;
@@ -209,6 +215,79 @@ function sectionAuthoringProps(contract) {
     ...arrayOfStrings(section.aiProps),
     ...controlProps(section),
   ]);
+}
+
+function componentAuthoringProps(contract, componentName) {
+  const component = componentEntries(contract).find((entry) => (
+    isObject(entry)
+    && String(entry.name || entry.type || entry.resolvedName || '') === componentName
+  ));
+  if (!component) return new Set();
+  return new Set([
+    ...arrayOfStrings(component.aiProps),
+    ...controlProps(component),
+  ]);
+}
+
+function rootSectionForNode(nodeMap, nodeId) {
+  let currentId = nodeId;
+  const visited = new Set();
+  while (currentId && currentId !== 'ROOT' && !visited.has(currentId)) {
+    visited.add(currentId);
+    const node = nodeMap[currentId];
+    if (!isObject(node)) return '';
+    if (node.parent === 'ROOT' && String(node?.type?.resolvedName || '') === 'Section') return currentId;
+    currentId = String(node.parent || '');
+  }
+  return '';
+}
+
+function relinkGlobalStyleLiteral(nodeMap, contract, designProfile, item) {
+  const nodeId = String(item?.nodeId || '');
+  const prop = String(item?.prop || '');
+  const token = String(item?.token || '');
+  const node = nodeMap[nodeId];
+  const component = String(node?.type?.resolvedName || '');
+  if (!nodeId || !prop || !token || !isObject(node) || !component) {
+    throw new RepairError(
+      'GLOBAL_STYLE_RELINK_TARGET_INVALID',
+      'Global-style relink requires one existing nodeId, prop, and token.',
+      { nodeId, prop, token }
+    );
+  }
+  if (!componentAuthoringProps(contract, component).has(prop)) {
+    throw new RepairError(
+      'GLOBAL_STYLE_RELINK_PROP_UNSUPPORTED',
+      `The live contract does not author ${component}.${prop}.`,
+      { nodeId, component, prop, token }
+    );
+  }
+  const currentValue = node?.props?.[prop];
+  if (item?.evidence?.literal !== undefined && item.evidence.literal !== currentValue) {
+    throw new RepairError(
+      'GLOBAL_STYLE_RELINK_EVIDENCE_STALE',
+      `The approved literal no longer matches ${nodeId}.${prop}.`,
+      { nodeId, prop, expected: item.evidence.literal, actual: currentValue }
+    );
+  }
+  const match = globalStyleLiteralMatch(designProfile, component, prop, currentValue, token);
+  if (!match) {
+    throw new RepairError(
+      'GLOBAL_STYLE_RELINK_NOT_EXACT',
+      `${nodeId}.${prop} is not an exact match for published token ${token}.`,
+      { nodeId, component, prop, token, value: currentValue }
+    );
+  }
+  node.props[prop] = match.reference;
+  return {
+    code: item.code,
+    nodeId,
+    component,
+    prop,
+    token,
+    before: currentValue,
+    after: match.reference,
+  };
 }
 
 function childNodeIds(node) {
@@ -867,7 +946,9 @@ async function applyRepairQueue(options) {
         'Candidate ROOT.nodes must be an array.'
       );
     }
-    const allowedProps = sectionAuthoringProps(readJson(context.contractPath, 'live contract'));
+    const contract = readJson(context.contractPath, 'live contract');
+    const allowedProps = sectionAuthoringProps(contract);
+    const designProfile = buildResolvedDesignProfile(contract);
     const applied = [];
     report.inputLayoutSha256 = nodeMapSha256(inputNodeMap);
 
@@ -881,6 +962,9 @@ async function applyRepairQueue(options) {
           || item?.evidence?.candidateRootId
           || ''
         );
+        if (sectionId) namedSectionIds.add(sectionId);
+      } else if (item.code === 'relink_global_style_literal') {
+        const sectionId = rootSectionForNode(nodeMap, String(item?.nodeId || ''));
         if (sectionId) namedSectionIds.add(sectionId);
       }
     }
@@ -943,6 +1027,15 @@ async function applyRepairQueue(options) {
     ));
     for (const change of geometryChanges) {
       applied.push(applyGeometryChange(nodeMap, change));
+    }
+
+    const relinkItems = uniqueQueueItems(
+      context.queue,
+      'relink_global_style_literal',
+      (item) => `${item?.nodeId || ''}:${item?.prop || ''}`
+    );
+    for (const item of relinkItems) {
+      applied.push(relinkGlobalStyleLiteral(nodeMap, contract, designProfile, item));
     }
 
     reachableNodeIds(nodeMap);

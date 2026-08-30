@@ -20,6 +20,10 @@
 'use strict';
 
 const fs = require('fs');
+const {
+  buildResolvedDesignProfile,
+  globalStyleLiteralMatch,
+} = require('./resolved-design-profile');
 
 function parseArgs(argv) {
   const args = {};
@@ -211,7 +215,11 @@ function rendererTraps(componentName, props, contract) {
 function main() {
   const args = parseArgs(process.argv);
   if (!args.contract || !args.layout) {
-    console.error('Wymagane: --contract <plik> --layout <plik> [--fix <plik>] [--json]');
+    console.error('Wymagane: --contract <plik> --layout <plik> [--fix <plik>] [--relink-global-tokens] [--json]');
+    process.exit(2);
+  }
+  if (args['relink-global-tokens'] && !args.fix) {
+    console.error('--relink-global-tokens wymaga jawnego pliku wyjściowego --fix <plik>');
     process.exit(2);
   }
 
@@ -223,6 +231,7 @@ function main() {
   const blocked = new Set(contract.authoring?.blockedProps || []);
   const controls = buildControlIndex(contract);
   const rootComponents = new Set(contract.authoring?.topLevelRootComponents || ['Section']);
+  const designProfile = buildResolvedDesignProfile(contract);
 
   const errors = [];
   const repairs = [];
@@ -279,6 +288,29 @@ function main() {
       } else if (normalized !== value) {
         props[prop] = normalized;
       }
+
+      const effectiveValue = normalized === null ? null : props[prop];
+      const globalMatch = globalStyleLiteralMatch(designProfile, name, prop, effectiveValue);
+      if (globalMatch) {
+        warnings.push({
+          node: nodeId,
+          component: name,
+          prop,
+          ...globalMatch,
+          message: `${prop} ma literal równy ${globalMatch.token}; możliwe bezpieczne powiązanie ${globalMatch.reference}`,
+        });
+        if (args['relink-global-tokens'] && args.fix) {
+          props[prop] = globalMatch.reference;
+          repairs.push({
+            node: nodeId,
+            prop,
+            code: 'global-style-literal-match',
+            token: globalMatch.token,
+            message: `jawnie powiązano exact match ${globalMatch.literal} → ${globalMatch.reference}`,
+            dropped: false,
+          });
+        }
+      }
     }
 
     for (const trap of rendererTraps(name, props, contract)) {
@@ -297,6 +329,7 @@ function main() {
     errors,
     repairs,
     warnings,
+    designConflicts: designProfile.conflicts,
     ok: errors.length === 0,
   };
 
