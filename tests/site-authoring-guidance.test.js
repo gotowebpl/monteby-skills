@@ -129,6 +129,24 @@ test('global templates use activePostId and snapshots use the layout identity re
   assert.match(skill, /never assume a document is a\s+`page` or call `\/wp\/v2\/pages\/\{id\}`/);
 });
 
+test('global logo authoring is bounded to the discovered Monteby Branding resource', () => {
+  const production = read(path.join(references, 'production-site-benchmark.md'));
+
+  assert.match(skill, /Global site branding is a separate, explicitly authorized site-wide task/);
+  assert.match(skill, /wordpress-layout-client\.js branding-snapshot/);
+  assert.match(skill, /emitted `branding-save` action/);
+  assert.match(skill, /discover\s+`siteBranding\.resource` from the full live contract/);
+  assert.match(skill, /`\/monteby\/v1\/site\/branding`, `revision`, and `expectedRevision` exactly/);
+  assert.match(skill, /approved public WordPress media URL/);
+  assert.match(skill, /Never use\s+`\/wp\/v2\/settings`, `custom_logo`, `site_logo`, `set_theme_mod`\/theme mods/);
+  assert.match(skill, /full `\/gotoweb-craft\/v1\/settings` resource, post meta/);
+  assert.match(skill, /layout-local `logoAttachmentId`[\s\S]*one-off responsive SiteBranding widget override/);
+  assert.match(skill, /never retry automatically/);
+  assert.match(skill, /canonical public `SiteBranding` render/);
+  assert.match(production, /send only `logoUrl` plus `expectedRevision`/);
+  assert.match(production, /A branding `409` or `428` requires a new snapshot and manual review/);
+});
+
 test('subpixel and source-text policies preserve strict verdict semantics', () => {
   assert.match(skill, /1\.00px/);
   assert.match(skill, /0\.50px/);

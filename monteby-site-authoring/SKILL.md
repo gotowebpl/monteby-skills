@@ -253,6 +253,23 @@ theme-selected template merely because its slug is not canonical. Compose
 headers from `SiteBranding`, a host `WPMenu`, and layout nodes — never one
 monolithic `Navbar`.
 
+Global site branding is a separate, explicitly authorized site-wide task. For
+a logo change, use only `wordpress-layout-client.js branding-snapshot`, review
+the current identity, then execute its emitted `branding-save` action with the
+approved public WordPress media URL. Both commands must discover
+`siteBranding.resource` from the full live contract. It must declare `GET`,
+`PUT`, `/monteby/v1/site/branding`, `revision`, and `expectedRevision` exactly.
+A conflict or missing precondition requires a fresh branding snapshot, manual
+review, and one new explicit save; never retry automatically. Verify the saved
+logo in a fresh snapshot and the canonical public `SiteBranding` render.
+
+AI writes the global logo only through Monteby Branding. Never use
+`/wp/v2/settings`, `custom_logo`, `site_logo`, `set_theme_mod`/theme mods, the
+full `/gotoweb-craft/v1/settings` resource, post meta, or a layout write as a
+site-identity shortcut. A layout-local `logoAttachmentId` is allowed only when
+the user explicitly requests a one-off responsive SiteBranding widget override;
+it is never the global site identity.
+
 The versioned layout resource is the sole snapshot identity source. Use its
 `id`, `postType`, `viewUrl`, and `postModifiedGmt`; never assume a document is a
 `page` or call `/wp/v2/pages/{id}` for a `gotoweb_template`. For a global header

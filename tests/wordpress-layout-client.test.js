@@ -40,6 +40,36 @@ const OPERATIONS = [{
   unsetProps: ['legacyColor'],
 }];
 const OPERATIONS_SHA256 = operationsSha256(OPERATIONS);
+const BRANDING_REVISION = 'a'.repeat(64);
+
+function brandingContract(overrides = {}) {
+  return {
+    siteBranding: {
+      resource: {
+        readMethod: 'GET',
+        writeMethod: 'PUT',
+        path: '/monteby/v1/site/branding',
+        versionField: 'revision',
+        writePreconditionField: 'expectedRevision',
+        ...overrides,
+      },
+    },
+  };
+}
+
+function brandingDocument(revision = BRANDING_REVISION, logoUrl = '') {
+  return { version: 1, revision, logoUrl };
+}
+
+function brandingSnapshot(site, data = brandingDocument()) {
+  return {
+    schemaVersion: 1,
+    artifact: 'monteby-site-branding-snapshot',
+    site,
+    capturedAt: '2026-08-30T08:00:00.000Z',
+    data,
+  };
+}
 
 function patchContract() {
   return {
@@ -1118,5 +1148,298 @@ test('--timeout-ms aborts a request and reports a retryable timeout without retr
   assert.equal(execution.result.nextAction.id, 'retry_command_explicitly');
   assert.ok(execution.result.nextAction.requires.includes('SITE_HEALTH_CONFIRMED'));
   assert.ok(requestCount <= 1, `timeout must not retry (received ${requestCount} requests)`);
+  assert.deepEqual(server.errors, []);
+});
+
+test('branding-snapshot discovers the bounded resource and records exact site-scoped evidence', async (t) => {
+  const requests = [];
+  const contract = brandingContract();
+  const document = brandingDocument(BRANDING_REVISION, 'https://cdn.example.test/logo.svg');
+  const server = await startServer(t, (request, response) => {
+    requests.push({
+      method: request.method,
+      url: request.url,
+      authorization: request.headers.authorization,
+    });
+    if (request.url.endsWith('/contract')) return sendJson(response, 200, contract);
+    if (request.url.endsWith('/site/branding')) return sendJson(response, 200, document);
+    return sendJson(response, 500, { code: 'forbidden_test_path' });
+  });
+  const outDir = tempDir(t);
+  const reportFile = path.join(outDir, 'branding-snapshot-report.json');
+
+  const execution = await runClient([
+    'branding-snapshot', '--site', server.site, '--out-dir', outDir, '--out', reportFile,
+  ]);
+
+  assert.equal(execution.exitCode, 0);
+  assertEnvelope(execution.result, {
+    ok: true,
+    stage: 'branding-snapshot',
+    code: 'BRANDING_SNAPSHOT_OK',
+  });
+  assert.deepEqual(
+    requests.map(({ method, url }) => `${method} ${url}`),
+    [
+      'GET /wp-json/monteby/v1/contract',
+      'GET /wp-json/monteby/v1/site/branding',
+    ]
+  );
+  assert.ok(requests.every(({ authorization }) => authorization === AUTH));
+  assert.deepEqual(
+    JSON.parse(fs.readFileSync(path.join(outDir, 'branding-contract.json'), 'utf8')),
+    contract
+  );
+  const snapshot = JSON.parse(
+    fs.readFileSync(path.join(outDir, 'branding-before.json'), 'utf8')
+  );
+  assert.equal(snapshot.artifact, 'monteby-site-branding-snapshot');
+  assert.equal(snapshot.site, server.site);
+  assert.deepEqual(snapshot.data, document);
+  assert.deepEqual(JSON.parse(fs.readFileSync(reportFile, 'utf8')), execution.result);
+  assert.equal(execution.result.nextAction.id, 'save_approved_site_branding');
+  assert.ok(execution.result.nextAction.args.includes('$MONTEBY_LOGO_URL'));
+  assert.ok(execution.result.nextAction.requires.includes('MONTEBY_LOGO_URL'));
+  assert.equal(JSON.stringify(snapshot).includes(AUTH), false);
+  assert.deepEqual(server.errors, []);
+});
+
+test('branding discovery refuses forbidden or malformed resources before a second request', async (t) => {
+  const forbiddenResources = [
+    { path: '/wp/v2/settings' },
+    { path: '/gotoweb-craft/v1/settings' },
+    { path: 'https://attacker.example/settings' },
+    { writeMethod: 'POST' },
+  ];
+
+  for (const [index, override] of forbiddenResources.entries()) {
+    let requestCount = 0;
+    const server = await startServer(t, (_request, response) => {
+      requestCount += 1;
+      sendJson(response, 200, brandingContract(override));
+    });
+    const execution = await runClient([
+      'branding-snapshot', '--site', server.site,
+      '--out-dir', path.join(tempDir(t), String(index)),
+    ]);
+
+    assert.equal(execution.exitCode, 1);
+    assertEnvelope(execution.result, {
+      ok: false,
+      stage: 'branding-snapshot',
+      code: 'BRANDING_CAPABILITY_MISSING',
+    });
+    assert.equal(requestCount, 1);
+    assert.equal(execution.result.nextAction.id, 'blocked_client_error');
+    assert.deepEqual(server.errors, []);
+  }
+});
+
+test('branding-save sends one exact bounded write and verifies the returned document', async (t) => {
+  const directory = tempDir(t);
+  const snapshotFile = path.join(directory, 'branding-before.json');
+  const reportFile = path.join(directory, 'branding-save-response.json');
+  const logoUrl = 'https://cdn.example.test/approved-logo.webp';
+  const savedRevision = 'b'.repeat(64);
+  const requests = [];
+  const server = await startServer(t, async (request, response) => {
+    const body = await readBody(request);
+    requests.push({ method: request.method, url: request.url, body });
+    if (request.url.endsWith('/contract')) return sendJson(response, 200, brandingContract());
+    if (request.method === 'GET' && request.url.endsWith('/site/branding')) {
+      return sendJson(response, 200, brandingDocument());
+    }
+    if (request.method === 'PUT' && request.url.endsWith('/site/branding')) {
+      return sendJson(response, 200, brandingDocument(savedRevision, logoUrl));
+    }
+    return sendJson(response, 500, { code: 'forbidden_test_path' });
+  });
+  writeJson(snapshotFile, brandingSnapshot(server.site));
+
+  const execution = await runClient([
+    'branding-save', '--site', server.site, '--logo-url', logoUrl,
+    '--snapshot', snapshotFile, '--out', reportFile,
+  ]);
+
+  assert.equal(execution.exitCode, 0);
+  assertEnvelope(execution.result, {
+    ok: true,
+    stage: 'branding-save',
+    code: 'BRANDING_SAVE_OK',
+  });
+  assert.deepEqual(
+    requests.map(({ method, url }) => `${method} ${url}`),
+    [
+      'GET /wp-json/monteby/v1/contract',
+      'GET /wp-json/monteby/v1/site/branding',
+      'PUT /wp-json/monteby/v1/site/branding',
+    ]
+  );
+  assert.deepEqual(requests[2].body, {
+    logoUrl,
+    expectedRevision: BRANDING_REVISION,
+  });
+  assert.deepEqual(Object.keys(requests[2].body).sort(), ['expectedRevision', 'logoUrl']);
+  assert.ok(requests.every(({ url }) => !url.includes('/wp/v2/settings')));
+  assert.ok(requests.every(({ url }) => !url.includes('/gotoweb-craft/v1/settings')));
+  assert.ok(requests.every(({ url }) => !url.includes('/pages/')));
+  assert.equal(execution.result.nextAction.id, 'verify_saved_site_branding');
+  assert.equal(execution.result.nextAction.args[0], 'branding-snapshot');
+  assert.deepEqual(server.errors, []);
+});
+
+test('branding-save rejects cross-site and stale snapshots without unsafe writes', async (t) => {
+  const directory = tempDir(t);
+  const crossSiteFile = path.join(directory, 'cross-site.json');
+  const staleFile = path.join(directory, 'stale.json');
+  let requestCount = 0;
+  let writeCount = 0;
+  const server = await startServer(t, (request, response) => {
+    requestCount += 1;
+    if (request.method === 'PUT') writeCount += 1;
+    if (request.url.endsWith('/contract')) return sendJson(response, 200, brandingContract());
+    return sendJson(response, 200, brandingDocument('b'.repeat(64)));
+  });
+  writeJson(crossSiteFile, brandingSnapshot('https://different.example.test'));
+  writeJson(staleFile, brandingSnapshot(server.site));
+
+  const crossSite = await runClient([
+    'branding-save', '--site', server.site, '--logo-url', 'https://cdn.example.test/logo.svg',
+    '--snapshot', crossSiteFile, '--out', path.join(directory, 'cross-site-report.json'),
+  ]);
+  assertEnvelope(crossSite.result, {
+    ok: false,
+    stage: 'branding-save',
+    code: 'BRANDING_SNAPSHOT_SCOPE_MISMATCH',
+  });
+  assert.equal(requestCount, 0);
+  assert.equal(crossSite.result.nextAction.id, 'resnapshot_and_reconcile_site_branding');
+
+  const stale = await runClient([
+    'branding-save', '--site', server.site, '--logo-url', 'https://cdn.example.test/logo.svg',
+    '--snapshot', staleFile, '--out', path.join(directory, 'stale-report.json'),
+  ]);
+  assertEnvelope(stale.result, {
+    ok: false,
+    stage: 'branding-save',
+    code: 'BRANDING_SNAPSHOT_STALE',
+  });
+  assert.equal(requestCount, 2);
+  assert.equal(writeCount, 0);
+  assert.equal(stale.result.nextAction.id, 'resnapshot_and_reconcile_site_branding');
+  assert.ok(stale.result.nextAction.requires.includes('MANUAL_BRANDING_RECONCILIATION'));
+  assert.deepEqual(server.errors, []);
+});
+
+test('branding-save never retries revision conflicts or missing preconditions', async (t) => {
+  for (const status of [409, 428]) {
+    const directory = tempDir(t);
+    const snapshotFile = path.join(directory, `branding-${status}.json`);
+    let putCount = 0;
+    const server = await startServer(t, (request, response) => {
+      if (request.url.endsWith('/contract')) return sendJson(response, 200, brandingContract());
+      if (request.method === 'GET') return sendJson(response, 200, brandingDocument());
+      putCount += 1;
+      return sendJson(response, status, { code: `branding_${status}` });
+    });
+    writeJson(snapshotFile, brandingSnapshot(server.site));
+
+    const execution = await runClient([
+      'branding-save', '--site', server.site,
+      '--logo-url', 'https://cdn.example.test/logo.svg',
+      '--snapshot', snapshotFile, '--out', path.join(directory, `report-${status}.json`),
+    ]);
+
+    assertEnvelope(execution.result, {
+      ok: false,
+      stage: 'branding-save',
+      code: status === 409 ? 'REST_CONFLICT' : 'REST_PRECONDITION_REQUIRED',
+    });
+    assert.equal(putCount, 1);
+    assert.equal(execution.result.retryable, false);
+    assert.equal(execution.result.nextAction.id, 'resnapshot_and_reconcile_site_branding');
+    assert.equal(execution.result.nextAction.args[0], 'branding-snapshot');
+    assert.deepEqual(server.errors, []);
+  }
+});
+
+test('branding-save treats incomplete 2xx evidence as terminal after one write', async (t) => {
+  const directory = tempDir(t);
+  const snapshotFile = path.join(directory, 'branding-before.json');
+  let putCount = 0;
+  const server = await startServer(t, (request, response) => {
+    if (request.url.endsWith('/contract')) return sendJson(response, 200, brandingContract());
+    if (request.method === 'GET') return sendJson(response, 200, brandingDocument());
+    putCount += 1;
+    return sendJson(response, 200, {
+      version: 1,
+      revision: 'b'.repeat(64),
+    });
+  });
+  writeJson(snapshotFile, brandingSnapshot(server.site));
+
+  const execution = await runClient([
+    'branding-save', '--site', server.site,
+    '--logo-url', 'https://cdn.example.test/logo.svg',
+    '--snapshot', snapshotFile, '--out', path.join(directory, 'report.json'),
+  ]);
+
+  assertEnvelope(execution.result, {
+    ok: false,
+    stage: 'branding-save',
+    code: 'BRANDING_DOCUMENT_INVALID',
+  });
+  assert.equal(putCount, 1);
+  assert.equal(execution.result.nextAction.id, 'blocked_client_error');
+  assert.equal(execution.result.nextAction.tool, '');
+  assert.deepEqual(server.errors, []);
+});
+
+test('branding commands reject unsafe URLs, foreign options, and response shape drift', async (t) => {
+  const invalidUrls = [
+    'javascript:alert(1)',
+    'data:image/svg+xml,test',
+    'file:///tmp/logo.svg',
+    'https://user:password@example.test/logo.svg',
+    'https://example.test/logo\n.svg',
+    `https://example.test/${'a'.repeat(2_048)}`,
+  ];
+  for (const [index, logoUrl] of invalidUrls.entries()) {
+    const execution = await runClient([
+      'branding-save', '--site', 'https://example.test', '--logo-url', logoUrl,
+      '--snapshot', `/tmp/unused-${index}.json`, '--out', `/tmp/unused-report-${index}.json`,
+    ]);
+    assertEnvelope(execution.result, {
+      ok: false,
+      stage: 'branding-save',
+      code: 'CLI_USAGE',
+    });
+  }
+
+  const foreignOption = await runClient([
+    'snapshot', '--site', 'https://example.test', '--page-id', '1', '--out-dir', tempDir(t),
+    '--logo-url', 'https://example.test/logo.svg',
+  ]);
+  assertEnvelope(foreignOption.result, {
+    ok: false,
+    stage: 'snapshot',
+    code: 'CLI_USAGE',
+  });
+
+  let requestCount = 0;
+  const server = await startServer(t, (request, response) => {
+    requestCount += 1;
+    if (request.url.endsWith('/contract')) return sendJson(response, 200, brandingContract());
+    return sendJson(response, 200, { ...brandingDocument(), custom_logo: 42 });
+  });
+  const invalidDocument = await runClient([
+    'branding-snapshot', '--site', server.site, '--out-dir', tempDir(t),
+  ]);
+  assertEnvelope(invalidDocument.result, {
+    ok: false,
+    stage: 'branding-snapshot',
+    code: 'BRANDING_DOCUMENT_INVALID',
+  });
+  assert.equal(requestCount, 2);
   assert.deepEqual(server.errors, []);
 });
