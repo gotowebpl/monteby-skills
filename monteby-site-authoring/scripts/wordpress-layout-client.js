@@ -18,6 +18,8 @@ const COMMANDS = new Set([
   'preview',
   'patch-validate',
   'patch-save',
+  'branding-snapshot',
+  'branding-save',
 ]);
 const PRESENTATION_LAYOUTS = new Set(['default', 'full-width', 'canvas']);
 const CLIENT_TOOL = path.resolve(__filename);
@@ -98,6 +100,7 @@ function parseArgs(argv) {
     authHeaderEnv: DEFAULT_AUTH_HEADER_ENV,
     timeoutMs: DEFAULT_TIMEOUT_MS,
     renderContextUrl: '',
+    logoUrl: '',
   };
   const seen = new Set();
 
@@ -154,6 +157,8 @@ function parseArgs(argv) {
       options.timeoutMs = parsePositiveInteger(requiredValue(argv, index += 1, option), option);
     } else if (option === '--render-context-url') {
       options.renderContextUrl = requiredValue(argv, index += 1, option);
+    } else if (option === '--logo-url') {
+      options.logoUrl = requiredValue(argv, index += 1, option);
     } else {
       throw new ClientError(`Unknown option: ${option}.`, {
         code: 'CLI_USAGE',
@@ -215,6 +220,35 @@ function normalizeSite(rawSite, stage) {
   return parsed.toString().replace(/\/+$/, '');
 }
 
+function isValidLogoUrl(candidate) {
+  if (
+    typeof candidate !== 'string'
+    || candidate.length > 2_048
+    || /[\u0000-\u001F\u007F]/.test(candidate)
+  ) return false;
+  let parsed;
+  try {
+    parsed = new URL(candidate);
+  } catch {
+    return false;
+  }
+  return ['http:', 'https:'].includes(parsed.protocol)
+    && !parsed.username
+    && !parsed.password;
+}
+
+function normalizeLogoUrl(rawUrl, stage) {
+  const candidate = rawUrl.trim();
+  if (!isValidLogoUrl(candidate)) {
+    throw new ClientError('--logo-url must be an absolute HTTP or HTTPS URL.', {
+      code: 'CLI_USAGE',
+      stage,
+      nextAction: 'Use the public URL returned for the approved WordPress media item.',
+    });
+  }
+  return candidate;
+}
+
 function validateOptions(options) {
   requireOption(options, 'site', '--site');
   options.site = normalizeSite(options.site, options.command);
@@ -266,8 +300,14 @@ function validateOptions(options) {
     }
     options.renderContextUrl = normalized;
   }
+  if (options.logoUrl) {
+    options.logoUrl = normalizeLogoUrl(options.logoUrl, options.command);
+  }
   if (options.command !== 'snapshot') {
     rejectOption(options, 'renderContextUrl', '--render-context-url');
+  }
+  if (options.command !== 'branding-save') {
+    rejectOption(options, 'logoUrl', '--logo-url');
   }
 
   if (options.command === 'snapshot') {
@@ -340,6 +380,39 @@ function validateOptions(options) {
       });
     }
     rejectOption(options, 'layout', '--layout');
+  } else if (options.command === 'branding-snapshot') {
+    requireOption(options, 'outDir', '--out-dir');
+    rejectOption(options, 'pageId', '--page-id');
+    rejectOption(options, 'layout', '--layout');
+    rejectOption(options, 'snapshot', '--snapshot');
+    rejectOption(options, 'presentationLayout', '--presentation-layout');
+    rejectOption(options, 'expectedLayoutSha256', '--expected-layout-sha256');
+    rejectOption(options, 'saveReport', '--save-report');
+    rejectOption(options, 'reportOut', '--report-out');
+    rejectOption(options, 'operations', '--operations');
+    rejectOption(options, 'patchReport', '--patch-report');
+    rejectOption(options, 'expectedOperationsSha256', '--expected-operations-sha256');
+    rejectOption(options, 'expectedCandidateLayoutSha256', '--expected-candidate-layout-sha256');
+  } else if (options.command === 'branding-save') {
+    requireOption(options, 'logoUrl', '--logo-url');
+    requireOption(options, 'out', '--out');
+    if (!options.snapshot && !options.outDir) {
+      throw new ClientError('branding-save requires --snapshot or --out-dir.', {
+        code: 'CLI_USAGE',
+        stage: options.command,
+        nextAction: 'Provide the branding snapshot created immediately before this save.',
+      });
+    }
+    rejectOption(options, 'pageId', '--page-id');
+    rejectOption(options, 'layout', '--layout');
+    rejectOption(options, 'presentationLayout', '--presentation-layout');
+    rejectOption(options, 'expectedLayoutSha256', '--expected-layout-sha256');
+    rejectOption(options, 'saveReport', '--save-report');
+    rejectOption(options, 'reportOut', '--report-out');
+    rejectOption(options, 'operations', '--operations');
+    rejectOption(options, 'patchReport', '--patch-report');
+    rejectOption(options, 'expectedOperationsSha256', '--expected-operations-sha256');
+    rejectOption(options, 'expectedCandidateLayoutSha256', '--expected-candidate-layout-sha256');
   }
 }
 
@@ -351,6 +424,8 @@ function printHelp() {
   wordpress-layout-client.js preview --site URL --layout LAYOUT.json --save-report SAVE-REPORT.json --out PREVIEW.html --report-out PREVIEW-REPORT.json
   wordpress-layout-client.js patch-validate --site URL --page-id ID --operations OPERATIONS.json (--out-dir DIR | --snapshot FILE) --out PATCH-VALIDATE-REPORT.json
   wordpress-layout-client.js patch-save --site URL --page-id ID --operations OPERATIONS.json (--out-dir DIR | --snapshot FILE) --patch-report PATCH-VALIDATE-REPORT.json --expected-operations-sha256 SHA256 --expected-candidate-layout-sha256 SHA256 --out PATCH-SAVE-REPORT.json
+  wordpress-layout-client.js branding-snapshot --site URL --out-dir DIR [--out REPORT.json]
+  wordpress-layout-client.js branding-save --site URL --logo-url URL (--out-dir DIR | --snapshot FILE) --out SAVE-REPORT.json
 
 Common options:
   --auth-header-env NAME  Environment variable containing the complete Authorization header.
@@ -365,6 +440,9 @@ report and writes a separate PREVIEW_OK report for canonical verification.
 patch-validate and patch-save discover their endpoints and operation schemas only
 from the live contract. patch-save binds the same snapshot, operations digest,
 candidate digest, and postModifiedGmt. Neither command retries 409/428.
+branding-snapshot and branding-save discover the sole branding resource from the
+full live contract. branding-save writes only logoUrl with the snapshot revision;
+it never calls WordPress settings, theme mods, post meta, or layout-local props.
 `);
 }
 
@@ -432,6 +510,7 @@ function commandArgs(options) {
   if (options.out) args.push('--out', options.out);
   if (options.reportOut) args.push('--report-out', options.reportOut);
   if (options.renderContextUrl) args.push('--render-context-url', options.renderContextUrl);
+  if (options.logoUrl) args.push('--logo-url', options.logoUrl);
   return withCommonArgs(args, options);
 }
 
@@ -456,6 +535,17 @@ function snapshotArgs(options) {
     '--page-id', String(options.pageId),
     '--out-dir', outDir,
     ...(options.renderContextUrl ? ['--render-context-url', options.renderContextUrl] : []),
+  ], options);
+}
+
+function brandingSnapshotArgs(options, outDir) {
+  const targetDirectory = outDir
+    || options.outDir
+    || path.dirname(options.snapshot || options.out || process.cwd());
+  return withCommonArgs([
+    'branding-snapshot',
+    '--site', options.site,
+    '--out-dir', targetDirectory,
   ], options);
 }
 
@@ -499,6 +589,52 @@ function materializeNextAction(report, options) {
       validationArgs(options, '$MONTEBY_LAYOUT_PATH'),
       ['MONTEBY_LAYOUT_PATH', authRequirement],
       'Provide the candidate layout path, then validate that exact node map against the live site.'
+    );
+  }
+
+  if (report.code === 'BRANDING_SNAPSHOT_OK') {
+    const reportDirectory = path.dirname(report.artifacts.snapshot);
+    return nextAction(
+      'save_approved_site_branding',
+      CLIENT_TOOL,
+      withCommonArgs([
+        'branding-save',
+        '--site', options.site,
+        '--logo-url', '$MONTEBY_LOGO_URL',
+        '--snapshot', report.artifacts.snapshot,
+        '--out', path.join(reportDirectory, 'branding-save-response.json'),
+      ], options),
+      ['MONTEBY_LOGO_URL', authRequirement],
+      'After explicit logo approval, write that public URL once through the discovered Monteby Branding resource.'
+    );
+  }
+
+  if (report.code === 'BRANDING_SAVE_OK') {
+    return nextAction(
+      'verify_saved_site_branding',
+      CLIENT_TOOL,
+      brandingSnapshotArgs(options, path.join(path.dirname(options.out), 'branding-after')),
+      [authRequirement, 'CANONICAL_SITE_BRANDING_REVIEW'],
+      'Take a fresh branding snapshot and verify the SiteBranding output on the canonical public page.'
+    );
+  }
+
+  if (
+    options.command === 'branding-save'
+    && (
+      report.code === 'BRANDING_SNAPSHOT_INVALID'
+      || report.code === 'BRANDING_SNAPSHOT_SCOPE_MISMATCH'
+      || report.code === 'BRANDING_SNAPSHOT_STALE'
+      || report.code === 'REST_CONFLICT'
+      || report.code === 'REST_PRECONDITION_REQUIRED'
+    )
+  ) {
+    return nextAction(
+      'resnapshot_and_reconcile_site_branding',
+      CLIENT_TOOL,
+      brandingSnapshotArgs(options),
+      [authRequirement, 'MANUAL_BRANDING_RECONCILIATION'],
+      'Take a fresh branding snapshot, review the newer site identity, then issue one explicit save. Do not retry automatically.'
     );
   }
 
@@ -931,16 +1067,22 @@ async function request(options, authHeader, {
 
 function httpFailureResult(stage, response, artifacts = {}) {
   const status = response.status;
+  const brandingWrite = stage === 'branding-save';
+  const brandingCommand = brandingWrite || stage === 'branding-snapshot';
   let code = 'REST_REQUEST_FAILED';
   let retryable = false;
   let nextAction = 'Inspect the REST response and correct the request before running it again.';
 
   if (status === 409) {
     code = 'REST_CONFLICT';
-    nextAction = 'Take a new snapshot, reconcile the remote layout, revalidate, and run save again explicitly.';
+    nextAction = brandingWrite
+      ? 'Take a new branding snapshot, review the newer identity, and issue one explicit save without retrying automatically.'
+      : 'Take a new snapshot, reconcile the remote layout, revalidate, and run save again explicitly.';
   } else if (status === 428) {
     code = 'REST_PRECONDITION_REQUIRED';
-    nextAction = 'Take a new snapshot and run save again with its postModifiedGmt precondition.';
+    nextAction = brandingWrite
+      ? 'Take a new branding snapshot and issue one explicit save with its expectedRevision precondition.'
+      : 'Take a new snapshot and run save again with its postModifiedGmt precondition.';
   } else if (status === 401) {
     code = 'REST_UNAUTHENTICATED';
     nextAction = 'Replace the configured authorization environment variable and run the command again.';
@@ -949,7 +1091,9 @@ function httpFailureResult(stage, response, artifacts = {}) {
     nextAction = 'Grant the authenticated WordPress user access to the Monteby endpoint.';
   } else if (status === 404) {
     code = 'REST_NOT_FOUND';
-    nextAction = 'Check that Monteby Builder is active, and verify the site URL and page ID.';
+    nextAction = brandingCommand
+      ? 'Check that the installed Monteby Builder exposes the Branding resource declared by its live contract.'
+      : 'Check that Monteby Builder is active, and verify the site URL and page ID.';
   } else if (status === 408 || status === 425 || status === 429 || status >= 500) {
     code = status === 429 ? 'REST_RATE_LIMITED' : 'REST_SERVER_ERROR';
     retryable = true;
@@ -1095,6 +1239,53 @@ function operationsCapability(contract, pageId, stage) {
     validateEndpoint: endpoint(capability.validate.endpoint),
     applyEndpoint: endpoint(capability.apply.endpoint),
   };
+}
+
+function siteBrandingCapability(contract, stage) {
+  const capability = contract?.siteBranding;
+  const resource = capability?.resource;
+  if (
+    !isObject(capability)
+    || !isObject(resource)
+    || resource.readMethod !== 'GET'
+    || resource.writeMethod !== 'PUT'
+    || resource.path !== '/monteby/v1/site/branding'
+    || resource.versionField !== 'revision'
+    || resource.writePreconditionField !== 'expectedRevision'
+  ) {
+    throw new ClientError('The live contract does not expose the bounded Monteby Branding resource.', {
+      code: 'BRANDING_CAPABILITY_MISSING',
+      stage,
+      nextAction: 'Upgrade Monteby Builder, fetch the full live contract again, and never substitute WordPress settings or theme mods.',
+    });
+  }
+  return {
+    endpoint: resource.path.replace(/^\/monteby\/v1(?=\/)/, ''),
+    readMethod: resource.readMethod,
+    writeMethod: resource.writeMethod,
+    versionField: resource.versionField,
+    writePreconditionField: resource.writePreconditionField,
+  };
+}
+
+function siteBrandingDocument(value, stage) {
+  const exactKeys = ['logoUrl', 'revision', 'version'];
+  if (
+    !isObject(value)
+    || value.version !== 1
+    || typeof value.revision !== 'string'
+    || !/^[a-f0-9]{64}$/.test(value.revision)
+    || typeof value.logoUrl !== 'string'
+    || (value.logoUrl !== '' && !isValidLogoUrl(value.logoUrl))
+    || Object.keys(value).sort().join('\0') !== exactKeys.join('\0')
+  ) {
+    throw new ClientError('The Monteby Branding endpoint returned a document outside the live contract.', {
+      code: 'BRANDING_DOCUMENT_INVALID',
+      stage,
+      nextAction: 'Repair the Builder branding resource before attempting another site-wide identity write.',
+    });
+  }
+  return value;
 }
 
 function validateOperations(operations, capability, stage) {
@@ -1256,6 +1447,205 @@ async function fetchOperationsCapability(options, authHeader) {
   } catch (error) {
     return { failure: resultFromError(error, options.command) };
   }
+}
+
+async function fetchSiteBrandingCapability(options, authHeader) {
+  const response = await request(options, authHeader, { method: 'GET', endpoint: '/contract' });
+  if (!response.ok) return { failure: httpFailureResult(options.command, response, {}) };
+  try {
+    return {
+      capability: siteBrandingCapability(response.data, options.command),
+      contract: response.data,
+    };
+  } catch (error) {
+    return { failure: resultFromError(error, options.command) };
+  }
+}
+
+async function fetchSiteBrandingDocument(options, authHeader, capability, artifacts) {
+  const response = await request(options, authHeader, {
+    method: capability.readMethod,
+    endpoint: capability.endpoint,
+  });
+  if (!response.ok) return { failure: httpFailureResult(options.command, response, artifacts) };
+  try {
+    return { document: siteBrandingDocument(response.data, options.command) };
+  } catch (error) {
+    return { failure: resultFromError(error, options.command) };
+  }
+}
+
+async function runBrandingSnapshot(options, authHeader) {
+  const artifacts = {
+    contract: path.join(options.outDir, 'branding-contract.json'),
+    snapshot: path.join(options.outDir, 'branding-before.json'),
+  };
+  const discovered = await fetchSiteBrandingCapability(options, authHeader);
+  if (discovered.failure) return discovered.failure;
+  const current = await fetchSiteBrandingDocument(
+    options,
+    authHeader,
+    discovered.capability,
+    artifacts
+  );
+  if (current.failure) return current.failure;
+
+  const snapshot = {
+    schemaVersion: SCHEMA_VERSION,
+    artifact: 'monteby-site-branding-snapshot',
+    site: options.site,
+    capturedAt: new Date().toISOString(),
+    data: current.document,
+  };
+  await atomicWriteMany([
+    {
+      target: artifacts.contract,
+      content: `${JSON.stringify(redact(discovered.contract, authHeader), null, 2)}\n`,
+    },
+    {
+      target: artifacts.snapshot,
+      content: `${JSON.stringify(snapshot, null, 2)}\n`,
+    },
+  ], options.command);
+
+  return createResult({
+    ok: true,
+    stage: options.command,
+    code: 'BRANDING_SNAPSHOT_OK',
+    artifacts,
+    nextAction: 'Review the current logo, then save one approved public logo URL through Monteby Branding.',
+    scope: { site: options.site },
+    evidence: {
+      revision: current.document.revision,
+      logoUrl: current.document.logoUrl,
+    },
+  });
+}
+
+function brandingSnapshotScopeFailure(snapshot, options, artifacts) {
+  const structurallyValid = isObject(snapshot)
+    && snapshot.schemaVersion === SCHEMA_VERSION
+    && snapshot.artifact === 'monteby-site-branding-snapshot'
+    && typeof snapshot.site === 'string'
+    && typeof snapshot.capturedAt === 'string'
+    && Number.isFinite(Date.parse(snapshot.capturedAt))
+    && isObject(snapshot.data);
+  if (!structurallyValid) {
+    return createResult({
+      ok: false,
+      stage: options.command,
+      code: 'BRANDING_SNAPSHOT_INVALID',
+      artifacts,
+      nextAction: 'Create a new branding snapshot from this exact site before saving.',
+      message: 'Branding snapshot is missing its required provenance envelope.',
+    });
+  }
+  if (snapshot.site !== options.site) {
+    return createResult({
+      ok: false,
+      stage: options.command,
+      code: 'BRANDING_SNAPSHOT_SCOPE_MISMATCH',
+      artifacts,
+      nextAction: 'Discard this snapshot and snapshot the requested site branding.',
+      message: 'Branding snapshot belongs to a different site; no REST request was sent.',
+      response: {
+        requested: { site: options.site },
+        snapshot: { site: snapshot.site },
+      },
+    });
+  }
+  try {
+    siteBrandingDocument(snapshot.data, options.command);
+  } catch {
+    return createResult({
+      ok: false,
+      stage: options.command,
+      code: 'BRANDING_SNAPSHOT_INVALID',
+      artifacts,
+      nextAction: 'Create a new branding snapshot from this exact site before saving.',
+      message: 'Branding snapshot does not contain a valid Monteby Branding document.',
+    });
+  }
+  return null;
+}
+
+async function runBrandingSave(options, authHeader) {
+  const snapshotFile = options.snapshot || path.join(options.outDir, 'branding-before.json');
+  const artifacts = { snapshot: snapshotFile };
+  const snapshot = await readJsonFile(snapshotFile, 'branding snapshot', options.command);
+  const scopeFailure = brandingSnapshotScopeFailure(snapshot, options, artifacts);
+  if (scopeFailure) return scopeFailure;
+
+  const discovered = await fetchSiteBrandingCapability(options, authHeader);
+  if (discovered.failure) return discovered.failure;
+  const current = await fetchSiteBrandingDocument(
+    options,
+    authHeader,
+    discovered.capability,
+    artifacts
+  );
+  if (current.failure) return current.failure;
+  if (current.document.revision !== snapshot.data.revision) {
+    return createResult({
+      ok: false,
+      stage: options.command,
+      code: 'BRANDING_SNAPSHOT_STALE',
+      artifacts,
+      nextAction: 'Take a new branding snapshot, review the newer logo, then issue one explicit save.',
+      message: 'Site branding changed after the supplied snapshot; no write was sent.',
+      scope: { site: options.site },
+      evidence: {
+        snapshotRevision: snapshot.data.revision,
+        currentRevision: current.document.revision,
+      },
+    });
+  }
+
+  const body = {
+    logoUrl: options.logoUrl,
+    [discovered.capability.writePreconditionField]: snapshot.data.revision,
+  };
+  const response = await request(options, authHeader, {
+    method: discovered.capability.writeMethod,
+    endpoint: discovered.capability.endpoint,
+    body,
+  });
+  if (!response.ok) return httpFailureResult(options.command, response, artifacts);
+
+  let saved;
+  try {
+    saved = siteBrandingDocument(response.data, options.command);
+  } catch (error) {
+    return resultFromError(error, options.command);
+  }
+  if (saved.logoUrl !== options.logoUrl) {
+    return createResult({
+      ok: false,
+      stage: options.command,
+      code: 'BRANDING_SAVE_EVIDENCE_INVALID',
+      artifacts,
+      nextAction: 'Inspect the Builder branding persistence before attempting another write.',
+      message: 'The branding response did not confirm the exact approved logo URL.',
+      response: saved,
+      scope: { site: options.site },
+    });
+  }
+
+  return createResult({
+    ok: true,
+    stage: options.command,
+    code: 'BRANDING_SAVE_OK',
+    artifacts,
+    nextAction: 'Snapshot branding again and verify SiteBranding on the canonical public page.',
+    httpStatus: response.status,
+    response: saved,
+    scope: { site: options.site },
+    evidence: {
+      previousRevision: snapshot.data.revision,
+      revision: saved.revision,
+      logoUrl: saved.logoUrl,
+    },
+  });
 }
 
 async function runSnapshot(options, authHeader) {
@@ -2035,6 +2425,8 @@ async function run(options, authHeader) {
   if (options.command === 'save') return runSave(options, authHeader);
   if (options.command === 'patch-validate') return runPatchValidate(options, authHeader);
   if (options.command === 'patch-save') return runPatchSave(options, authHeader);
+  if (options.command === 'branding-snapshot') return runBrandingSnapshot(options, authHeader);
+  if (options.command === 'branding-save') return runBrandingSave(options, authHeader);
   return runPreview(options, authHeader);
 }
 

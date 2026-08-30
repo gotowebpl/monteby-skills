@@ -11,6 +11,8 @@ Use this gate after the layout-level workflow in `SKILL.md` when a benchmark is 
 ## Assets
 
 - Import licensed or user-provided media through the WordPress media library. Use optimized WebP where appropriate, preserve useful dimensions, write meaningful alt text, and set featured/social images when the page needs them.
+- Treat a global logo change as an explicit site-wide branding operation. After the approved media item has a public URL, run `wordpress-layout-client.js branding-snapshot` and only its emitted `branding-save` action. The client must discover the exact Monteby Branding resource from the full live contract, send only `logoUrl` plus `expectedRevision`, and verify a fresh snapshot and the canonical public SiteBranding render.
+- Never substitute `/wp/v2/settings`, `custom_logo`, `site_logo`, theme mods, full `/gotoweb-craft/v1/settings`, post meta, or layout-local `logoAttachmentId` for the Monteby Branding resource. `logoAttachmentId` is only an explicitly requested one-off responsive widget override, not site identity. A branding `409` or `428` requires a new snapshot and manual review, never an automatic retry.
 - Do not hotlink reference-template assets. Marketplace demos and screenshots establish role, crop, density, and rhythm only.
 - Use contract-backed Material Symbols names for icons. Do not author raw SVG paths or copied icon markup.
 

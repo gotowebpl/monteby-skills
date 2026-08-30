@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.1 - 2026-08-30
+
+- Add a bounded `branding-snapshot` and `branding-save` workflow discovered
+  from the live Monteby Site Contract.
+- Store site-wide AI-authored logos only in Monteby Branding with a revision
+  precondition; never write WordPress `custom_logo`, theme mods, post meta,
+  layout-local logo props, or the complete private plugin settings document.
+- Validate the exact branding resource, snapshot scope, response document and
+  public HTTP(S) media URL, with no automatic retry after a conflict.
+
 ## 0.3.0 - 2026-08-30
 
 - Resolve project tokens, live global styles, component design tokens, and
