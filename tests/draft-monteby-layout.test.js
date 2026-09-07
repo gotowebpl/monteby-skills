@@ -2499,6 +2499,7 @@ test('draft layout preserves seven ordered generic measured bands with responsiv
   const contractPath = path.join(directory, 'contract.json');
   const briefPath = path.join(directory, 'visual-brief.json');
   const layoutPath = path.join(directory, 'layout-draft.json');
+  const planPath = path.join(directory, 'mechanical-layout-plan.json');
   const manifestPath = path.join(directory, 'reference-manifest.json');
   const contractValue = contract();
   const sectionComponent = contractValue.components.find((component) => component.name === 'Section');
@@ -2670,6 +2671,23 @@ test('draft layout preserves seven ordered generic measured bands with responsiv
         fontFamily: 'Untrusted Source Sans',
       });
     }
+    if (label === 'desktop') {
+      measuredLayout.mediaBoxes.push({
+        tag: 'svg',
+        structureKey: 'orphan-icon',
+        source: '',
+        rect: measuredRect(24, 24, 48, 48),
+        firstViewportArea: 2304,
+      });
+      measuredLayout.layoutGroups.push({
+        key: 'ordinary-root-band',
+        parentKey: '',
+        tag: 'div',
+        rect: measuredRect(0, 2400, width, 96),
+        display: 'flex',
+        flowParticipation: 'normal',
+      });
+    }
     fs.writeFileSync(path.join(directory, file), JSON.stringify(measuredLayout));
   }
 
@@ -2712,6 +2730,8 @@ test('draft layout preserves seven ordered generic measured bands with responsiv
     briefPath,
     '--out',
     layoutPath,
+    '--plan-out',
+    planPath,
     '--reference-manifest',
     manifestPath,
     '--json',
@@ -2720,6 +2740,7 @@ test('draft layout preserves seven ordered generic measured bands with responsiv
   assert.equal(result.status, 0, result.stderr || result.stdout);
   const report = JSON.parse(result.stdout);
   const layout = JSON.parse(fs.readFileSync(layoutPath, 'utf8'));
+  const plan = JSON.parse(fs.readFileSync(planPath, 'utf8'));
   const sections = layout.ROOT.nodes.map((nodeId) => layout[nodeId]);
 
   assert.equal(report.ok, true);
@@ -2730,6 +2751,29 @@ test('draft layout preserves seven ordered generic measured bands with responsiv
   assert.equal(report.stats.measuredDesktopDepth, desktopHeights.reduce((sum, height) => sum + height, 0));
   assert.deepEqual(report.stats.measuredViewportLabels, ['desktop', 'tablet', 'mobile']);
   assert.match(report.warnings.join(' '), /geometry scaffold only/i);
+  assert.match(report.warnings.join(' '), /measured_hard_constraints/);
+  assert.match(report.warnings.join(' '), /unmapped_inline_svg/);
+  assert.match(report.warnings.join(' '), /uncovered_root_groups/);
+  assert.equal(plan.measuredHardConstraints.length > 0, true);
+  assert.deepEqual(
+    plan.measuredHardConstraints
+      .find((constraint) => constraint.nodeId === layout.ROOT.nodes[0])
+      ?.props
+      .filter((prop) => prop.name.startsWith('minHeight')),
+    [
+      { name: 'minHeight', value: '90px' },
+      { name: 'minHeightTablet', value: '80px' },
+      { name: 'minHeightMobile', value: '72px' },
+    ]
+  );
+  assert.deepEqual(plan.unmappedInlineSvg.map(({ viewport, structureKey }) => ({ viewport, structureKey })), [
+    { viewport: 'desktop', structureKey: 'orphan-icon' },
+  ]);
+  assert.deepEqual(plan.uncoveredRootGroups.map(({ viewport, structureKey }) => ({ viewport, structureKey })), [
+    { viewport: 'desktop', structureKey: 'ordinary-root-band' },
+  ]);
+  assert.equal(plan.completion.allSurfacesMapped, false);
+  assert.deepEqual(plan.completion.uncoveredRootGroups, plan.uncoveredRootGroups);
   assert.equal(sections.length, 7);
   assert.deepEqual(sections.map((section) => section.props.tag), bandTags);
   assert.deepEqual(sections.slice(0, -1).map((section) => section.props.background), bandColors.slice(0, -1));
@@ -7856,6 +7900,102 @@ test('draft layout rejects contracts without core canvas widgets', () => {
 
   assert.equal(result.status, 1);
   assert.match(result.stderr, /Section/);
+});
+
+test('generic measured drafting keeps a painted CTA surface on the clickable ButtonBlock', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'monteby-draft-painted-button-'));
+  const contractPath = path.join(directory, 'contract.json');
+  const briefPath = path.join(directory, 'brief.json');
+  const manifestPath = path.join(directory, 'manifest.json');
+  const layoutPath = path.join(directory, 'layout.json');
+  const viewports = [
+    ['desktop', 1440, 900],
+    ['tablet', 834, 900],
+    ['mobile', 390, 844],
+  ];
+
+  for (const [label, width, height] of viewports) {
+    const layout = genericMeasuredLayout({
+      label,
+      width,
+      height,
+      bandHeights: [260],
+      bandTags: ['section'],
+      bandColors: ['rgb(255, 255, 255)'],
+      columns: [1],
+    });
+    layout.textBoxes[0] = {
+      ...layout.textBoxes[0],
+      tag: 'a',
+      text: 'Umów konsultację',
+      href: '/kontakt/',
+      backgroundColor: 'rgb(24, 63, 52)',
+      color: 'rgb(255, 255, 255)',
+      borderTopWidth: '2px',
+      borderRightWidth: '2px',
+      borderBottomWidth: '2px',
+      borderLeftWidth: '2px',
+      borderTopColor: 'rgb(24, 63, 52)',
+      borderRightColor: 'rgb(24, 63, 52)',
+      borderBottomColor: 'rgb(24, 63, 52)',
+      borderLeftColor: 'rgb(24, 63, 52)',
+      borderRadius: '14px',
+      paddingTop: '12px',
+      paddingRight: '24px',
+      paddingBottom: '12px',
+      paddingLeft: '24px',
+    };
+    fs.writeFileSync(
+      path.join(directory, label === 'desktop' ? 'reference-layout.json' : `reference-layout-${label}.json`),
+      JSON.stringify(layout)
+    );
+  }
+
+  const liveContract = contract();
+  const button = liveContract.components.find((component) => component.name === 'ButtonBlock');
+  button.props.push('borderWidth', 'borderColor');
+  button.aiProps = button.props;
+  fs.writeFileSync(contractPath, JSON.stringify(liveContract));
+  fs.writeFileSync(briefPath, JSON.stringify({
+    ...visualBrief({ target: { archetype: '', referenceStyle: '' }, text: { h1: [], h2: [], h3: [], ctas: [], stats: [] } }),
+    media: { surfaces: [], requiredRoles: [] },
+    authoringRequirements: {
+      preserveSourceText: true,
+      reuseSourceMedia: true,
+      requiredMediaRoles: [],
+      referenceClassification: { kind: 'generic-measured-reference', family: '', familyMechanics: false },
+    },
+  }));
+  fs.writeFileSync(manifestPath, JSON.stringify({
+    sourceUrl: 'file:///tmp/painted-button.html',
+    mediaSurfaces: [],
+    requiredMediaRoles: [],
+    layouts: viewports.map(([label]) => ({
+      label,
+      file: label === 'desktop' ? 'reference-layout.json' : `reference-layout-${label}.json`,
+      status: 'ok',
+    })),
+  }));
+
+  const result = spawnSync(process.execPath, [
+    draftScript, '--contract', contractPath, '--brief-json', briefPath,
+    '--reference-manifest', manifestPath, '--out', layoutPath, '--json',
+  ], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const layout = JSON.parse(fs.readFileSync(layoutPath, 'utf8'));
+  const cta = Object.values(layout).find((node) => node?.type?.resolvedName === 'ButtonBlock');
+  const wrapper = cta ? layout[cta.parent] : null;
+
+  assert.equal(cta.props.backgroundColor, 'rgb(24, 63, 52)');
+  assert.equal(cta.props.borderRadius, '14px');
+  assert.equal(cta.props.borderWidth, '2px');
+  assert.equal(cta.props.borderColor, 'rgb(24, 63, 52)');
+  assert.equal(cta.props.paddingTop, '12px');
+  assert.equal(cta.props.paddingLeft, '24px');
+  assert.equal(wrapper.props.backgroundColor, undefined);
+  assert.equal(wrapper.props.borderRadius, undefined);
+  assert.equal(wrapper.props.borderWidth, undefined);
+  assert.equal(wrapper.props.paddingTop, undefined);
 });
 
 function genericMeasuredLayout({ label, width, height, bandHeights, bandTags, bandColors, columns }) {

@@ -52,6 +52,14 @@ Require a current backup/rollback path before the first write.
 The commands below contain no secret value. Prefer the exact emitted
 `nextAction.args` when a report is already available.
 
+On Windows, invoke the canonical client with `node` and its absolute script
+path, as shown below. Do not switch it to `npx.cmd`, `shell: true`, or an
+unquoted shell-composed command. In Git Bash only, if an exact diagnostic must
+call `curl.exe` with a `/wp-json/...` path argument, prefix that one invocation
+with `MSYS_NO_PATHCONV=1`; do not export it for the session or attach it to the
+Node workflow. This prevents MSYS from rewriting the REST path into a local
+Windows path while keeping every other path conversion scoped normally.
+
 ### 1 — Snapshot exact site/page
 
 ```bash
@@ -250,6 +258,12 @@ the owner, scope, product rationale, and rollback.
 
 
 ## Capture caveat: narrow viewports in headless Chrome
+
+Motion verification requires a real browser with advancing animation frames.
+Static browser panels and DOM-only probes may confirm triggers, positions, and
+CSS variable values, but they are not evidence that a transition or animation
+played correctly. If Playwright or a usable local browser is unavailable, report
+motion QA as blocked; do not promote a static probe to a motion pass.
 
 `chrome --headless=new --screenshot --window-size=390,H` silently enforces a
 minimum window width (~435px) and crops the image back to 390 — every element

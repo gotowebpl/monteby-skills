@@ -21,7 +21,7 @@ const {
   renderReferenceBrief,
   renderedLayoutCaptureScript,
   renderedMediaSurfaces,
-  resolveNpxExecutable,
+  resolveNpxInvocation,
   safeCapturedFontFamily,
   usage,
   waitForFontFaceSet,
@@ -34,10 +34,22 @@ const TEXT_SELECTOR = 'h1,h2,h3,h4,p,blockquote,a,button,li,span,strong,small';
 const LANDMARK_SELECTOR = 'header,nav,main,section,article,aside,footer';
 const INTERACTION_SELECTOR = 'a[href],button,details,summary,dialog,input,select,textarea,[role="button"],[role="link"],[role="switch"],[role="checkbox"],[role="radio"],[role="menuitem"],[role="menuitemcheckbox"],[role="menuitemradio"],[role="option"],[role="tab"],[role="tabpanel"],[role="dialog"],[role="alertdialog"],[role="accordion"],[aria-expanded]';
 
-test('reference capture resolves the platform-specific npx executable', () => {
-  assert.equal(resolveNpxExecutable('win32'), 'npx.cmd');
-  assert.equal(resolveNpxExecutable('darwin'), 'npx');
-  assert.equal(resolveNpxExecutable('linux'), 'npx');
+test('reference capture invokes npx without a Windows command shim', () => {
+  assert.deepEqual(resolveNpxInvocation('darwin'), { command: 'npx', args: [] });
+  assert.deepEqual(resolveNpxInvocation('linux'), { command: 'npx', args: [] });
+  assert.deepEqual(resolveNpxInvocation('win32', {
+    execPath: 'C:\\Program Files\\nodejs\\node.exe',
+    npmExecPath: 'C:\\Program Files\\nodejs\\node_modules\\npm\\bin\\npm-cli.js',
+    exists: (candidate) => candidate.endsWith('npx-cli.js'),
+  }), {
+    command: 'C:\\Program Files\\nodejs\\node.exe',
+    args: ['C:\\Program Files\\nodejs\\node_modules\\npm\\bin\\npx-cli.js'],
+  });
+  assert.throws(() => resolveNpxInvocation('win32', {
+    execPath: 'C:\\nodejs\\node.exe',
+    npmExecPath: '',
+    exists: () => false,
+  }), /npx-cli\.js was not found/);
 });
 
 test('reference capture derives a timeout that covers bounded navigation and media warmup', () => {
@@ -1266,6 +1278,21 @@ test('content ledger capture retains a paragraph longer than 180 characters', ()
   assert.equal(typeof layout.contentTextEntries[0].structureKey, 'string');
 });
 
+test('rendered text capture preserves an authored non-breaking space', () => {
+  const text = 'Oferta i\u00a0wdrożenie';
+  const element = textElement(
+    'p',
+    text,
+    rect(8, 18, 300, 30),
+    Array.from(text, (_, index) => rect(10 + index * 7, 20, 7, 14))
+  );
+
+  const { layout } = captureWithMockDom([element]);
+
+  assert.equal(layout.contentTextEntries[0].text, text);
+  assert.equal(layout.textBoxes[0].text, text);
+});
+
 test('reference manifest ledger includes direct text without duplicating a full semantic element', () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'monteby-direct-ledger-'));
   const layout = {
@@ -2153,6 +2180,22 @@ test('direct text keeps long source copy and discloses missing Range geometry', 
   assert.equal(layout.evidenceCompleteness.complete, false);
   assert.equal(layout.evidenceCompleteness.essentialGeometryTruncated, true);
   assert.ok(layout.evidenceCompleteness.reasons.includes('direct-text-geometry-incomplete'));
+});
+
+test('direct text ignores HTML comments instead of reporting incomplete text geometry', () => {
+  const wrapper = layoutElement('div', rect(20, 20, 280, 80), []);
+  wrapper.childNodes = [{ nodeType: 8, nodeValue: 'internal implementation note' }];
+  const main = layoutElement('main', rect(0, 0, 320, 160), [wrapper]);
+
+  const { layout } = captureWithMockDom([], [], {}, {
+    bodyChildren: [main],
+    landmarkElements: [main],
+    scrollHeight: 160,
+  });
+
+  assert.deepEqual(layout.directTextEntries, []);
+  assert.equal(layout.evidenceCompleteness.complete, true);
+  assert.equal(layout.evidenceCompleteness.reasons.includes('direct-text-geometry-incomplete'), false);
 });
 
 test('capture never persists live sensitive or autofilled form values', () => {

@@ -20,13 +20,18 @@ the current live contract and fail closed when the value changed.
 
 ## Allowed operation
 
-1. Fetch the current authenticated Global Styles document from the exact live
-   contract resource.
+The required lifecycle is **GET → merge → full save** against the advertised
+versioned resource:
+
+1. Discover `globalStyles.resource` from the full live contract. Require its
+   advertised `GET`, `PUT`, `revision`, and `expectedRevision` fields, then fetch
+   the current authenticated Global Styles document through that exact resource.
 2. Preserve every field the task did not name.
 3. Merge the approved change into the complete current document.
 4. Validate the complete payload against the live schema.
-5. Save the complete document once through the advertised resource and verify a
-   fresh GET.
+5. Save the complete document once with the freshly read `expectedRevision`
+   through the advertised resource and verify a fresh GET. A conflict requires a
+   new read and manual reconciliation, never an automatic retry.
 
 `globalStyles.customCSS` may change only when the site-wide task explicitly
 names Custom CSS. A new value containing `@import` is invalid and must be

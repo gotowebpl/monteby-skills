@@ -147,13 +147,14 @@ uwag kitu. `customCSS` nigdy nie jest wejściem profilu.
 | 0 Tokeny | wczytaj zatwierdzone tokeny marki projektu: `.monteby/design-tokens.mjs` i `brand.json` (albo `handoff.json` z przekazania, patrz `references/design-handoff.md`) | kolory, fonty i skala odstępów pochodzą z tokenów, nie z pamięci; brak plików tokenów odnotuj jawnie w raporcie |
 | 1 Kontrakt | `GET /wp-json/monteby/v1/contract` → `.monteby/contract.json`; zbuduj `resolvedDesignProfile` | HTTP 200, jest `components`; pełne `globalStyles` i opcjonalne `designTokens` pochodzą z tego samego live response |
 | 2 Wzorzec | `GET .../pages/{wzorzec}/layout` → zapisz jako `.monteby/pattern.json` | masz wartości propów sekcji, których będziesz używać |
-| 3 Treść | zbierz treść w jednym pliku JSON (jeden obiekt na stronę) | teksty 1:1 z briefu, bez skracania i parafraz |
+| 3 Treść | zbierz treść w artefakcie `monteby-client-content-document` v1 (unikalne `id` + dokładny `text`) | teksty 1:1 z briefu, z zachowaniem U+00A0, bez skracania i parafraz |
 | 4 Build per sekcja | `node .monteby/build-<slug>.mjs` na `layout-kit.mjs`, sekcja po sekcji z szybkim podglądem (niżej) | każda sekcja obejrzana w podglądzie zanim powstanie następna |
 | 5 Uwagi kitu | przeczytaj `result.notes` | **pusta lista** albo każda pozycja świadomie zaakceptowana i opisana |
 | 6 Pre-flight | `normalize-layout.js --contract … --layout …` | `Błędy: 0`, ostrzeżenia przeczytane |
 | 7 Walidacja | `POST /wp-json/monteby/v1/validate` | `valid: true` |
 | 8 Zapis | `GET .../layout` po `postModifiedGmt`, potem `PUT` z `expectedModifiedGmt` | HTTP 200 |
-| 9 Bramka końcowa | porównanie zrzutów zapisanej strony na 1440/834/390 (niżej) | brak przepełnienia poziomego, sekcje wyrenderowane, różnice zrzutów rozliczone |
+| 9 Bramka treści | przechwyć żywą stronę przez `capture-template-reference.js`, potem uruchom `verify-client-content.js --client-document … --live-manifest …` | `complete: true`; brak `missing`, `truncatedOrChanged`, `duplicateCountMismatch` i `added` |
+| 10 Bramka końcowa | porównanie zrzutów zapisanej strony na 1440/834/390 (niżej) | brak przepełnienia poziomego, sekcje wyrenderowane, różnice zrzutów rozliczone |
 
 Szerokości pomiaru: 1440/834/390. Wcześniejsza wersja tej tabeli podawała 768;
 obowiązuje jedna reguła szerokości tabletu z `mechanical-workflow-protocol.md`

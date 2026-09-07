@@ -1145,6 +1145,20 @@ function operationsSha256(operations) {
   return createHash('sha256').update(canonicalJson(operations), 'utf8').digest('hex');
 }
 
+function pruneNoopOperations(operations) {
+  return operations.flatMap((operation) => {
+    if (!isObject(operation) || operation.type !== 'update_props') return [operation];
+    const normalized = { ...operation };
+    if (isObject(normalized.props) && Object.keys(normalized.props).length === 0) {
+      delete normalized.props;
+    }
+    if (Array.isArray(normalized.unsetProps) && normalized.unsetProps.length === 0) {
+      delete normalized.unsetProps;
+    }
+    return normalized.props === undefined && normalized.unsetProps === undefined ? [] : [normalized];
+  });
+}
+
 function canonicalSha256(value) {
   return createHash('sha256').update(canonicalJson(value), 'utf8').digest('hex');
 }
@@ -1436,7 +1450,7 @@ async function loadOperations(options) {
       nextAction: 'Provide the exact operation batch as JSON.',
     });
   }
-  return operations;
+  return pruneNoopOperations(operations);
 }
 
 async function fetchOperationsCapability(options, authHeader) {
@@ -2510,4 +2524,5 @@ module.exports = {
   nodeMapSha256,
   operationsSha256,
   parseArgs,
+  pruneNoopOperations,
 };

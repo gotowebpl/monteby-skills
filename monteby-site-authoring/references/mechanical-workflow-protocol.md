@@ -71,6 +71,13 @@ One rule governs every tablet width in this skill:
 - authoring decisions ("does this need a `*Tablet` override?") are made against
   the 900px/767px sheet windows, not against the capture width.
 
+`WPMenu.mobileBreakpoint` is an independent component behavior, not a third
+layout stylesheet boundary. Read its live control value (`sm` 640, `md` 768,
+`lg` 1024, `xl` 1280 or `2xl` 1536) and test the drawer on both sides of that
+chosen threshold. A measurement at 834px still uses tablet layout props even
+when the menu's own `md` drawer has already switched state. Never infer the
+menu threshold from 834px, 900px or 767px.
+
 Any document or script in this skill that states a different tablet threshold
 (older texts said 768) is superseded by this rule and must carry an annotation
 pointing here.

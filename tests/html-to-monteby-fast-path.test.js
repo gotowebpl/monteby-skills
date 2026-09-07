@@ -36,10 +36,11 @@ const CONTRACT = {
       name: 'Container',
       isCanvas: true,
       allowedParents: ['Section', 'Container'],
-      props: ['anchorId', 'borderWidth', 'borderTopWidth', 'borderTopColor', 'flexGrow', 'width', 'sticky', 'stickyTop', 'hoverTranslateY'],
+      props: ['anchorId', 'borderWidth', 'borderTopWidth', 'borderTopColor', 'flexGrow', 'width', 'paddingLeft', 'sticky', 'stickyTop', 'hoverTranslateY'],
       controls: [
         { type: 'number', props: ['flexGrow'], step: 1, min: 0, max: 12 },
         { type: 'css-value', props: ['width'], units: ['px'] },
+        { type: 'spacing', spacingProps: { left: 'paddingLeft' }, units: ['px'], min: 0, max: 200 },
         { type: 'toggle', props: ['sticky'] },
         { type: 'css-value', props: ['stickyTop'], units: ['px'] },
         { type: 'number', props: ['hoverTranslateY'], min: -999, max: 999 },
@@ -54,6 +55,7 @@ const CONTRACT = {
         { type: 'css-value', props: ['fontSize'], step: 1, units: ['px'] },
         { type: 'css-value', props: ['lineHeight'], step: 0.1, units: [''] },
         { type: 'segment', props: ['textTransform'], options: ['', 'uppercase', 'lowercase'] },
+        { type: 'custom', props: ['tag'], pattern: '^h[1-6]$' },
       ],
     },
     {
@@ -119,6 +121,49 @@ test('layout-kit rejects contract violations and the ListBlock object trap', asy
   assert.throws(() => kit.heading('x', { nieistniejacy: 1 }), /spoza kontraktu/);
   assert.throws(() => kit.node('ListBlock', { items: [{ text: 'a', href: '/a' }] }), /React #31/);
   assert.throws(() => kit.section({}, [kit.section({})]), /niedozwolony/);
+});
+
+test('layout-kit validates spacing, custom controls, and published token references locally', async () => {
+  const dir = tempDir();
+  const contract = writeContract(dir);
+  const { Kit } = await import(path.join(SCRIPTS, 'layout-kit.mjs'));
+  const kit = await Kit.fromContract(contract);
+
+  const section = kit.section({}, [
+    kit.box({ paddingLeft: 'auto' }),
+    kit.heading('Nieprawidłowy tag', { tag: 'div' }),
+    kit.button('Token', '/', { backgroundColor: 'var(--arbitrary-color)' }),
+  ]);
+  const result = await kit.write(path.join(dir, 'controls.json'), [section]);
+  const map = JSON.parse(fs.readFileSync(result.path, 'utf8'));
+  const container = Object.values(map).find((node) => node.type.resolvedName === 'Container');
+  const heading = Object.values(map).find((node) => node.type.resolvedName === 'Heading');
+  const button = Object.values(map).find((node) => node.type.resolvedName === 'ButtonBlock');
+
+  assert.equal(container.props.paddingLeft, undefined);
+  assert.equal(heading.props.tag, undefined);
+  assert.equal(button.props.backgroundColor, undefined);
+  assert.ok(result.notes.some((note) => note.includes('Container.paddingLeft')));
+  assert.ok(result.notes.some((note) => note.includes('Heading.tag')));
+  assert.ok(result.notes.some((note) => note.includes('nieopublikowana referencja CSS')));
+});
+
+test('layout-kit starts a fresh document after each successful write', async () => {
+  const dir = tempDir();
+  const contract = writeContract(dir);
+  const { Kit } = await import(path.join(SCRIPTS, 'layout-kit.mjs'));
+  const kit = await Kit.fromContract(contract);
+
+  const first = kit.section({}, [kit.heading('Pierwszy dokument', { tag: 'h1', lineHeight: '1.2' })]);
+  await kit.write(path.join(dir, 'first.json'), [first]);
+  const second = kit.section({}, [kit.heading('Drugi dokument', { tag: 'h2', lineHeight: '1.3' })]);
+  const secondResult = await kit.write(path.join(dir, 'second.json'), [second]);
+  const secondMap = JSON.parse(fs.readFileSync(secondResult.path, 'utf8'));
+
+  assert.equal(Object.keys(secondMap).length, 3);
+  assert.deepEqual(secondMap.ROOT.nodes, ['section-2']);
+  assert.equal(JSON.stringify(secondMap).includes('Pierwszy dokument'), false);
+  assert.equal(JSON.stringify(secondMap).includes('Drugi dokument'), true);
 });
 
 test('layout-kit requires same-page links to resolve to one contract anchor target', async () => {
@@ -512,6 +557,24 @@ test('compiler guarantees section gutters and runbook documents narrow-capture a
   const runbook = fs.readFileSync(path.join(REFERENCES, 'quick-start-runbook.md'), 'utf8');
   assert.match(runbook, /minimum window width/);
   assert.match(runbook, /iframe harness|fixed-width iframe/);
+  assert.match(runbook, /Motion verification requires a real browser/);
+  assert.match(runbook, /report\s+motion QA as blocked/);
+  assert.match(runbook, /invoke the canonical client with `node`/);
+  assert.match(runbook, /Do not switch it to `npx\.cmd`, `shell: true`/);
+  assert.match(runbook, /Git Bash only[\s\S]*MSYS_NO_PATHCONV=1/);
+  assert.match(runbook, /do not export it for the session/);
+});
+
+test('responsive guidance separates measurement, layout sheets, and WPMenu behavior', () => {
+  const protocol = fs.readFileSync(path.join(REFERENCES, 'mechanical-workflow-protocol.md'), 'utf8');
+
+  assert.match(protocol, /desktop:1440x1200/);
+  assert.match(protocol, /tablet:834x1112/);
+  assert.match(protocol, /mobile:390x844/);
+  assert.match(protocol, /at and below \*\*900px\*\*/);
+  assert.match(protocol, /at and below \*\*767px\*\*/);
+  assert.match(protocol, /`WPMenu\.mobileBreakpoint` is an independent component behavior/);
+  assert.match(protocol, /`sm` 640, `md` 768,[\s\S]*`2xl` 1536/);
 });
 
 test('kit surfaces silent snaps and renderer traps discovered by the 10-agent audit', async () => {

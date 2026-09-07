@@ -6,7 +6,7 @@ const os = require('os');
 const path = require('path');
 const { pathToFileURL } = require('url');
 const { runBoundedProcess } = require('./bounded-child-process');
-const { captureViewportTimeoutMs, resolveNpxExecutable } = require('./capture-template-reference');
+const { captureViewportTimeoutMs, resolveNpxInvocation } = require('./capture-template-reference');
 
 const DEFAULT_VIEWPORTS = [
   { label: 'desktop', width: 1440, height: 1200 },
@@ -5193,7 +5193,8 @@ async function captureTargetScreenshotViewport(options, targetUrl, viewport, fil
   fs.writeFileSync(scriptFile, targetScreenshotCaptureScript());
 
   try {
-    const result = await runBoundedProcess(resolveNpxExecutable(), ['--yes', '-p', options.playwrightPackage, 'node', scriptFile], {
+    const npx = resolveNpxInvocation();
+    const result = await runBoundedProcess(npx.command, [...npx.args, '--yes', '-p', options.playwrightPackage, 'node', scriptFile], {
       timeoutMs,
       env: {
         ...process.env,
