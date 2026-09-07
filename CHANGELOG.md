@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.4.0 - 2026-09-07
+
+- Expand strict content plans through the live Builder composition catalog and
+  existing Kit, including typed repeaters and real navigation targets.
+- Preserve explicit responsive typography, resolve effective preset line height,
+  and apply a bounded h3 fallback only when that role is absent.
+- Reject unsafe project tokens and aliased CLI output files rather than silently
+  substituting values or overwriting source inputs.
+- Guide full-page briefs through published hero, navigation and footer choices,
+  approved media, canonical WordPress verification and independent visual review.
+- Add an optional Builder 1.5.1 compositions feature gate while retaining the
+  Builder 1.4.0 baseline for existing authoring routes.
+
 ## 0.3.1 - 2026-08-30
 
 - Add a bounded `branding-snapshot` and `branding-save` workflow discovered

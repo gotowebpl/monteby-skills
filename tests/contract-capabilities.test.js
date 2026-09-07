@@ -43,3 +43,12 @@ test('query control gate is available from Builder 1.3.9', () => {
     authoring: { relationshipRules: { queryControls: {} } },
   }, 'queryControls', manifest).ok, true);
 });
+
+
+test('composition gate requires Builder 1.5.1 and the declared live composition version', () => {
+  assert.equal(evaluateFeatureGate({ productVersion: '1.5.0', authoring: { compositions: { version: 1 } } }, 'compositions', manifest).code, 'blocked_plugin_version');
+  for (const compositions of [undefined, {}, { version: 2 }]) {
+    assert.equal(evaluateFeatureGate({ productVersion: '1.5.1', authoring: { compositions } }, 'compositions', manifest).code, 'blocked_contract_inconsistency');
+  }
+  assert.equal(evaluateFeatureGate({ productVersion: '1.5.1', authoring: { compositions: { version: 1 } } }, 'compositions', manifest).ok, true);
+});

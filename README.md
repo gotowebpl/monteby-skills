@@ -1,12 +1,14 @@
 # Monteby Skills
 
-Current package release: `0.3.1`. Site Authoring 0.3.1 requires Monteby
+Current package release: `0.4.0`. Site Authoring 0.4.0 requires Monteby
 Builder 1.4.0 for canonical writes and uses named feature gates from the live
 contract; Query controls remain available from Builder 1.3.9. Builder 1.5.0
 adds the optional live `designTokens` contract consumed by the shared design
 profile resolver; older contracts continue through global styles and neutral
 fallbacks. Builder 1.5.0 also exposes the optional bounded `siteBranding`
-resource required by the site-wide logo commands.
+resource required by the site-wide logo commands. Builder 1.5.1 adds optional
+composition-plan authoring; the live catalog supplies all recipes, and older
+sites retain the existing pattern-authoring route.
 
 Reusable Agent Skills for working with the Monteby ecosystem.
 

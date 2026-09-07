@@ -18,7 +18,7 @@ mode.
 |---|---|---|
 | `live-page-edit` | editing or extending pages on a working Monteby site | `references/mechanical-workflow-protocol.md` |
 | `owned-html-reconstruction` | reproducing an owned/licensed HTML mockup as a Monteby page | `references/quick-start-runbook.md`, `references/html-to-monteby.md` |
-| `content-brief-authoring` | building a page from a written brief / content JSON, with no reference HTML to measure | `references/brief-to-monteby.md` |
+| `content-brief-authoring` | building from a written brief: select live compositions and supply a data plan; adapt an existing pattern only when requested | `references/brief-to-monteby.md` |
 | `external-reference-benchmark` | third-party demo/template fidelity benchmarks | `references/visual-benchmark-loop.md` |
 | `handoff` | takeover/handoff of a Docker-backed client installation | `references/client-site-handoff.md` |
 | `custom-widget` | registering a site-specific child-theme widget | `references/custom-widget-registration.md` |

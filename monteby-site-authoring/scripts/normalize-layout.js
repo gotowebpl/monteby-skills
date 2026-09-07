@@ -22,6 +22,7 @@
 const fs = require('fs');
 const {
   buildResolvedDesignProfile,
+  effectiveTypographyValue,
   globalStyleLiteralMatch,
 } = require('./resolved-design-profile');
 
@@ -128,7 +129,7 @@ function normalizeValue(control, value) {
 }
 
 /** Traps that pass /validate but break the rendered page or the editor canvas. */
-function rendererTraps(componentName, props, contract) {
+function rendererTraps(componentName, props, contract, designProfile) {
   const notes = [];
   const allowed = new Set(
     (contract.components || []).find((c) => c.name === componentName)?.props || []
@@ -191,7 +192,7 @@ function rendererTraps(componentName, props, contract) {
     });
   }
 
-  if (['Heading', 'Text', 'MultilineHeading'].includes(componentName) && !('lineHeight' in props)) {
+  if (['Heading', 'Text', 'MultilineHeading'].includes(componentName) && !effectiveTypographyValue(props, designProfile, 'lineHeight')) {
     notes.push({
       level: 'warning',
       message: 'brak lineHeight — nagłówek/akapit dziedziczy interlinię z motywu (typowo 1.5–1.6)',
@@ -313,7 +314,7 @@ function main() {
       }
     }
 
-    for (const trap of rendererTraps(name, props, contract)) {
+    for (const trap of rendererTraps(name, props, contract, designProfile)) {
       const entry = { node: nodeId, component: name, message: trap.message };
       if (trap.level === 'error') {
         errors.push(entry);

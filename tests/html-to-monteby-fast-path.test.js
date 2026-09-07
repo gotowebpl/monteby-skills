@@ -535,7 +535,7 @@ test('kit surfaces silent snaps and renderer traps discovered by the 10-agent au
 
   // H: brak lineHeight dziedziczy interlinię motywu
   const k2 = await Kit.fromContract(contract);
-  k2.heading('x', { tag: 'h3', fontSize: '19px' });
+  k2.heading('x', { tag: 'h2', fontSize: '19px' });
   assert.ok(
     k2.notes.some((n) => /bez lineHeight/.test(n)),
     'brak interlinii jest raportowany'
@@ -565,7 +565,7 @@ test('brief mode is routed, scoped and documented', () => {
   assert.match(brief, /payload-<slug>\.json/);
   assert.match(brief, /wyścig/);
   // spójność między stronami serwisu
-  assert.match(brief, /lineHeight` na \*\*każdym\*\*/);
+  assert.match(brief, /lineHeight` na każdym[\s\S]*typographyPreset/);
   assert.match(brief, /heightTablet`\/`heightMobile/);
   assert.match(brief, /wielokrotnością liczby kolumn/);
   // uwagi kitu jako bramka
