@@ -22,7 +22,7 @@ test('content ledger preserves long Polish paragraphs and normalizes inline mark
   assert.equal(ledger.uniqueEntries, 2);
   assert.equal(ledger.items.find((item) => item.text === longText)?.length, Array.from(longText).length);
   assert.equal(ledger.items.find((item) => item.text === 'Powtórzenie')?.count, 2);
-  assert.equal(normalizeContentText('A&nbsp; B\nC'), 'A B C');
+  assert.equal(normalizeContentText('A&nbsp;B\nC'), 'A\u00a0B C');
 });
 
 test('node-map ledger reads only content-bearing props, including repeater items', () => {
@@ -127,6 +127,19 @@ test('ledger comparison distinguishes missing, changed, and duplicate-count mism
   assert.equal(comparison.missing[0].text, 'Akapit całkowicie nieobecny.');
   assert.equal(comparison.truncatedOrChanged[0].text, 'Ten akapit został ucięty w połowie i nie może przejść.');
   assert.equal(comparison.duplicateCountMismatch[0].actualCount, 1);
+});
+
+test('ledger comparison blocks text added beyond the approved source document', () => {
+  const expected = buildContentLedger([{ structureKey: 'client.1', text: 'Treść zatwierdzona.' }]);
+  const candidate = buildContentLedger([
+    { structureKey: 'live.1', text: 'Treść zatwierdzona.' },
+    { structureKey: 'live.2', text: 'Dopisany marketingowy akapit.' },
+  ]);
+
+  const comparison = compareContentLedgers(expected, candidate);
+
+  assert.equal(comparison.complete, false);
+  assert.deepEqual(comparison.added.map((item) => item.text), ['Dopisany marketingowy akapit.']);
 });
 
 test('51-paragraph fixture with 509-character copy passes only at exact multiset parity', () => {

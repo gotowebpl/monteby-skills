@@ -1496,8 +1496,8 @@ function rootViewportCandidateIds(nodeMap, mediaSurfaceDetails = []) {
 
 function countLeadingChromeRoots(nodeMap, rootIds) {
   let count = 0;
-  for (const rootId of rootIds) {
-    if (!isChromeRootNode(nodeMap[rootId])) {
+  for (let index = 0; index < rootIds.length; index += 1) {
+    if (!isChromeRootNode(nodeMap, rootIds, index)) {
       break;
     }
     count += 1;
@@ -1506,13 +1506,26 @@ function countLeadingChromeRoots(nodeMap, rootIds) {
   return count;
 }
 
-function isChromeRootNode(node) {
+function isChromeRootNode(nodeMap, rootIds, index) {
+  const node = nodeMap[rootIds[index]];
   if (!node || typeof node !== 'object' || Array.isArray(node)) {
     return false;
   }
 
   const tag = typeof node.props?.tag === 'string' ? node.props.tag.toLowerCase() : '';
-  return tag === 'header' || tag === 'nav';
+  if (tag === 'header' || tag === 'nav') {
+    return true;
+  }
+
+  const nextNode = nodeMap[rootIds[index + 1]];
+  const nextTag = typeof nextNode?.props?.tag === 'string' ? nextNode.props.tag.toLowerCase() : '';
+  const measuredHeight = largestCssDimension([node.props?.minHeight, node.props?.height]);
+  return index === 0
+    && nodeType(node) === 'Section'
+    && tag === 'section'
+    && measuredHeight >= 40
+    && measuredHeight <= 180
+    && (nextTag === 'header' || nextTag === 'nav');
 }
 
 function rootHasLargeMediaSurface(nodeMap, rootId, mediaSurfaceDetails) {

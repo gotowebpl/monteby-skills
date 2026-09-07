@@ -373,7 +373,7 @@ function renderButton(props) {
   const rawHref = typeof props.url === 'string' && props.url ? props.url : typeof props.href === 'string' && props.href ? props.href : '#';
   const href = safeUrlValue(rawHref, BUTTON_URL_SCHEMES) || '#';
   const attrs = ` href="${escapeAttr(href)}"`;
-  return renderElement('a', props, escapeHtml(props.label || props.text || 'Button'), attrs);
+  return renderElement('a', { ...props, borderWidth: cssValue(props.borderWidth) || '0px' }, escapeHtml(props.label || props.text || 'Button'), attrs);
 }
 
 function renderImage(props) {

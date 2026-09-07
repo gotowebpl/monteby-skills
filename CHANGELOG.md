@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.4.1 - 2026-09-07
+
+- Reset the layout Kit only after a successful write, validate published style
+  values, and remove empty operation containers without dropping intentional values.
+- Preserve non-breaking spaces, ignore HTML comments as content, and report
+  uncovered reference bands, omitted inline SVG and rigid measured constraints.
+- Recognize a bounded contact strip before navigation in the existing media audit
+  without lowering photographic-media thresholds.
+- Keep measured button paint on the button and prevent colour-only bindings from
+  inventing a border in diagnostic previews.
+- Compare approved client text with the live content ledger through an explicit
+  verifier reporting missing, changed, duplicated and additional content.
+- Use shell-free browser capture invocation on Windows and document safe Git Bash
+  commands, real-browser motion QA, font diagnostics and independent breakpoint grids.
+- Document discovery, selection and versioned editing of global templates through
+  the live Builder contract, without direct database or slug rewrites.
+
 ## 0.4.0 - 2026-09-07
 
 - Expand strict content plans through the live Builder composition catalog and

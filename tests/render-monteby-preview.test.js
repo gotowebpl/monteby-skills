@@ -33,6 +33,28 @@ function renderPreview(layout, prefix) {
   return fs.readFileSync(previewPath, 'utf8');
 }
 
+test('button preview does not invent a browser border from a colour-only binding', () => {
+  const cases = [
+    ['plain', {}, '0px'],
+    ['colour-only', { borderColor: '#e62972' }, '0px'],
+    ['zero-number', { borderWidth: 0, borderColor: '#e62972' }, '0'],
+    ['zero-string', { borderWidth: '0px', borderColor: '#e62972' }, '0px'],
+    ['outlined', { borderWidth: '2px', borderColor: '#e62972' }, '2px'],
+    ['invalid', { borderWidth: 'bad;outline:1px solid red', borderColor: '#e62972' }, '0px'],
+  ];
+  const nodes = { ROOT: { type: { resolvedName: 'RootCanvas' }, props: {}, nodes: ['section'] }, section: { type: { resolvedName: 'Section' }, props: {}, nodes: cases.map(([id]) => id) } };
+  for (const [id, props] of cases) {
+    nodes[id] = { type: { resolvedName: 'ButtonBlock' }, props: { label: id, ...props }, nodes: [] };
+  }
+  const html = renderPreview(nodes, 'monteby-preview-button-border-');
+  for (const [id, , width] of cases) {
+    const anchor = html.match(new RegExp(`<a([^>]*)>${id}</a>`))?.[1];
+    assert.ok(anchor, `${id} was rendered`);
+    assert.match(anchor, new RegExp(`(?:;|\")border-width:${width}(?:;|\")`));
+    assert.doesNotMatch(anchor, /outline:/);
+  }
+});
+
 test('preview renderer emits only contract-safe anchorId values on layout targets', () => {
   const html = renderPreview({
     ROOT: {

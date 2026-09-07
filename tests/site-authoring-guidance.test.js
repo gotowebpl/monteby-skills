@@ -122,11 +122,29 @@ test('global styles are an explicit site-wide GET merge save task with no import
 });
 
 test('global templates use activePostId and snapshots use the layout identity resource', () => {
+  const production = read(path.join(references, 'production-site-benchmark.md'));
+
   assert.match(skill, /globalTemplates\.header\/footer\.activePostId/);
   assert.match(skill, /selectionSource: canonical\|host-filter/);
   assert.match(skill, /`id`, `postType`, `viewUrl`, and `postModifiedGmt`/);
   assert.match(skill, /--render-context-url/);
   assert.match(skill, /never assume a document is a\s+`page` or call `\/wp\/v2\/pages\/\{id\}`/);
+  assert.match(production, /Creation publishes the document but does not activate it/);
+  assert.match(production, /selectionResource[\s\S]*`postId`[\s\S]*`expectedRevision`/);
+  assert.match(production, /resulting `activePostId` as `\{postId\}`/);
+  assert.match(production, /`patch-validate` followed by the emitted `patch-save`/);
+  assert.match(production, /layout's\s+`postModifiedGmt` is not the selection revision/);
+  assert.match(production, /exactly one\s+public Monteby header or footer/);
+  assert.match(production, /templates\.resources\.title[\s\S]*expectedRevision/);
+});
+
+test('production runbook diagnoses icon profiles without a permanent cache workaround', () => {
+  const production = read(path.join(references, 'production-site-benchmark.md'));
+
+  assert.match(production, /standard Builder layout save invalidates the font\s+dependency profile/);
+  assert.match(production, /`font_profile`/);
+  assert.match(production, /`documents`[\s\S]*`icons`[\s\S]*`unknownIcons`\/`reasons`[\s\S]*`iconsComplete`/);
+  assert.match(production, /not permission for a permanent\s+flush workaround/);
 });
 
 test('global logo authoring is bounded to the discovered Monteby Branding resource', () => {

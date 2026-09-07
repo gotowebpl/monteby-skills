@@ -32,7 +32,7 @@ function decodeEntities(value) {
     .replace(/&gt;/giu, '>')
     .replace(/&quot;/giu, '"')
     .replace(/&#39;/giu, "'")
-    .replace(/&nbsp;/giu, ' ')
+    .replace(/&nbsp;/giu, '\u00a0')
     .replace(/&#x([0-9a-f]+);/giu, (_entity, code) => fromCodePoint(code, 16))
     .replace(/&#(\d+);/gu, (_entity, code) => fromCodePoint(code, 10));
 }
@@ -50,7 +50,7 @@ function fromCodePoint(value, radix) {
 function normalizeContentText(value) {
   return decodeEntities(String(value).replace(/<[^>]+>/gu, ' '))
     .normalize('NFC')
-    .replace(/\s+/gu, ' ')
+    .replace(/[\t\n\f\r ]+/gu, ' ')
     .trim();
 }
 
@@ -161,7 +161,9 @@ function compareContentLedgers(expectedLedger, candidateLedger) {
     missing: [],
     truncatedOrChanged: [],
     duplicateCountMismatch: [],
+    added: [],
   };
+  const changedCandidateHashes = new Set();
 
   for (const expected of Array.isArray(expectedLedger?.items) ? expectedLedger.items : []) {
     const actual = actualByHash.get(String(expected.sha256 || ''));
@@ -178,6 +180,7 @@ function compareContentLedgers(expectedLedger, candidateLedger) {
     }
     const changed = closestChangedEntry(expected, candidateItems);
     if (changed) {
+      changedCandidateHashes.add(String(changed.sha256 || ''));
       result.truncatedOrChanged.push({
         ...expected,
         actualText: changed.text,
@@ -188,12 +191,22 @@ function compareContentLedgers(expectedLedger, candidateLedger) {
     }
   }
 
+  const expectedHashes = new Set(
+    (Array.isArray(expectedLedger?.items) ? expectedLedger.items : [])
+      .map((item) => String(item.sha256 || ''))
+  );
+  result.added = candidateItems.filter((item) => {
+    const hash = String(item.sha256 || '');
+    return !expectedHashes.has(hash) && !changedCandidateHashes.has(hash);
+  });
+
   return {
     schemaVersion: 1,
     artifact: 'monteby-content-ledger-comparison',
     complete: result.missing.length === 0
       && result.truncatedOrChanged.length === 0
-      && result.duplicateCountMismatch.length === 0,
+      && result.duplicateCountMismatch.length === 0
+      && result.added.length === 0,
     expectedOccurrences: Number(expectedLedger?.totalOccurrences) || 0,
     candidateOccurrences: Number(candidateLedger?.totalOccurrences) || 0,
     ...result,

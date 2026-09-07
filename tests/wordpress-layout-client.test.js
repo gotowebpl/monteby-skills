@@ -15,7 +15,12 @@ const CLIENT = path.join(
   'scripts',
   'wordpress-layout-client.js'
 );
-const { canonicalSha256, nodeMapSha256, operationsSha256 } = require(CLIENT);
+const {
+  canonicalSha256,
+  nodeMapSha256,
+  operationsSha256,
+  pruneNoopOperations,
+} = require(CLIENT);
 const AUTH = 'Basic dGVzdDpzZWNyZXQ=';
 const NODE_MAP = {
   ROOT: {
@@ -41,6 +46,25 @@ const OPERATIONS = [{
 }];
 const OPERATIONS_SHA256 = operationsSha256(OPERATIONS);
 const BRANDING_REVISION = 'a'.repeat(64);
+
+test('operation generation prunes empty update_props entries without changing meaningful values', () => {
+  const meaningful = {
+    type: 'update_props',
+    nodeId: 'section-1',
+    props: { alt: '', background: '#111111' },
+    unsetProps: [],
+  };
+
+  assert.deepEqual(pruneNoopOperations([
+    { type: 'update_props', nodeId: 'empty-1', props: {}, unsetProps: [] },
+    { type: 'update_props', nodeId: 'empty-2', props: {} },
+    meaningful,
+  ]), [{
+    type: 'update_props',
+    nodeId: 'section-1',
+    props: { alt: '', background: '#111111' },
+  }]);
+});
 
 function brandingContract(overrides = {}) {
   return {

@@ -222,6 +222,9 @@ only its emitted `patch-save` action. The live `operationSchemas` are the sole
 authority for operation payloads, including whether `update_props` supports
 `unsetProps`. Bind the page snapshot, `postModifiedGmt`, canonical operations
 SHA-256, and `candidateLayoutSha256`. Missing evidence is a hard stop.
+The client removes an `update_props` entry only when both `props` and
+`unsetProps` are empty; it never removes empty strings inside a meaningful
+`props` object because values such as decorative alt text can be intentional.
 
 Save only through the versioned PUT with a fresh `expectedModifiedGmt` taken
 immediately before the write. A save returns `428` or `409` only for versioning:
@@ -252,6 +255,16 @@ does not activate a template by itself. Never delete, invalidate, or replace a
 theme-selected template merely because its slug is not canonical. Compose
 headers from `SiteBranding`, a host `WPMenu`, and layout nodes — never one
 monolithic `Navbar`.
+
+Changing which global template is active is a separate versioned operation.
+Discover `globalTemplates.{header|footer}.selectionResource` from the same live
+contract, read its current `revision`, and send one full `PUT` with
+`expectedRevision`. A `postId` of `0` restores the canonical selection only when
+the resource advertises `zeroRestoresCanonical: true`; never infer activation
+from a slug or write the selection setting directly. Renaming a template likewise
+uses only `templates.resources.title` with its own fresh `revision` and
+`expectedRevision`; a layout snapshot token is not interchangeable with either
+resource revision.
 
 Global site branding is a separate, explicitly authorized site-wide task. For
 a logo change, use only `wordpress-layout-client.js branding-snapshot`, review
@@ -319,8 +332,13 @@ When `--preserve-source-text` is active, the independent content ledger is a
 hard gate. It records full normalized atomic text with structure keys, Unicode
 length, SHA-256, and occurrence counts, then compares that multiset with the
 actual node map. `missing`, `truncatedOrChanged`, or
-`duplicateCountMismatch` entries block the run; long paragraphs and inline
+`duplicateCountMismatch`, or `added` entries block the run; long paragraphs and inline
 markup are never dropped from the ledger because of a display/evidence limit.
+For `content-brief-authoring`, prepare an explicit
+`monteby-client-content-document` v1 artifact, capture the canonical live page,
+and run `scripts/verify-client-content.js`. A claim such as “1:1, bez skrótów”
+is invalid without a complete verification report. U+00A0 non-breaking spaces
+remain distinct authored characters in capture and ledger evidence.
 
 ## Utilities outside the reproduction state machine
 
@@ -330,7 +348,12 @@ only when their primary reference explicitly calls for it.
 
 - `scripts/layout-kit.mjs` — declarative node-map builder: enforces components,
   props, blocked props, `allowedParents`; snaps values to control step/enum/type;
-  repairs known renderer traps.
+  repairs known renderer traps. A successful `write()` closes that document and
+  resets node IDs/state, so the same Kit may safely write the next document;
+  failed writes retain state for diagnosis.
+- `scripts/verify-client-content.js` — compares an approved structured client
+  content document with the `contentLedger` captured from the canonical live
+  page and fails on missing, changed, duplicate-count, or added copy.
 - `scripts/normalize-layout.js` — pre-flight for an existing node map; reports
   every violation class at once, `--fix` writes the repaired copy.
 - `scripts/audit-reference-css.mjs` — classifies every reference CSS declaration

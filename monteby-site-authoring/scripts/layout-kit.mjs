@@ -59,7 +59,11 @@ export class Kit {
     this.controls = new Map();
     for (const component of contract.components || []) {
       for (const control of component.controls || []) {
-        for (const prop of control.props || []) {
+        const controlProps = [
+          ...(control.props || []),
+          ...Object.values(control.spacingProps || {}).filter((prop) => typeof prop === 'string'),
+        ];
+        for (const prop of controlProps) {
           const key = `${component.name}.${prop}`;
           if (!this.controls.has(key)) this.controls.set(key, control);
         }
@@ -84,10 +88,14 @@ export class Kit {
     }
     this.nodes = {};
     this.counter = 0;
-    this.notes = this.designProfile.rejectedProjectTokens.map((key) => `project-token-rejected: ${key}; provide a safe literal or published token reference`);
-    this.notes.push(...this.designProfile.conflicts.map((conflict) => (
+    this.initialNotes = this.designProfile.rejectedProjectTokens.map((key) => `project-token-rejected: ${key}; provide a safe literal or published token reference`);
+    this.initialNotes.push(...this.designProfile.conflicts.map((conflict) => (
       `${conflict.code}: ${conflict.token}; globalStyles=${conflict.globalStylesValue}; designTokens=${conflict.designTokensValue}`
     )));
+    this.notes = [...this.initialNotes];
+    this.publishedReferences = new Set(
+      Object.values(this.designProfile.tokens).map((token) => token.reference).filter(Boolean)
+    );
   }
 
   static async fromContract(path, options = {}) {
@@ -136,14 +144,37 @@ export class Kit {
   }
 
   #normalizeControlValue(control, label, value) {
-    const { type, options, step, min, max } = control;
+    const { type, options, pattern, step, min, max, units } = control;
+    const optionValues = Array.isArray(options)
+      ? options.map((option) => (
+        option && typeof option === 'object' && !Array.isArray(option) ? option.value : option
+      ))
+      : [];
 
-    if ((type === 'select' || type === 'segment') && Array.isArray(options)) {
-      if (!options.includes(value)) {
-        this.notes.push(`${label}: ${JSON.stringify(value)} spoza ${JSON.stringify(options)}, pominięte`);
+    if (typeof value === 'string' && /^var\s*\(/iu.test(value.trim())) {
+      if (!this.publishedReferences.has(value.trim())) {
+        this.notes.push(`${label}: nieopublikowana referencja CSS ${JSON.stringify(value)}, pominięta`);
+        return undefined;
+      }
+      return value.trim();
+    }
+
+    if (optionValues.length > 0 && ['custom', 'select', 'segment'].includes(type)) {
+      if (!optionValues.includes(value)) {
+        this.notes.push(`${label}: ${JSON.stringify(value)} spoza ${JSON.stringify(optionValues)}, pominięte`);
         return undefined;
       }
       return value;
+    }
+
+    if (typeof pattern === 'string' && typeof value === 'string' && !(new RegExp(pattern, 'u')).test(value)) {
+      this.notes.push(`${label}: ${JSON.stringify(value)} nie spełnia wzorca kontrolki, pominięte`);
+      return undefined;
+    }
+
+    if (type === 'toggle' && typeof value !== 'boolean') {
+      this.notes.push(`${label}: ${JSON.stringify(value)} nie jest wartością logiczną, pominięte`);
+      return undefined;
     }
 
     if (type === 'number') {
@@ -159,18 +190,26 @@ export class Kit {
       return out;
     }
 
-    if (type === 'css-value' && typeof value === 'string') {
+    if ((type === 'css-value' || type === 'spacing') && typeof value === 'string') {
       if (/\S\s+\S/.test(value.trim())) {
         this.notes.push(`${label}: kontrolka przyjmuje jedną wartość, podano „${value}”, pominięte`);
         return undefined;
       }
-      if (!step) return value;
       const match = /^\s*(-?\d*\.?\d+)\s*([a-z%]*)\s*$/i.exec(value);
-      if (!match) return value;
+      if (!match) {
+        this.notes.push(`${label}: ${JSON.stringify(value)} nie jest pojedynczą wartością CSS kontrolki, pominięte`);
+        return undefined;
+      }
+      const unit = match[2] || '';
+      if (Array.isArray(units) && !units.includes(unit)) {
+        this.notes.push(`${label}: jednostka ${JSON.stringify(unit)} spoza ${JSON.stringify(units)}, pominięte`);
+        return undefined;
+      }
+      if (!step) return value.trim();
       let out = snap(Number(match[1]), step);
       if (typeof min === 'number') out = Math.max(min, out);
       if (typeof max === 'number') out = Math.min(max, out);
-      const snapped = `${out}${match[2] || ''}`;
+      const snapped = `${out}${unit}`;
       if (snapped !== value.trim()) {
         // Docięcie do kroku kontrolki jest rozbieżnością z referencją/briefem,
         // więc musi zostawić ślad — inaczej pre-flight widzi już czystą wartość
@@ -232,6 +271,18 @@ export class Kit {
     );
     for (const [prop, raw] of Object.entries(resolvedProps)) {
       if (raw === undefined || raw === null || (raw === '' && !/^(?:alt|.*Alt)$/.test(prop))) continue;
+      if (
+        typeof raw === 'string'
+        && /^var\s*\(/iu.test(raw.trim())
+        && (
+          this.controls.has(`${component}.${prop}`)
+          || /(?:color|fontFamily|fontSize|lineHeight|letterSpacing|padding|margin|radius|shadow|width|height|gap)$/iu.test(prop)
+        )
+        && !this.publishedReferences.has(raw.trim())
+      ) {
+        this.notes.push(`${component}.${prop}: nieopublikowana referencja CSS ${JSON.stringify(raw)}, pominięta`);
+        continue;
+      }
       if (this.blocked.has(prop)) throw new Error(`Prop zablokowany przez kontrakt: ${component}.${prop}`);
       if (!allowed.has(prop)) {
         if (/^(fontSize|lineHeight|letterSpacing|textAlign|marginTop|marginBottom)(Tablet|Mobile)$/.test(prop)) {
@@ -442,7 +493,11 @@ export class Kit {
   async write(path, sections) {
     const map = this.build(sections);
     await writeFile(path, JSON.stringify(map, null, 1), 'utf8');
-    return { path, nodes: Object.keys(map).length, notes: this.notes };
+    const result = { path, nodes: Object.keys(map).length, notes: [...this.notes] };
+    this.nodes = {};
+    this.counter = 0;
+    this.notes = [...this.initialNotes];
+    return result;
   }
 }
 

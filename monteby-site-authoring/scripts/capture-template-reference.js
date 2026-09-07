@@ -1549,7 +1549,7 @@ function classifyMediaUrl(url) {
 
 function normalizeText(value) {
   return decodeEntities(stripTags(value))
-    .replace(/\s+/g, ' ')
+    .replace(/[\t\n\f\r ]+/g, ' ')
     .trim();
 }
 
@@ -1564,7 +1564,7 @@ function decodeEntities(value) {
     .replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
-    .replace(/&nbsp;/g, ' ')
+    .replace(/&nbsp;/g, '\u00a0')
     .replace(/&#x([0-9a-f]+);/gi, (_entity, code) => entityFromCodePoint(Number.parseInt(code, 16)))
     .replace(/&#(\d+);/g, (_entity, code) => entityFromCodePoint(Number.parseInt(code, 10)));
 }
@@ -1860,7 +1860,8 @@ function captureViewportArtifacts(options, viewport, screenshotFile, layoutFile)
   fs.writeFileSync(scriptFile, renderedLayoutCaptureScript());
 
   try {
-    const result = spawnSync(resolveNpxExecutable(), ['--yes', '-p', options.playwrightPackage, 'node', scriptFile], {
+    const npx = resolveNpxInvocation();
+    const result = spawnSync(npx.command, [...npx.args, '--yes', '-p', options.playwrightPackage, 'node', scriptFile], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
       timeout: captureViewportTimeoutMs(options, viewport),
@@ -1959,8 +1960,24 @@ function captureViewportArtifacts(options, viewport, screenshotFile, layoutFile)
   }
 }
 
-function resolveNpxExecutable(platform = process.platform) {
-  return platform === 'win32' ? 'npx.cmd' : 'npx';
+function resolveNpxInvocation(platform = process.platform, runtime = {}) {
+  if (platform !== 'win32') {
+    return { command: 'npx', args: [] };
+  }
+
+  const execPath = runtime.execPath || process.execPath;
+  const npmExecPath = runtime.npmExecPath || process.env.npm_execpath || '';
+  const exists = runtime.exists || fs.existsSync;
+  const pathApi = platform === 'win32' ? path.win32 : path;
+  const candidates = [
+    npmExecPath ? pathApi.join(pathApi.dirname(npmExecPath), 'npx-cli.js') : '',
+    pathApi.join(pathApi.dirname(execPath), 'node_modules', 'npm', 'bin', 'npx-cli.js'),
+  ].filter(Boolean);
+  const npxCli = candidates.find((candidate) => exists(candidate));
+  if (!npxCli) {
+    throw new Error('Windows npx-cli.js was not found beside npm or the Node.js installation.');
+  }
+  return { command: execPath, args: [npxCli] };
 }
 
 function captureFailureMessage(result) {
@@ -2139,7 +2156,7 @@ function captureRenderedLayout(
       return true;
     }
   };
-  const normalizeText = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+  const normalizeText = (value) => String(value || '').replace(/[\t\n\f\r ]+/g, ' ').trim();
   const controlBackedStyleEvidence = (style) => {
     const display = style.display;
     const supportsLayoutGap = /(?:flex|grid)/u.test(display);
@@ -2754,7 +2771,7 @@ function captureRenderedLayout(
   };
   const renderedDirectTextEntry = (element) => {
     const directTextNodes = Array.from(element?.childNodes || [])
-      .filter((node) => Number(node?.nodeType) === 3 || (!node?.tagName && typeof node?.nodeValue === 'string'));
+      .filter((node) => Number(node?.nodeType) === 3);
     const text = normalizeText(directTextNodes.map((node) => node.nodeValue).join(' '));
     if (!text) {
       return null;
@@ -4729,7 +4746,7 @@ module.exports = {
   renderReferenceBrief,
   renderedLayoutCaptureScript,
   renderedMediaSurfaces,
-  resolveNpxExecutable,
+  resolveNpxInvocation,
   safeCapturedFontFamily,
   safeGradientEvidence,
   usage,

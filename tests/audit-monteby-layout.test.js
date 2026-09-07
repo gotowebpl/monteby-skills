@@ -1500,6 +1500,157 @@ test('audit accepts generated marketplace layouts that satisfy required media ro
   assert.deepEqual(report.errors, []);
 });
 
+test('audit includes hero media after a compact leading contact section and semantic navigation', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'monteby-audit-contact-chrome-'));
+  const contractPath = path.join(directory, 'contract.json');
+  const layoutPath = path.join(directory, 'layout.json');
+  const manifestPath = path.join(directory, 'target-manifest.json');
+  const contract = mediaRoleContract();
+  contract.components[0].aiProps.push('tag', 'minHeight');
+
+  fs.writeFileSync(contractPath, JSON.stringify(contract));
+  fs.writeFileSync(manifestPath, JSON.stringify(mediaRoleManifest()));
+  fs.writeFileSync(layoutPath, JSON.stringify({
+    ROOT: node('RootCanvas', null, ['contact', 'navigation', 'hero', 'services']),
+    contact: {
+      ...node('Section', 'ROOT', []),
+      props: {
+        tag: 'section',
+        minHeight: '52px',
+      },
+    },
+    navigation: {
+      ...node('Section', 'ROOT', []),
+      props: {
+        tag: 'nav',
+        minHeight: '76px',
+      },
+    },
+    hero: {
+      ...node('Section', 'ROOT', ['detail']),
+      props: {
+        backgroundImage: 'https://replacement.example.test/hero.jpg',
+        minHeight: '520px',
+      },
+    },
+    detail: {
+      ...node('Container', 'hero', []),
+      props: {
+        backgroundImage: 'https://replacement.example.test/detail.jpg',
+        minHeight: '180px',
+      },
+    },
+    services: node('Section', 'ROOT', ['cardOne', 'cardTwo']),
+    cardOne: {
+      ...node('Container', 'services', []),
+      props: {
+        backgroundImage: 'https://replacement.example.test/card-one.jpg',
+        minHeight: '180px',
+      },
+    },
+    cardTwo: {
+      ...node('Container', 'services', []),
+      props: {
+        backgroundImage: 'https://replacement.example.test/card-two.jpg',
+        minHeight: '180px',
+      },
+    },
+  }));
+
+  const result = spawnSync(process.execPath, [
+    auditScript,
+    '--layout',
+    layoutPath,
+    '--contract',
+    contractPath,
+    '--reference-manifest',
+    manifestPath,
+    '--json',
+  ], { encoding: 'utf8' });
+
+  assert.equal(result.status, 0, result.stderr);
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.ok, true);
+  assert.equal(report.stats.heroMediaSurfaces, 1);
+  assert.equal(report.stats.secondaryMediaSurfaces, 1);
+  assert.equal(report.stats.serviceCardMediaSurfaces, 2);
+});
+
+test('audit does not treat an ordinary compact first content section as chrome', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'monteby-audit-content-not-chrome-'));
+  const contractPath = path.join(directory, 'contract.json');
+  const layoutPath = path.join(directory, 'layout.json');
+  const manifestPath = path.join(directory, 'target-manifest.json');
+  const contract = mediaRoleContract();
+  contract.components[0].aiProps.push('tag', 'minHeight');
+
+  fs.writeFileSync(contractPath, JSON.stringify(contract));
+  fs.writeFileSync(manifestPath, JSON.stringify(mediaRoleManifest()));
+  fs.writeFileSync(layoutPath, JSON.stringify({
+    ROOT: node('RootCanvas', null, ['intro', 'feature', 'hero', 'services']),
+    intro: {
+      ...node('Section', 'ROOT', []),
+      props: {
+        tag: 'section',
+        minHeight: '52px',
+      },
+    },
+    feature: {
+      ...node('Section', 'ROOT', []),
+      props: {
+        tag: 'section',
+        minHeight: '160px',
+      },
+    },
+    hero: {
+      ...node('Section', 'ROOT', ['detail']),
+      props: {
+        backgroundImage: 'https://replacement.example.test/hero.jpg',
+        minHeight: '520px',
+      },
+    },
+    detail: {
+      ...node('Container', 'hero', []),
+      props: {
+        backgroundImage: 'https://replacement.example.test/detail.jpg',
+        minHeight: '180px',
+      },
+    },
+    services: node('Section', 'ROOT', ['cardOne', 'cardTwo']),
+    cardOne: {
+      ...node('Container', 'services', []),
+      props: {
+        backgroundImage: 'https://replacement.example.test/card-one.jpg',
+        minHeight: '180px',
+      },
+    },
+    cardTwo: {
+      ...node('Container', 'services', []),
+      props: {
+        backgroundImage: 'https://replacement.example.test/card-two.jpg',
+        minHeight: '180px',
+      },
+    },
+  }));
+
+  const result = spawnSync(process.execPath, [
+    auditScript,
+    '--layout',
+    layoutPath,
+    '--contract',
+    contractPath,
+    '--reference-manifest',
+    manifestPath,
+    '--json',
+  ], { encoding: 'utf8' });
+
+  assert.equal(result.status, 1);
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.ok, false);
+  assert.equal(report.stats.heroMediaSurfaces, 0);
+  assert.ok(report.errors.some((entry) => entry.code === 'missing_hero_media_role'));
+});
+
 test('audit rejects marketplace layouts with undersized service-card media', () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'monteby-audit-service-card-small-'));
   const contractPath = path.join(directory, 'contract.json');

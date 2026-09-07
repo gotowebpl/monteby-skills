@@ -14,6 +14,12 @@ validation/PUT for a new page or intentional whole-document replacement.
    when the live `update_props` schema exposes it. Do not encode deletion as
    `null` unless the schema explicitly allows null.
 
+Before schema preflight, `wordpress-layout-client.js` removes empty `props` and
+empty `unsetProps` containers and drops an `update_props` operation only when
+neither carries work. It does not erase empty scalar values inside `props`.
+If pruning leaves no operations, the existing non-empty-batch gate stops the
+request locally instead of partially applying a later batch.
+
 When the operation comes from `accessibilityAudit.findings[].fix`, follow
 `accessibility-audit-fixes.md` first. The audit's operation and exact diff are
 immutable evidence: do not add a prop, omit a prop, change a value, or target a

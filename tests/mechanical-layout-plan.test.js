@@ -99,6 +99,7 @@ test('plan-out records every generic measured band and viewport without truncati
     omittedText: [],
     omittedGroups: [],
     omittedChildren: [],
+    uncoveredRootGroups: [],
   });
 });
 
@@ -212,6 +213,7 @@ test('plan-out preserves a 40-band complex page at all three canonical responsiv
     omittedText: [],
     omittedGroups: [],
     omittedChildren: [],
+    uncoveredRootGroups: [],
   });
 });
 

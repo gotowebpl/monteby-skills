@@ -651,6 +651,7 @@ function summarizeReferenceLayout(layout) {
     });
   const bands = summarizeReferenceBands(layout, textBoxes, meaningfulMedia, pageClipsHorizontalOverflow);
   const navigation = summarizeReferenceNavigation(layout, textBoxes);
+  const captureGaps = summarizeReferenceCaptureGaps(layout, bands, viewportWidth);
 
   return {
     viewport: layout?.viewport || null,
@@ -661,12 +662,48 @@ function summarizeReferenceLayout(layout) {
     pageHeight,
     pageClipsHorizontalOverflow,
     bands,
+    captureGaps,
     navigation,
     heroHeading: summarizeReferenceBox(heroHeading),
     heroMedia: summarizeReferenceBox(heroMedia),
     secondaryMedia: summarizeReferenceBox(secondaryMedia),
     earlyMedia: meaningfulMedia.slice(0, 4).map(summarizeReferenceBox),
   };
+}
+
+function summarizeReferenceCaptureGaps(layout, bands, viewportWidth) {
+  const bandKeys = (Array.isArray(bands) ? bands : [])
+    .map((band) => String(band?.key || ''))
+    .filter(Boolean);
+  const representsGroup = (groupKey) => bandKeys.some((bandKey) => (
+    groupKey === bandKey
+    || groupKey.startsWith(`${bandKey}.`)
+    || bandKey.startsWith(`${groupKey}.`)
+  ));
+  const unmappedInlineSvg = (Array.isArray(layout?.mediaBoxes) ? layout.mediaBoxes : [])
+    .filter((box) => String(box?.tag || '').toLowerCase() === 'svg')
+    .map((box) => ({
+      structureKey: String(box?.structureKey || ''),
+      rect: normalizeReferenceRect(box?.rect),
+    }))
+    .filter((box) => box.structureKey && box.rect);
+  const uncoveredRootGroups = (Array.isArray(layout?.layoutGroups) ? layout.layoutGroups : [])
+    .filter((group) => !String(group?.parentKey || ''))
+    .filter((group) => String(group?.flowParticipation || 'normal') !== 'overlay')
+    .map((group) => ({
+      structureKey: String(group?.key || ''),
+      tag: String(group?.tag || 'div').toLowerCase(),
+      rect: normalizeReferenceRect(group?.rect),
+    }))
+    .filter((group) => (
+      group.structureKey
+      && group.rect
+      && group.rect.height >= 40
+      && group.rect.width >= Math.min(240, viewportWidth * 0.5)
+      && !representsGroup(group.structureKey)
+    ));
+
+  return { unmappedInlineSvg, uncoveredRootGroups };
 }
 
 function summarizeReferenceNavigation(layout, textBoxes) {
@@ -2766,6 +2803,23 @@ function draftLayout(contractIndex, brief, contractPayload = {}) {
   }
 
   const mechanicalPlan = buildMechanicalLayoutPlan(context, genericPlan);
+  if (genericPlan) {
+    if (mechanicalPlan.measuredHardConstraints.length > 0) {
+      context.warnings.push(
+        `measured_hard_constraints: ${mechanicalPlan.measuredHardConstraints.length} generated node(s) contain measurement-derived sizing, offset, or grid-start constraints; review them before treating the layout as flexible.`
+      );
+    }
+    if (mechanicalPlan.unmappedInlineSvg.length > 0) {
+      context.warnings.push(
+        `unmapped_inline_svg: ${mechanicalPlan.unmappedInlineSvg.length} captured inline SVG surface(s) were not authored; replace them through an explicit IconBlock or owned media decision.`
+      );
+    }
+    if (mechanicalPlan.uncoveredRootGroups.length > 0) {
+      context.warnings.push(
+        `uncovered_root_groups: ${mechanicalPlan.uncoveredRootGroups.length} significant top-level layout group(s) are outside the landmark-derived band plan.`
+      );
+    }
+  }
 
   return {
     generatedAt: new Date().toISOString(),
@@ -3035,6 +3089,8 @@ function buildMechanicalLayoutPlan(context, genericPlan) {
   }
 
   const viewportLabels = genericPlan.viewports.map((viewport) => viewport.label);
+  const captureGaps = genericMeasuredCaptureGaps(genericPlan);
+  const measuredHardConstraints = genericMeasuredHardConstraints(context, genericPlan);
   const parityByBand = new Map();
   const bands = genericPlan.bands.map((band) => {
     const generatedSectionId = String(band.generatedSectionId || rootSectionIds[band.index] || '');
@@ -3087,7 +3143,7 @@ function buildMechanicalLayoutPlan(context, genericPlan) {
     capturedBands: bands.length,
     draftedRootSections: rootSectionIds.length,
     allBandsMapped,
-    allSurfacesMapped: allOmittedSurfaces.length === 0,
+    allSurfacesMapped: allOmittedSurfaces.length === 0 && captureGaps.uncoveredRootGroups.length === 0,
     plannedBands: bands.length,
     emittedSections: rootSectionIds.length,
     capturedSurfaces,
@@ -3098,6 +3154,7 @@ function buildMechanicalLayoutPlan(context, genericPlan) {
     omittedText: omittedByKind('text'),
     omittedGroups: omittedByKind('group'),
     omittedChildren: omittedByKind('child'),
+    uncoveredRootGroups: captureGaps.uncoveredRootGroups,
   };
   if (!allBandsMapped) {
     throw new Error(
@@ -3115,8 +3172,50 @@ function buildMechanicalLayoutPlan(context, genericPlan) {
     viewports: genericPlan.viewports.map((viewport) => ({ ...viewport })),
     rootSectionIds,
     bands,
+    measuredHardConstraints,
+    unmappedInlineSvg: captureGaps.unmappedInlineSvg,
+    uncoveredRootGroups: captureGaps.uncoveredRootGroups,
     completion,
   };
+}
+
+function genericMeasuredCaptureGaps(genericPlan) {
+  const collect = (name) => genericPlan.viewportLabels.flatMap((viewport) => {
+    const captureGaps = genericPlan.captureGapsByViewport?.[viewport];
+    const values = Array.isArray(captureGaps?.[name]) ? captureGaps[name] : [];
+    return values.map((value) => ({ viewport, ...value }));
+  });
+
+  return {
+    unmappedInlineSvg: collect('unmappedInlineSvg'),
+    uncoveredRootGroups: collect('uncoveredRootGroups'),
+  };
+}
+
+function genericMeasuredHardConstraints(context, genericPlan) {
+  const measuredProps = /^(?:minHeight|maxWidth|minWidth|marginLeft|grid(?:Column|Row)Start)(?:Tablet|Mobile)?$/u;
+  const bandSourceKeys = new Map(genericPlan.bands.map((band) => [
+    String(band.generatedSectionId || ''),
+    String(band.sourceKey || ''),
+  ]));
+
+  return Object.entries(context.nodeMap).flatMap(([nodeId, node]) => {
+    if (nodeId === 'ROOT' || !node || typeof node !== 'object' || Array.isArray(node)) {
+      return [];
+    }
+    const props = Object.entries(node.props || {})
+      .filter(([name, value]) => measuredProps.test(name) && ['string', 'number'].includes(typeof value))
+      .map(([name, value]) => ({ name, value }));
+    if (props.length === 0) {
+      return [];
+    }
+
+    return [{
+      nodeId,
+      sourceKey: String(context.genericMeasuredNodeKeys.get(nodeId) || bandSourceKeys.get(nodeId) || ''),
+      props,
+    }];
+  });
 }
 
 function mechanicalBandViewportMeasurement(measurement) {
@@ -3318,6 +3417,12 @@ function buildGenericMeasuredSectionPlan(brief) {
     canonicalViewport,
     viewports: capturedViewports,
     viewportLabels: viewportEntries.map(([label]) => label),
+    captureGapsByViewport: Object.fromEntries(viewportEntries.map(([label, viewportGeometry]) => ([
+      label,
+      viewportGeometry.captureGaps && typeof viewportGeometry.captureGaps === 'object'
+        ? viewportGeometry.captureGaps
+        : { unmappedInlineSvg: [], uncoveredRootGroups: [] },
+    ]))),
     hasTablet: Boolean(tabletEntry),
     hasMobile: Boolean(mobileEntry),
     hasMedia: bands.some((band) => genericBandMediaCount(band) > 0),
@@ -6614,6 +6719,7 @@ function addGenericMeasuredTextItems(context, parentId, desktopMeasurement, tabl
     const desktopPaddingBottom = genericCssMetric(desktop?.paddingBottom);
     const tabletPaddingBottom = genericCssMetric((tablet || desktop)?.paddingBottom);
     const mobilePaddingBottom = genericCssMetric((mobile || tablet || desktop)?.paddingBottom);
+    const interactiveSurface = ['a', 'button'].includes(String(desktop?.tag || '').toLowerCase());
     const { leaf: marginProps, wrapper: wrapperMarginProps } = genericMeasuredTextMarginProps(
       desktopMeasurement,
       tabletMeasurement || desktopMeasurement,
@@ -6656,19 +6762,19 @@ function addGenericMeasuredTextItems(context, parentId, desktopMeasurement, tabl
       minHeight: genericMeasuredRectSize(desktop, 'height'),
       minHeightTablet: plan.hasTablet ? genericMeasuredRectSize(tablet || desktop, 'height') : undefined,
       minHeightMobile: plan.hasMobile ? genericMeasuredRectSize(mobile || tablet || desktop, 'height') : undefined,
-      paddingTop: desktopPaddingTop,
-      paddingTopTablet: plan.hasTablet ? tabletPaddingTop : undefined,
-      paddingTopMobile: plan.hasMobile ? mobilePaddingTop : undefined,
-      paddingRight: genericCssMetric(desktop?.paddingRight),
-      paddingBottom: desktopPaddingBottom,
-      paddingBottomTablet: plan.hasTablet ? tabletPaddingBottom : undefined,
-      paddingBottomMobile: plan.hasMobile ? mobilePaddingBottom : undefined,
-      paddingLeft: genericCssMetric(desktop?.paddingLeft),
-      borderRadius: genericCssMetric(desktop?.borderRadius),
+      paddingTop: interactiveSurface ? undefined : desktopPaddingTop,
+      paddingTopTablet: interactiveSurface ? undefined : plan.hasTablet ? tabletPaddingTop : undefined,
+      paddingTopMobile: interactiveSurface ? undefined : plan.hasMobile ? mobilePaddingTop : undefined,
+      paddingRight: interactiveSurface ? undefined : genericCssMetric(desktop?.paddingRight),
+      paddingBottom: interactiveSurface ? undefined : desktopPaddingBottom,
+      paddingBottomTablet: interactiveSurface ? undefined : plan.hasTablet ? tabletPaddingBottom : undefined,
+      paddingBottomMobile: interactiveSurface ? undefined : plan.hasMobile ? mobilePaddingBottom : undefined,
+      paddingLeft: interactiveSurface ? undefined : genericCssMetric(desktop?.paddingLeft),
+      borderRadius: interactiveSurface ? undefined : genericCssMetric(desktop?.borderRadius),
       ...wrapperMarginProps,
-      ...genericMeasuredUniformBorderProps([desktop, tablet || desktop, mobile || tablet || desktop]),
-      ...genericMeasuredShadowProps(context, containerName, [desktop, tablet || desktop, mobile || tablet || desktop]),
-      ...backgroundProps(context, containerName, surfaceColor),
+      ...(interactiveSurface ? {} : genericMeasuredUniformBorderProps([desktop, tablet || desktop, mobile || tablet || desktop])),
+      ...(interactiveSurface ? {} : genericMeasuredShadowProps(context, containerName, [desktop, tablet || desktop, mobile || tablet || desktop])),
+      ...(interactiveSurface ? {} : backgroundProps(context, containerName, surfaceColor)),
     });
     if (Array.isArray(orderEntries) && desktop?.structureKey) {
       orderEntries.push({ id: wrapper.id, key: desktop.structureKey });
@@ -6729,14 +6835,23 @@ function addGenericMeasuredTextNode(context, parentId, desktop, tablet, mobile, 
   };
 
   if (tag === 'a' || tag === 'button') {
+    const buttonComponent = findComponent(context.contractIndex, ['ButtonBlock', 'Button']);
+    const surfaceColor = normalizedAuthorableColor(desktop?.backgroundColor);
     return addButton(context, parentId, text, plan.preserveSourceText ? String(desktop?.href || '').trim() : '#', {
       ...props,
-      paddingTop: '0px',
-      paddingRight: '0px',
-      paddingBottom: '0px',
-      paddingLeft: '0px',
-      borderRadius: '0px',
-      backgroundColor: 'transparent',
+      buttonDisplay: 'flex',
+      paddingTop: genericCssMetric(desktop?.paddingTop) || '0px',
+      paddingTopTablet: plan.hasTablet ? genericCssMetric((tablet || desktop)?.paddingTop) : undefined,
+      paddingTopMobile: plan.hasMobile ? genericCssMetric((mobile || tablet || desktop)?.paddingTop) : undefined,
+      paddingRight: genericCssMetric(desktop?.paddingRight) || '0px',
+      paddingBottom: genericCssMetric(desktop?.paddingBottom) || '0px',
+      paddingBottomTablet: plan.hasTablet ? genericCssMetric((tablet || desktop)?.paddingBottom) : undefined,
+      paddingBottomMobile: plan.hasMobile ? genericCssMetric((mobile || tablet || desktop)?.paddingBottom) : undefined,
+      paddingLeft: genericCssMetric(desktop?.paddingLeft) || '0px',
+      borderRadius: genericCssMetric(desktop?.borderRadius) || '0px',
+      ...genericMeasuredUniformBorderProps([desktop, tablet || desktop, mobile || tablet || desktop]),
+      ...(buttonComponent ? genericMeasuredShadowProps(context, buttonComponent.name, [desktop, tablet || desktop, mobile || tablet || desktop]) : {}),
+      ...(buttonComponent ? backgroundProps(context, buttonComponent.name, surfaceColor) : {}),
     });
   }
   if (/^h[1-4]$/.test(tag)) {
