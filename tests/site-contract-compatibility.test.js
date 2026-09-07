@@ -17,7 +17,7 @@ test('site contract compatibility manifest requires the exact live contract with
 
   assert.deepEqual(manifest, {
     schemaVersion: 3,
-    skillVersion: '0.3.1',
+    skillVersion: '0.4.0',
     minimumBuilderVersion: '1.4.0',
     contractEndpoint: '/wp-json/monteby/v1/contract',
     liveContractRequired: true,
@@ -47,6 +47,13 @@ test('site contract compatibility manifest requires the exact live contract with
         valueType: 'object',
         optional: true,
         fallback: 'no-site-wide-logo-write',
+      },
+      compositions: {
+        minimumBuilderVersion: '1.5.1',
+        contractPath: 'authoring.compositions.version',
+        expectedValue: 1,
+        optional: true,
+        fallback: 'existing-pattern-authoring',
       },
     },
     reason: "No verified portable Builder contract snapshot is bundled. Authoring must use the current target site's live contract.",

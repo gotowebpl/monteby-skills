@@ -29,12 +29,16 @@
  *   await k.write('./layout.json', [hero]);   // zgłasza wyjątek, jeśli są błędy
  */
 
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile, realpath, stat, writeFile } from 'node:fs/promises';
+import { pathToFileURL } from 'node:url';
+import { basename, dirname, join, resolve } from 'node:path';
 import designProfileModule from './resolved-design-profile.js';
 
 const {
   applyResolvedDesignDefaults,
   buildResolvedDesignProfile,
+  effectiveTypographyValue,
+  tokenReference,
 } = designProfileModule;
 
 const TEXT_NODES = new Set(['Heading', 'Text', 'MultilineHeading']);
@@ -80,7 +84,7 @@ export class Kit {
     }
     this.nodes = {};
     this.counter = 0;
-    this.notes = [];
+    this.notes = this.designProfile.rejectedProjectTokens.map((key) => `project-token-rejected: ${key}; provide a safe literal or published token reference`);
     this.notes.push(...this.designProfile.conflicts.map((conflict) => (
       `${conflict.code}: ${conflict.token}; globalStyles=${conflict.globalStylesValue}; designTokens=${conflict.designTokensValue}`
     )));
@@ -151,6 +155,7 @@ export class Kit {
       let out = step ? snap(numeric, step) : numeric;
       if (typeof min === 'number') out = Math.max(min, out);
       if (typeof max === 'number') out = Math.min(max, out);
+      if (out !== numeric) this.notes.push(`${label}: ${numeric} → ${out}`);
       return out;
     }
 
@@ -226,7 +231,7 @@ export class Kit {
       semanticRole
     );
     for (const [prop, raw] of Object.entries(resolvedProps)) {
-      if (raw === undefined || raw === null || raw === '') continue;
+      if (raw === undefined || raw === null || (raw === '' && !/^(?:alt|.*Alt)$/.test(prop))) continue;
       if (this.blocked.has(prop)) throw new Error(`Prop zablokowany przez kontrakt: ${component}.${prop}`);
       if (!allowed.has(prop)) {
         if (/^(fontSize|lineHeight|letterSpacing|textAlign|marginTop|marginBottom)(Tablet|Mobile)$/.test(prop)) {
@@ -261,7 +266,7 @@ export class Kit {
         this.notes.push('ImageBlock z height bez heightTablet/heightMobile — motyw wymusi height:auto poniżej 768px');
       }
     }
-    if (TEXT_NODES.has(component) && out.lineHeight === undefined) {
+    if (TEXT_NODES.has(component) && !effectiveTypographyValue(out, this.designProfile, 'lineHeight')) {
       // Nagłówek bez własnej interlinii dziedziczy wartość z body motywu.
       this.notes.push(`${component} bez lineHeight dziedziczy interlinię z motywu — podaj ją jawnie`);
     }
@@ -323,7 +328,7 @@ export class Kit {
   box(props, children) { return this.node('Container', props, children); }
   heading(text, props = {}) {
     const { typographyRole, ...nodeProps } = props;
-    return this.node('Heading', { text, ...nodeProps }, [], typographyRole || (props.tag === 'h1' ? 'h1' : 'h2'));
+    return this.node('Heading', { text, ...nodeProps }, [], typographyRole || (/^h[1-6]$/.test(props.tag) ? props.tag : 'h2'));
   }
   text(value, props = {}) {
     const { typographyRole = 'body', ...nodeProps } = props;
@@ -389,10 +394,25 @@ export class Kit {
         targets.set(props.anchorId, paths);
       }
 
-      for (const prop of ['href', 'url']) {
+      const linkProps = ['href', 'url', ...Object.keys(props).filter((prop) => (
+        prop.endsWith('Href') && this.controls.has(`${node.type.resolvedName}.${prop}`)
+      ))];
+      for (const prop of linkProps) {
         const value = props[prop];
-        if (typeof value === 'string' && /^#[A-Za-z][A-Za-z0-9_-]{0,63}$/.test(value)) {
+        if (typeof value === 'string' && value.startsWith('#')) {
           references.push({ target: value.slice(1), path: `${nodeId}.${prop}` });
+        }
+      }
+      for (const [prop, items] of Object.entries(props)) {
+        const controls = this.repeaterItemControls.get(`${node.type.resolvedName}.${prop}`);
+        if (!controls || !Array.isArray(items)) continue;
+        for (const [index, item] of items.entries()) {
+          for (const itemProp of ['href', 'url']) {
+            const value = item?.[itemProp];
+            if (controls.has(itemProp) && typeof value === 'string' && value.startsWith('#')) {
+              references.push({ target: value.slice(1), path: `${nodeId}.${prop}[${index}].${itemProp}` });
+            }
+          }
         }
       }
       if (node?.type?.resolvedName === 'TableOfContents' && Array.isArray(props.items)) {
@@ -424,4 +444,259 @@ export class Kit {
     await writeFile(path, JSON.stringify(map, null, 1), 'utf8');
     return { path, nodes: Object.keys(map).length, notes: this.notes };
   }
+}
+
+function compositionRecord(value, allowed, path) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`${path}: expected object`);
+  }
+  for (const key of Object.keys(value)) {
+    if (['__proto__', 'constructor', 'prototype'].includes(key) || (allowed && !allowed.includes(key))) {
+      throw new Error(`${path}.${key}: unknown field`);
+    }
+  }
+}
+
+function compositionUrl(value, media, path) {
+  if (typeof value !== 'string' || !value || value !== value.trim()
+      || /[\u0000-\u0020\u007f-\u009f\\<>"`]/.test(value)) {
+    throw new Error(`${path}: invalid URL`);
+  }
+  if (/^[a-z][a-z\d+.-]*:/i.test(value)) {
+    let url;
+    try { url = new URL(value); } catch { throw new Error(`${path}: invalid URL`); }
+    if (!(media ? ['https:', 'http:'] : ['https:', 'http:', 'mailto:', 'tel:']).includes(url.protocol)
+        || url.username || url.password) throw new Error(`${path}: unsafe URL`);
+  } else if (value.startsWith('//') || (media && /^[?#]/.test(value))) {
+    throw new Error(`${path}: unsafe URL`);
+  }
+}
+
+function compositionContent(content, slots, path, depth = 0) {
+  if (depth > 2) throw new Error(`${path}: nested item budget exceeded`);
+  compositionRecord(slots, null, `${path}.slots`);
+  compositionRecord(content, Object.keys(slots), path);
+  for (const [name, slot] of Object.entries(slots)) {
+    compositionRecord(slot, ['type', 'required', 'minItems', 'maxItems', 'itemSlots'], `${path}.slots.${name}`);
+    if (slot.required !== undefined && typeof slot.required !== 'boolean') throw new Error(`${path}.${name}: invalid required flag`);
+    if (!['text', 'media', 'link', 'items'].includes(slot.type)) throw new Error(`${path}.${name}: unknown slot type`);
+    const value = content[name];
+    if (value === undefined) {
+      if (slot.required) throw new Error(`${path}.${name}: required slot missing`);
+      continue;
+    }
+    if (slot.type === 'text') {
+      if (typeof value !== 'string' || !value.trim() || value.length > 20000) {
+        throw new Error(`${path}.${name}: expected nonempty text within 20000 characters`);
+      }
+    } else if (slot.type === 'media' || slot.type === 'link') {
+      const media = slot.type === 'media';
+      compositionRecord(value, media ? ['src', 'alt'] : ['href', 'label'], `${path}.${name}`);
+      compositionUrl(value[media ? 'src' : 'href'], media, `${path}.${name}`);
+      const text = value[media ? 'alt' : 'label'];
+      if (typeof text !== 'string' || text.length > 20000 || (!media && !text.trim())) {
+        throw new Error(`${path}.${name}: ${media ? 'alt' : 'label'} must be explicit text`);
+      }
+    } else {
+      const minimum = slot.minItems ?? (slot.required ? 1 : 0);
+      const maximum = slot.maxItems ?? 8;
+      if (!Number.isInteger(minimum) || !Number.isInteger(maximum) || minimum < 0 || maximum > 8 || minimum > maximum
+          || !Array.isArray(value) || value.length < minimum || value.length > maximum) {
+        throw new Error(`${path}.${name}: expected ${minimum}–${maximum} items; received ${Array.isArray(value) ? value.length : 'non-array'}`);
+      }
+      value.forEach((item, index) => compositionContent(item, slot.itemSlots, `${path}.${name}[${index}]`, depth + 1));
+    }
+  }
+}
+
+/** Expands only recipes supplied by the current full live contract. */
+export function expandCompositionPlan(contract, plan, options = {}) {
+  compositionRecord(plan, ['version', 'sections'], 'plan');
+  if (plan.version !== 1 || !Array.isArray(plan.sections) || plan.sections.length < 1 || plan.sections.length > 20) {
+    throw new Error('plan: version 1 and 1–20 sections required');
+  }
+  const manifest = contract?.authoring?.compositions;
+  if (manifest?.version !== 1 || !Array.isArray(manifest.recipes) || !Array.isArray(contract.components)) {
+    throw new Error('contract: full live components and compositions version 1 required');
+  }
+  const recipes = new Map();
+  for (const recipe of manifest.recipes) {
+    compositionRecord(recipe, ['id', 'label', 'slots', 'tree'], 'recipe');
+    if (typeof recipe.id !== 'string' || !/^[a-z][a-z0-9-]{0,63}$/.test(recipe.id) || recipes.has(recipe.id)) {
+      throw new Error('recipe: invalid or duplicate id');
+    }
+    recipes.set(recipe.id, recipe);
+  }
+  if (options.projectTokens !== undefined) compositionRecord(options.projectTokens, null, 'projectTokens');
+  const kit = new Kit(contract, options);
+  if (kit.designProfile.rejectedProjectTokens.length > 0) {
+    throw new Error(`projectTokens: rejected values for ${kit.designProfile.rejectedProjectTokens.join(', ')}; correct the supplied tokens before expansion`);
+  }
+  let expandedNodes = 0;
+  let levelOneHeadings = 0;
+  const ancestry = new Set();
+  const decisions = [];
+  const sections = [];
+
+  function reference(scope, path, label) {
+    if (typeof path !== 'string' || !/^[a-zA-Z][a-zA-Z0-9_]*(?:\.[a-zA-Z][a-zA-Z0-9_]*){0,2}$/.test(path)) {
+      throw new Error(`${label}: invalid slot reference`);
+    }
+    let value = scope;
+    for (const part of path.split('.')) {
+      if (['__proto__', 'constructor', 'prototype'].includes(part) || !Object.hasOwn(value || {}, part)) {
+        throw new Error(`${label}: missing slot ${path}`);
+      }
+      value = value[part];
+    }
+    return value;
+  }
+
+  function expand(tree, scope, path, depth = 0, repeated = false, declarations = {}) {
+    if (depth > 16 || ancestry.has(tree)) throw new Error(`${path}: cyclic or oversized recipe`);
+    compositionRecord(tree, ['component', 'props', 'tokenProps', 'slotProps', 'children', 'repeat', 'optionalWhen', 'typographyRole'], path);
+    if (tree.optionalWhen !== undefined) {
+      if (typeof tree.optionalWhen !== 'string' || !/^(?:item\.)?[a-zA-Z][a-zA-Z0-9_]*$/.test(tree.optionalWhen)) {
+        throw new Error(`${path}: invalid optional slot`);
+      }
+      const [first, second] = tree.optionalWhen.split('.');
+      const declared = second ? declarations[first]?.itemSlots : declarations;
+      if (!Object.hasOwn(declared || {}, second || first)) throw new Error(`${path}: unknown optional slot`);
+      const owner = second ? scope[first] : scope;
+      if (!Object.hasOwn(owner || {}, second || first)) return [];
+    }
+    if (tree.repeat !== undefined && !repeated) {
+      const items = reference(scope, tree.repeat, path);
+      if (!Array.isArray(items) || items.length > 8) throw new Error(`${path}: invalid repeat`);
+      return items.flatMap((item, index) => expand(tree, { ...scope, item }, `${path}[${index}]`, depth, true, { ...declarations, item: declarations[tree.repeat] }));
+    }
+    expandedNodes += 1;
+    if (expandedNodes > 1000) throw new Error(`${path}: node budget exceeded`);
+    ancestry.add(tree);
+    const props = { ...(tree.props || {}) };
+    compositionRecord(props, null, `${path}.props`);
+    for (const key of ['tokenProps', 'slotProps']) compositionRecord(tree[key] || {}, null, `${path}.${key}`);
+    const assigned = new Set(Object.keys(props));
+    for (const [prop, token] of Object.entries(tree.tokenProps || {})) {
+      if (assigned.has(prop) || typeof token !== 'string' || !token) throw new Error(`${path}.${prop}: invalid token binding`);
+      const value = tokenReference(kit.designProfile, token);
+      if (!value) throw new Error(`${path}.${prop}: missing token ${token}`);
+      props[prop] = value;
+      assigned.add(prop);
+    }
+    for (const [prop, slot] of Object.entries(tree.slotProps || {})) {
+      if (assigned.has(prop)) throw new Error(`${path}.${prop}: duplicate binding`);
+      if (typeof slot !== 'string' || !/^(?:item\.)?[a-zA-Z][a-zA-Z0-9_]*(?:\.[a-zA-Z][a-zA-Z0-9_]*)?$/.test(slot)) {
+        throw new Error(`${path}.${prop}: invalid slot reference`);
+      }
+      const parts = slot.split('.');
+      const itemScoped = parts[0] === 'item';
+      if (itemScoped) parts.shift();
+      const name = parts.shift();
+      const declared = itemScoped ? declarations.item?.itemSlots : declarations;
+      if (!Object.hasOwn(declared || {}, name)) throw new Error(`${path}.${prop}: undeclared slot ${slot}`);
+      const declaration = declared[name];
+      const scalar = declaration.type === 'text' && parts.length === 0;
+      const media = declaration.type === 'media' && parts.length === 1 && ['src', 'alt'].includes(parts[0]);
+      const link = declaration.type === 'link' && parts.length === 1 && ['href', 'label'].includes(parts[0]);
+      const collection = declaration.type === 'items' && parts.length === 0;
+      if (!(scalar || media || link || collection)) throw new Error(`${path}.${prop}: incompatible slot reference`);
+      const owner = itemScoped ? scope.item : scope;
+      if (!declaration.required && !Object.hasOwn(owner || {}, name)) continue;
+      const value = reference(scope, slot, `${path}.${prop}`);
+      if (collection) {
+        const control = kit.controls.get(`${tree.component}.${prop}`);
+        const itemControls = kit.repeaterItemControls.get(`${tree.component}.${prop}`);
+        const itemSlots = declaration.itemSlots || {};
+        const minimum = declaration.minItems ?? (declaration.required ? 1 : 0);
+        const maximum = declaration.maxItems ?? 8;
+        const controlMin = control?.minItems ?? 0;
+        const controlMax = control?.maxItems ?? 8;
+        if (control?.type !== 'repeater' || !itemControls?.size || !Array.isArray(value)
+            || !Number.isInteger(controlMin) || !Number.isInteger(controlMax)
+            || controlMin < 0 || controlMax < controlMin || minimum < controlMin || maximum > controlMax
+            || Object.keys(itemSlots).length !== itemControls.size) {
+          throw new Error(`${path}.${prop}: items require compatible live repeater controls and bounds`);
+        }
+        for (const [field, itemSlot] of Object.entries(itemSlots)) {
+          if (itemSlot.type !== 'text' || !['text', 'textarea'].includes(itemControls.get(field)?.type) || kit.blocked.has(field)) {
+            throw new Error(`${path}.${prop}.${field}: incompatible repeater item slot`);
+          }
+        }
+        value.forEach((item, index) => {
+          for (const field of ['href', 'url']) {
+            if (Object.hasOwn(item, field)) compositionUrl(item[field], false, `${path}.${prop}[${index}].${field}`);
+          }
+        });
+      } else if (typeof value !== 'string') {
+        throw new Error(`${path}.${prop}: slot must resolve to text`);
+      }
+      props[prop] = value;
+    }
+    if (tree.typographyRole !== undefined && !['h1', 'h2', 'h3', 'body', 'button'].includes(tree.typographyRole)) {
+      throw new Error(`${path}: invalid typography role`);
+    }
+    if (['Heading', 'MultilineHeading'].includes(tree.component) && props.tag === 'h1' && ++levelOneHeadings > 1) {
+      throw new Error(`${path}: multiple level-one headings`);
+    }
+    if (tree.children !== undefined && !Array.isArray(tree.children)) throw new Error(`${path}: children must be an array`);
+    const children = (tree.children || []).flatMap((child, index) => expand(child, scope, `${path}.children[${index}]`, depth + 1, false, declarations));
+    ancestry.delete(tree);
+    return [kit.node(tree.component, props, children, tree.typographyRole || '')];
+  }
+
+  for (const [index, section] of plan.sections.entries()) {
+    compositionRecord(section, ['compositionId', 'content'], `sections[${index}]`);
+    const recipe = recipes.get(section.compositionId);
+    if (!recipe) throw new Error(`sections[${index}]: unknown composition ${section.compositionId}; choose ${[...recipes.keys()].join(', ') || 'a recipe from a full live contract with available compositions'}`);
+    compositionContent(section.content, recipe.slots, `sections[${index}].content`);
+    const roots = expand(recipe.tree, section.content, `sections[${index}].tree`, 0, false, recipe.slots);
+    if (roots.length !== 1) throw new Error(`sections[${index}]: exactly one section root required`);
+    sections.push(...roots);
+    decisions.push({ section: index, compositionId: recipe.id, rootId: roots[0] });
+  }
+  return { layout: kit.build(sections), notes: kit.notes, decisions };
+}
+
+async function compositionCli() {
+  const args = process.argv.slice(2);
+  const options = {};
+  for (let index = 0; index < args.length; index += 2) {
+    const flag = args[index];
+    if (!['--contract', '--plan', '--out', '--report', '--project-tokens'].includes(flag) || !args[index + 1] || options[flag]) {
+      throw new Error('Usage: layout-kit.mjs --contract full-live-contract.json --plan plan.json --out layout.json [--report report.json] [--project-tokens approved-tokens.json]');
+    }
+    options[flag] = args[index + 1];
+  }
+  if (!options['--contract'] || !options['--plan'] || !options['--out']) throw new Error('contract, plan and out are required');
+  const inputKeys = ['--contract', '--plan', ...(options['--project-tokens'] ? ['--project-tokens'] : [])];
+  const paths = [...inputKeys, '--out', ...(options['--report'] ? ['--report'] : [])].map((key) => resolve(options[key]));
+  if (new Set(paths).size !== paths.length) throw new Error('input and output paths must be distinct');
+  const identities = await Promise.all(paths.map(async (path) => {
+    try {
+      const info = await stat(path);
+      return `${info.dev}:${info.ino}`;
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+      return join(await realpath(dirname(path)), basename(path));
+    }
+  }));
+  if (new Set(identities).size !== identities.length) throw new Error('input and output files must be distinct; symbolic links and hard links cannot alias source files');
+  const [contract, plan, projectTokens] = await Promise.all(inputKeys.map(async (key) => {
+    const source = await readFile(options[key], 'utf8');
+    if (source.length > 10000000) throw new Error(`${key}: input budget exceeded`);
+    return JSON.parse(source);
+  }));
+  const result = expandCompositionPlan(contract, plan, { projectTokens });
+  await writeFile(options['--out'], `${JSON.stringify(result.layout, null, 2)}\n`);
+  const report = { verdict: 'diagnostic_passed', nodes: Object.keys(result.layout).length, notes: result.notes, decisions: result.decisions };
+  if (options['--report']) await writeFile(options['--report'], `${JSON.stringify(report, null, 2)}\n`);
+  console.log(JSON.stringify(report));
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  compositionCli().catch((error) => {
+    console.error(error.message);
+    process.exitCode = 1;
+  });
 }

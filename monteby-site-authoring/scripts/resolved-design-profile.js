@@ -200,12 +200,16 @@ function buildResolvedDesignProfile(contract, projectTokens = {}) {
     tokens[key] = token;
   }
 
+  const rejectedProjectTokens = [];
   for (const [key, rawToken] of Object.entries(flattenProjectTokens(projectTokens))) {
     const value = safeProjectTokenValue(typeof rawToken === 'string' ? rawToken : rawToken.value);
     const reference = safeProjectTokenValue(
       typeof rawToken === 'string' ? rawToken : rawToken.reference || rawToken.value
     );
-    if (!value || !reference) continue;
+    if (!value || !reference) {
+      rejectedProjectTokens.push(key);
+      continue;
+    }
     tokens[key] = { key, value, reference, source: 'projectTokens' };
   }
 
@@ -218,6 +222,7 @@ function buildResolvedDesignProfile(contract, projectTokens = {}) {
     componentProps: componentProps(contract),
     conflicts,
     customCSSConsumed: false,
+    rejectedProjectTokens,
   };
 }
 
@@ -236,7 +241,8 @@ function firstTokenReference(profile, keys) {
 function semanticPreset(component, props, semanticRole = '') {
   if (semanticRole) return cleanId(semanticRole);
   if (component === 'Heading' || component === 'MultilineHeading') {
-    return String(props?.tag || '').toLowerCase() === 'h1' ? 'h1' : 'h2';
+    const tag = String(props?.tag || '').toLowerCase();
+    return /^h[1-6]$/.test(tag) ? tag : 'h2';
   }
   if (component === 'Text' || component === 'RichText') return 'body';
   if (component === 'ButtonBlock') return 'button';
@@ -256,16 +262,39 @@ function applyResolvedDesignDefaults(component, props, profile, semanticRole = '
     if (reference) resolved[prop] = reference;
   }
 
-  const preset = semanticPreset(component, resolved, semanticRole);
+  const preset = cleanId(resolved.typographyPreset) || semanticPreset(component, resolved, semanticRole);
   const presetDefinition = preset ? profile?.typographyPresets?.[preset] : null;
+  if (preset === 'h3' && !presetDefinition && resolved.typographyPreset === undefined) {
+    const heading = profile?.typographyPresets?.h2 || profile?.typographyPresets?.h1 || {};
+    const fallback = {
+      fontFamily: heading.fontFamily,
+      fontWeight: heading.fontWeight,
+      ...((resolved.fontSize === undefined || resolved.fontSize === null || resolved.fontSize === '')
+        ? { fontSize: '28px', fontSizeTablet: '26px', fontSizeMobile: '24px' }
+        : {}),
+      lineHeight: '1.3',
+    };
+    for (const [prop, value] of Object.entries(fallback)) {
+      if (allowedProps.has(prop) && stringValue(value)
+          && (resolved[prop] === undefined || resolved[prop] === null || resolved[prop] === '')) {
+        resolved[prop] = value;
+      }
+    }
+  }
   if (presetDefinition?.source === 'projectTokens') {
-    for (const prop of LOCAL_TYPOGRAPHY_PROPS) {
-      if (
-        allowedProps.has(prop)
-        && (resolved[prop] === undefined || resolved[prop] === null || resolved[prop] === '')
-        && stringValue(presetDefinition[prop])
-      ) {
-        resolved[prop] = presetDefinition[prop];
+    for (const key of LOCAL_TYPOGRAPHY_PROPS) {
+      let inheritsExplicitValue = false;
+      for (const prop of [key, `${key}Tablet`, `${key}Mobile`]) {
+        const explicit = props?.[prop] !== undefined && props?.[prop] !== null && props?.[prop] !== '';
+        inheritsExplicitValue ||= explicit;
+        if (
+          !inheritsExplicitValue
+          && allowedProps.has(prop)
+          && (resolved[prop] === undefined || resolved[prop] === null || resolved[prop] === '')
+          && stringValue(presetDefinition[prop])
+        ) {
+          resolved[prop] = presetDefinition[prop];
+        }
       }
     }
     return resolved;
@@ -311,6 +340,11 @@ function globalStyleLiteralMatch(profile, component, prop, value, requestedToken
   };
 }
 
+function effectiveTypographyValue(props, profile, prop) {
+  return stringValue(props?.[prop])
+    || stringValue(profile?.typographyPresets?.[props?.typographyPreset]?.[prop]);
+}
+
 function localTypographyOverrides(props) {
   return [...LOCAL_TYPOGRAPHY_PROPS].filter((prop) => props?.[prop] !== undefined);
 }
@@ -319,6 +353,7 @@ module.exports = {
   applyResolvedDesignDefaults,
   buildResolvedDesignProfile,
   firstTokenReference,
+  effectiveTypographyValue,
   globalStyleLiteralMatch,
   localTypographyOverrides,
   semanticPreset,

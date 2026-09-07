@@ -1,6 +1,6 @@
 # Tryb `content-brief-authoring`: strona z briefu, bez referencyjnego HTML
 
-Użyj tego trybu, gdy masz **treść i wzorzec wizualny**, ale nie masz makiety do
+Użyj tego trybu, gdy masz **treść**, ale nie masz makiety do
 zmierzenia: nowa podstrona serwisu, strona z briefu klienta, powielenie układu
 z już zapisanej strony na kolejne adresy.
 
@@ -8,6 +8,112 @@ Tryb `owned-html-reconstruction` i jego zakaz ręcznego buildera **tu nie
 obowiązują** — nie ma czego mierzyć, więc nie ma referencyjnej trasy pomiarowej.
 Kanoniczną trasą jest `layout-kit.mjs`, a bramką jakości `normalize-layout.js`
 plus pomiar zapisanej strony.
+
+## Nowa kompozycja z briefu: plan danych
+
+Dla nowej strony bez wzorca preferuj kompozycje publikowane przez bieżący
+Builder. Pobierz pełny `GET /wp-json/monteby/v1/contract` do pliku dla narzędzi.
+Do wyboru kompozycji czytaj tylko
+`GET /wp-json/monteby/v1/contract?mode=design`: skrócony katalog jest pomocą
+wyboru, nie kontraktem walidatora. Nie dopisuj do niego brakujących kontrolek.
+Gdy pełny kontrakt nie zawiera `authoring.compositions.version: 1`, zachowaj
+istniejącą trasę wzorca poniżej; nie odtwarzaj receptur z pamięci.
+
+Przed zleceniem modelowi przygotowania planu sprawdź, czy discovery publikuje
+co najmniej jedną recepturę. `recipes: []` oznacza najpierw diagnozę
+kompatybilności lub integralności kontraktu; nie wydawaj tokenów modelu na
+planowanie z pustego katalogu.
+
+Model wybiera `compositionId` z opublikowanego katalogu i wypełnia wyłącznie
+jego sloty. Nie pisze skryptu JavaScript, node mapy ani własnych propów.
+Przed rozwinięciem planu sprawdź zgodność z briefem:
+
+- Zachowaj wszystkie dostarczone teksty, etykiety i adresy linków oraz zatwierdzone media; porównaj liczbę sekcji z briefem.
+- Umieść dokładnie jeden H1 w otwarciu strony.
+- Dla pełnej strony sprawdź obecność nagłówka z nawigacją, hero i stopki; uwzględnij istniejące globalne szablony nagłówka i stopki, aby nie dodawać ich ponownie w treści strony.
+- Wybierz dostępny hero pasujący do dostarczonych zasobów. Bez zatwierdzonego zdjęcia wybierz hero bez mediów; nie wymyślaj zdjęcia, aby wypełnić slot.
+
+Zapisz `.monteby/plan-<slug>.json` w kształcie:
+
+```json
+{
+  "version": 1,
+  "sections": [
+    {
+      "compositionId": "hero-split",
+      "content": {
+        "title": "Dokładny tytuł z briefu",
+        "media": { "src": "/wp-content/uploads/approved-photo.webp", "alt": "Opis zatwierdzonego zdjęcia" }
+      }
+    }
+  ]
+}
+```
+
+Dobieraj strukturę do objętości i celu treści, nie do stałej liczby sekcji.
+W aktualnym katalogu `hero-agenda` rozdziela tytuł i wprowadzenie oraz pokazuje
+2–4 dostarczone tematy jako wiersze; `hero-photo-led` oddaje główne miejsce
+zatwierdzonemu zdjęciu, z krótkim wprowadzeniem i opcjonalnym kontekstem.
+`manifesto` wyróżnia dostarczoną deklarację z jej wyjaśnieniem; atrybucję
+podaj tylko wtedy, gdy brief rzeczywiście ją zawiera. `site-navigation`
+przyjmuje markę, etykietę menu, rzeczywiste linki `label`/`href` i wymagany
+kontakt CTA. `site-footer` zamyka stronę marką, opisem, notą i linkiem
+dostarczonymi w briefie; nie dopisuj roku copyright ani niepotwierdzonych deklaracji.
+Nie twórz menu powtórnie, gdy strona korzysta już z odpowiedniego
+globalnego nagłówka. Linki `#cel` muszą odpowiadać unikalnym `anchorId`
+docelowych sekcji; te kotwice podaje plan, nie generuj losowych ID.
+Gdy pełna strona wymaga historii projektu, szczegółów usługi lub dalszych
+fotografii, zachowaj je w kolejnych odpowiednich kompozycjach zamiast
+skracania briefu do hero i kilku kart. Nie mnoż pustych sekcji, aby osiągnąć
+arbitralną liczbę. Zawsze sprawdzaj faktyczną dostępność tych ID i slotów
+w bieżącym kontrakcie.
+
+To przykład kształtu, nie stały kontrakt slotów: wymagania zawsze odczytaj z
+bieżącej receptury. Slot `text` jest tekstem; `media` ma `src` i jawne `alt`
+(puste wyłącznie dla obrazu dekoracyjnego), `link` ma `label` i `href`, a
+`items` jest listą obiektów zgodnych z `itemSlots`. Plan ma 1–20 sekcji,
+lista najwyżej 8 pozycji. Nie podawaj nieznanych pól ani dowolnych `props`.
+Nie wymyślaj tekstów referencji, statystyk, opinii, tożsamości ani mediów.
+Do stron demonstracyjnych preferuj zdjęcia stockowe z zatwierdzonego źródła (np. Pexels/Freepik) i manifestu. Jeśli użytkownik wyklucza generowanie zdjęć, korzystaj wyłącznie z istniejących materiałów; generowanie w innych projektach pozostaje dostępne zgodnie z ich briefem.
+Źródła mediów muszą pochodzić z zatwierdzonego manifestu praw do zasobów;
+walidacja URL nie potwierdza praw do obrazu. Jeśli wymaganego slotu brakuje,
+wybierz inną dostępną kompozycję lub zgłoś brak. Nie podstawiaj pustego pola.
+
+```bash
+node monteby-site-authoring/scripts/layout-kit.mjs \
+  --contract .monteby/contract.json \
+  --plan .monteby/plan-<slug>.json \
+  --out .monteby/layout-<slug>.json \
+  --report .monteby/composition-report-<slug>.json
+```
+
+Jeżeli brief dostarcza zatwierdzone lokalne tokeny projektu, przekaż je jako
+plik danych JSON przez `--project-tokens .monteby/approved-tokens.json`.
+Nie wykonuj pliku JavaScript jako części planu.
+
+Receptury istnieją tylko w kontrakcie Buildera. Kit rozwija je deterministycznie
+przez obecny walidator w zwykłe edytowalne węzły. Kolory i typografia zachowują
+odwołania do tokenów; plan nie nadpisuje ustawień całego serwisu. Raport podaje
+sekcje i uwagi; `diagnostic_passed` oznacza wyłącznie rozwinięcie lokalne.
+Następnie wyrenderuj cały pierwszy szkic raz, przeczytaj uwagi i wykonaj
+pre-flight, `/validate`, wersjonowany zapis oraz bramkę WordPress/PHP poniżej.
+Podgląd po każdej sekcji jest potrzebny przy ręcznej adaptacji wzorca, nie przy
+niezmienionej opublikowanej recepturze.
+
+Oceń zapis na 1440/834/390: czy cała treść jest widoczna, tytuł ma właściwą
+hierarchię i mieści się w kolumnie, media są załadowane i poprawnie wykadrowane,
+CTA jest widoczne i klikalne, rytm i wyrównanie powtarzanych elementów są spójne,
+a mobile zachowuje sensowną kolejność czytania. Brak overflow jest konieczny,
+ale sam nie dowodzi jakości projektu. Nie skracaj dostarczonego tekstu, aby
+ukryć przepełnienie; zmień wybór kompozycji lub zgłoś konkretną niezgodność.
+Sprawdź też edycję kontrolek, Undo, zapis i ponowne otwarcie. Dopiero kanoniczny
+zapis i te pomiary mogą dać `canonical_verified`; nowa kompozycja bez wzorca
+nie otrzymuje wyniku `canonical_verified_1_to_1`.
+
+## Adaptacja istniejącego wzorca
+
+Poniższa trasa dotyczy świadomej adaptacji zapisanej strony, nie wymagań nowej
+kompozycji powyżej.
 
 ## Skąd bierze się wzorzec
 
@@ -20,11 +126,11 @@ Nigdy z pamięci ani z opisu słownego. Zawsze z jednego z dwóch źródeł:
    geometrii, użyj `extract-reference-spec.mjs` na niej i traktuj wynik jak
    referencję (wtedy w praktyce wracasz do trasy mechanicznej).
 
-Gdy brief podaje wartość inną niż zapisany wzorzec — **wygrywa wzorzec**.
-Rozbieżność zgłoś w raporcie, nie wybieraj po cichu. Dotyczy to zwłaszcza
-stacków fontów (`fontFamily`), których nie waliduje ani kontrakt, ani żadne
-narzędzie: skopiuj dokładny string z `globalStyles.typography.fonts` albo
-z layoutu wzorcowego.
+Jawna nowa decyzja użytkownika w briefie ma pierwszeństwo przed zapisanym
+wzorcem. Wzorzec wypełnia tylko decyzje, których brief nie zmienia; każdą
+rozbieżność odnotuj. Wartości muszą nadal przejść żywy kontrakt. Fonty wybieraj
+z opublikowanego systemu typografii lub zatwierdzonych tokenów projektu,
+nie z zapamiętanej nazwy ani CSS-u motywu.
 
 Nowe węzły bez jawnej wartości korzystają z powiązań opublikowanych przez live
 contract: `var(--gcb-color-*)`, `var(--gcb-font-*)`,
@@ -121,8 +227,9 @@ nie rozstrzyga, weź je ze strony wzorcowej i zapisz w briefie na przyszłość:
   ręcznego kopiowania `paddingTop*`/`paddingBottom*` ze wzorca; ręczne paddingi
   zostają tylko tam, gdzie zmierzony rytm nie pasuje do żadnego presetu. To samo
   dotyczy `sectionContentWidthPreset` wobec `innerMaxWidth`;
-- `lineHeight` na **każdym** `Heading` i `Text` (brak = motyw narzuca własną
-  interlinię, typowo 1.5–1.6, i bliźniacze strony rozjadą się wizualnie);
+- skuteczne `lineHeight` na każdym `Heading` i `Text`, jawne albo z
+  opublikowanego `typographyPreset`; nie nadpisuj działającego presetu lokalną
+  wartością tylko po to, by uciszyć ostrzeżenie;
 - `fontSizeTablet` i `fontSizeMobile` wszędzie, gdzie `fontSize ≥ 30px`
   (renderer nakłada `clamp()` od tego progu);
 - `heightTablet`/`heightMobile` na każdym `ImageBlock` z `height`;
@@ -132,14 +239,12 @@ nie rozstrzyga, weź je ze strony wzorcowej i zapisz w briefie na przyszłość:
   `gridColumnSpan` równy liczbie kolumn oraz `gridColumnSpanTablet/Mobile: 1`;
 - odstępy i wyrównanie kontenerów z przyciskami (`ButtonBlock` bez kontenera
   rozciąga się na całą szerokość kolumny);
-- ruch: stany po najechaniu i wejścia sekcji. Kontrakt ich nie wystawia, więc
-  żyją w motywie potomnym i obowiązują cały serwis naraz — nowa podstrona
-  dziedziczy je bez żadnej pracy, ale tylko wtedy, gdy nie odbiega strukturą.
-  Arkusz ruchu adresuje elementy strukturalnie (siatki, klasy renderera), a nie
-  po identyfikatorze węzła; kafel poza siatką albo sekcja o innej budowie po
-  cichu wypada z mechanizmu. Po zapisie strony sprawdź, ile węzłów dostało
-  oznaczenia ruchu, i porównaj z liczbą kafli. Szczegóły i pułapki:
-  `references/html-to-monteby.md`, sekcja „Ruch: przejścia, stany, wejścia".
+- ruch: używaj wyłącznie kontrolek opublikowanych przez żywy kontrakt, jeżeli
+  brief wymaga animacji. Nowa kompozycja nie wymaga CSS-u motywu potomnego.
+  Brak wymaganego zachowania jest luką Builder/Core; nie zastępuj go klasami
+  ani skryptem. Sprawdź w kanonicznym podglądzie działanie i preferencję
+  ograniczenia ruchu.
+
 
 ## Treść ekspercka
 
