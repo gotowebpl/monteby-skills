@@ -33,6 +33,7 @@ import { readFile, realpath, stat, writeFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 import { basename, dirname, join, resolve } from 'node:path';
 import designProfileModule from './resolved-design-profile.js';
+import controlContractModule from './control-contract.js';
 
 const {
   applyResolvedDesignDefaults,
@@ -40,14 +41,11 @@ const {
   effectiveTypographyValue,
   tokenReference,
 } = designProfileModule;
+const { buildControlIndex, normalizeControlValue } = controlContractModule;
 
 const TEXT_NODES = new Set(['Heading', 'Text', 'MultilineHeading']);
 const EDGE_WIDTHS = ['borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth'];
 const ANCHOR_ID_PATTERN = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
-
-function snap(value, step) {
-  return Number((Math.round(value / step) * step).toFixed(6));
-}
 
 export class Kit {
   constructor(contract, options = {}) {
@@ -56,19 +54,7 @@ export class Kit {
     this.components = new Map((contract.components || []).map((c) => [c.name, c]));
     this.blocked = new Set(contract.authoring?.blockedProps || []);
     this.rootComponents = new Set(contract.authoring?.topLevelRootComponents || ['Section']);
-    this.controls = new Map();
-    for (const component of contract.components || []) {
-      for (const control of component.controls || []) {
-        const controlProps = [
-          ...(control.props || []),
-          ...Object.values(control.spacingProps || {}).filter((prop) => typeof prop === 'string'),
-        ];
-        for (const prop of controlProps) {
-          const key = `${component.name}.${prop}`;
-          if (!this.controls.has(key)) this.controls.set(key, control);
-        }
-      }
-    }
+    this.controls = buildControlIndex(contract);
     // Kontrolki zagnieżdżone repeaterów (itemControls), np. Section.backgroundLayers
     // czy FormBlock.fields; klucz: "Komponent.propRepeatera".
     this.repeaterItemControls = new Map();
@@ -144,82 +130,13 @@ export class Kit {
   }
 
   #normalizeControlValue(control, label, value) {
-    const { type, options, pattern, step, min, max, units } = control;
-    const optionValues = Array.isArray(options)
-      ? options.map((option) => (
-        option && typeof option === 'object' && !Array.isArray(option) ? option.value : option
-      ))
-      : [];
-
-    if (typeof value === 'string' && /^var\s*\(/iu.test(value.trim())) {
-      if (!this.publishedReferences.has(value.trim())) {
-        this.notes.push(`${label}: nieopublikowana referencja CSS ${JSON.stringify(value)}, pominięta`);
-        return undefined;
-      }
-      return value.trim();
-    }
-
-    if (optionValues.length > 0 && ['custom', 'select', 'segment'].includes(type)) {
-      if (!optionValues.includes(value)) {
-        this.notes.push(`${label}: ${JSON.stringify(value)} spoza ${JSON.stringify(optionValues)}, pominięte`);
-        return undefined;
-      }
-      return value;
-    }
-
-    if (typeof pattern === 'string' && typeof value === 'string' && !(new RegExp(pattern, 'u')).test(value)) {
-      this.notes.push(`${label}: ${JSON.stringify(value)} nie spełnia wzorca kontrolki, pominięte`);
+    const result = normalizeControlValue(control, value, this.publishedReferences);
+    if (!result.accepted) {
+      this.notes.push(`${label}: ${result.reason}, pominięte`);
       return undefined;
     }
-
-    if (type === 'toggle' && typeof value !== 'boolean') {
-      this.notes.push(`${label}: ${JSON.stringify(value)} nie jest wartością logiczną, pominięte`);
-      return undefined;
-    }
-
-    if (type === 'number') {
-      const numeric = Number(value);
-      if (!Number.isFinite(numeric)) {
-        this.notes.push(`${label}: ${JSON.stringify(value)} nie jest liczbą, pominięte`);
-        return undefined;
-      }
-      let out = step ? snap(numeric, step) : numeric;
-      if (typeof min === 'number') out = Math.max(min, out);
-      if (typeof max === 'number') out = Math.min(max, out);
-      if (out !== numeric) this.notes.push(`${label}: ${numeric} → ${out}`);
-      return out;
-    }
-
-    if ((type === 'css-value' || type === 'spacing') && typeof value === 'string') {
-      if (/\S\s+\S/.test(value.trim())) {
-        this.notes.push(`${label}: kontrolka przyjmuje jedną wartość, podano „${value}”, pominięte`);
-        return undefined;
-      }
-      const match = /^\s*(-?\d*\.?\d+)\s*([a-z%]*)\s*$/i.exec(value);
-      if (!match) {
-        this.notes.push(`${label}: ${JSON.stringify(value)} nie jest pojedynczą wartością CSS kontrolki, pominięte`);
-        return undefined;
-      }
-      const unit = match[2] || '';
-      if (Array.isArray(units) && !units.includes(unit)) {
-        this.notes.push(`${label}: jednostka ${JSON.stringify(unit)} spoza ${JSON.stringify(units)}, pominięte`);
-        return undefined;
-      }
-      if (!step) return value.trim();
-      let out = snap(Number(match[1]), step);
-      if (typeof min === 'number') out = Math.max(min, out);
-      if (typeof max === 'number') out = Math.min(max, out);
-      const snapped = `${out}${unit}`;
-      if (snapped !== value.trim()) {
-        // Docięcie do kroku kontrolki jest rozbieżnością z referencją/briefem,
-        // więc musi zostawić ślad — inaczej pre-flight widzi już czystą wartość
-        // i raportuje „0 napraw”, a autor sądzi, że ma 1:1.
-        this.notes.push(`${label}: dociągnięte do kroku ${step}: ${value} → ${snapped}`);
-      }
-      return snapped;
-    }
-
-    return value;
+    if (result.changed) this.notes.push(`${label}: ${result.changeReason || `${JSON.stringify(value)} → ${JSON.stringify(result.value)}`}`);
+    return result.value;
   }
 
   #normalizeRepeater(component, prop, control, value) {

@@ -123,6 +123,13 @@ and named feature gates. Compare those gates to the live contract's
 `productVersion`; the contract's existing `version` remains the contract schema
 version and must never be treated as a plugin version.
 
+When the full live contract publishes `iconCatalog`, bind each captured icon
+surface through `scripts/icon-mapping.js` before drafting. The mapping artifact
+must bind the exact reference evidence SHA-256 and catalog SHA-256, cover every
+captured icon exactly once, and select only a native catalog ligature. Never
+write raw SVG/path data or substitute an image. If no native icon is equivalent,
+stop with `blocked_icon_catalog_gap` for a bounded catalog review.
+
 Before any layout mutation, require
 `authoring.capabilities.providerRenderedWidgetSave: true`. It proves that the
 server, rather than the browser compiler, owns canonical save HTML and can
@@ -334,11 +341,14 @@ length, SHA-256, and occurrence counts, then compares that multiset with the
 actual node map. `missing`, `truncatedOrChanged`, or
 `duplicateCountMismatch`, or `added` entries block the run; long paragraphs and inline
 markup are never dropped from the ledger because of a display/evidence limit.
-For `content-brief-authoring`, prepare an explicit
-`monteby-client-content-document` v1 artifact, capture the canonical live page,
+For `content-brief-authoring`, prepare an explicit source-bound
+`monteby-client-content-document` v2 artifact, capture the canonical live page,
 and run `scripts/verify-client-content.js`. A claim such as “1:1, bez skrótów”
-is invalid without a complete verification report. U+00A0 non-breaking spaces
-remain distinct authored characters in capture and ledger evidence.
+is invalid without a complete verification report bound to the exact source
+SHA-256, public URL, and region. U+00A0 non-breaking spaces remain distinct
+authored characters in capture, node props, and ledger evidence. Legacy v1
+documents may be checked, but the report marks them unbound and they cannot
+support an exact client-source completion claim.
 
 ## Utilities outside the reproduction state machine
 
@@ -354,6 +364,16 @@ only when their primary reference explicitly calls for it.
 - `scripts/verify-client-content.js` — compares an approved structured client
   content document with the `contentLedger` captured from the canonical live
   page and fails on missing, changed, duplicate-count, or added copy.
+- `scripts/batch-layout-client.js` — preflights every page in a versioned batch
+  before its first write, then saves sequentially; on conflict it stops and
+  writes an exact resume ledger, then re-preflights every unapplied page before
+  resumed writes rather than pretending WordPress has a global transaction.
+- `scripts/browser-preflight.js` — proves a real Chromium can navigate and
+  capture 1440/834/390 plus the 375px narrow-width stress viewport before an
+  authoring run. It is mandatory in the production environment.
+- `scripts/verify-public-props.js` — correlates diagnostic node IDs with unique
+  semantic public surfaces and verifies computed props at 1440/834/390 plus
+  horizontal geometry at 375; screenshots alone do not replace this gate.
 - `scripts/normalize-layout.js` — pre-flight for an existing node map; reports
   every violation class at once, `--fix` writes the repaired copy.
 - `scripts/audit-reference-css.mjs` — classifies every reference CSS declaration

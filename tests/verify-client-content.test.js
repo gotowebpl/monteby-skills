@@ -8,6 +8,7 @@ const { spawnSync } = require('node:child_process');
 const { test } = require('node:test');
 const { buildContentLedger } = require('../monteby-site-authoring/scripts/content-ledger');
 const {
+  canonicalClientSourceSha256,
   clientDocumentEntries,
   verifyClientContent,
 } = require('../monteby-site-authoring/scripts/verify-client-content');
@@ -36,6 +37,66 @@ test('client content verification compares approved text with the captured live 
 
   assert.equal(report.complete, true);
   assert.equal(report.artifact, 'monteby-client-content-verification');
+  assert.equal(report.sourceBound, false);
+});
+
+test('v2 client content gate binds exact approved text to one live page', () => {
+  const entries = [
+    { id: 'hero.heading', text: 'Cena od 1 000 zł' },
+    { id: 'hero.lead', text: 'Pełny opis bez skrótów.' },
+  ];
+  const document = {
+    schemaVersion: 2,
+    artifact: 'monteby-client-content-document',
+    scope: { viewUrl: 'https://example.test/oferta/#hero', region: 'page-content' },
+    source: {
+      label: 'Zatwierdzony dokument klienta',
+      sha256: canonicalClientSourceSha256(entries.map((entry) => ({
+        structureKey: entry.id,
+        text: entry.text,
+      }))),
+    },
+    entries,
+  };
+  const manifest = {
+    ...liveManifest(entries.map((entry) => ({ structureKey: entry.id, text: entry.text }))),
+    sourceUrl: 'https://example.test/oferta/',
+  };
+
+  const report = verifyClientContent(document, manifest);
+
+  assert.equal(report.complete, true);
+  assert.equal(report.sourceBound, true);
+  assert.equal(report.scope.region, 'page-content');
+  assert.equal(report.sourceSha256, document.source.sha256);
+});
+
+test('v2 client content gate rejects a stale source hash and a different live page', () => {
+  const entries = [{ id: 'body', text: 'Zatwierdzony tekst' }];
+  const base = {
+    schemaVersion: 2,
+    artifact: 'monteby-client-content-document',
+    scope: { viewUrl: 'https://example.test/oferta/', region: 'full-render' },
+    source: {
+      label: 'Brief',
+      sha256: canonicalClientSourceSha256([{ structureKey: 'body', text: 'Zatwierdzony tekst' }]),
+    },
+    entries,
+  };
+  assert.throws(
+    () => verifyClientContent({ ...base, source: { ...base.source, sha256: '0'.repeat(64) } }, {
+      ...liveManifest([{ structureKey: 'body', text: 'Zatwierdzony tekst' }]),
+      sourceUrl: base.scope.viewUrl,
+    }),
+    /source\.sha256 does not match/,
+  );
+  assert.throws(
+    () => verifyClientContent(base, {
+      ...liveManifest([{ structureKey: 'body', text: 'Zatwierdzony tekst' }]),
+      sourceUrl: 'https://example.test/inny/',
+    }),
+    /sourceUrl does not match/,
+  );
 });
 
 test('client content verification fails on changed, missing, added, and duplicate text', () => {

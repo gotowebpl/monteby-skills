@@ -42,6 +42,7 @@ function parseArgs(argv) {
     renderedMinCoverageRatio: '',
     allowStructuralVerdict: false,
     preserveSourceText: false,
+    iconMapping: '',
     json: false,
     help: false,
   };
@@ -96,6 +97,7 @@ function parseArgs(argv) {
       '--max-percent',
       '--max-viewport-percent',
       '--rendered-min-coverage-ratio',
+      '--icon-mapping',
     ].includes(arg);
 
     if (!valueOption) {
@@ -163,6 +165,9 @@ function parseArgs(argv) {
       case '--rendered-min-coverage-ratio':
         options.renderedMinCoverageRatio = value;
         break;
+      case '--icon-mapping':
+        options.iconMapping = path.resolve(value);
+        break;
       default:
         break;
     }
@@ -195,7 +200,7 @@ function parsePositiveInteger(value, label) {
 
 function usage() {
   return `Usage:
-  run-visual-iteration.js --contract contract.json [--seed value] [--variant auto|split-hero|editorial-ledger|bento-showcase|tabbed-program|marketplace-service] [--archetype name] [--reference-url url | --reference-html-file file] [--candidate-layout layout.json] [--preserve-source-text] [--out-dir dir] [--viewport label:WIDTHxHEIGHT] [--full-page | --viewport-only] [--viewport-timeout-ms milliseconds] [--channel chrome] [--max-percent value] [--max-viewport-percent value] [--allow-structural-verdict] [--json]
+  run-visual-iteration.js --contract contract.json [--seed value] [--variant auto|split-hero|editorial-ledger|bento-showcase|tabbed-program|marketplace-service] [--archetype name] [--reference-url url | --reference-html-file file] [--candidate-layout layout.json] [--preserve-source-text] [--icon-mapping file] [--out-dir dir] [--viewport label:WIDTHxHEIGHT] [--full-page | --viewport-only] [--viewport-timeout-ms milliseconds] [--channel chrome] [--max-percent value] [--max-viewport-percent value] [--allow-structural-verdict] [--json]
 
 Options:
   --reference-html-file <file>  Use a local HTML document as the measured reference without requiring a remote URL.
@@ -207,6 +212,7 @@ Options:
   --max-percent <value>       Maximum aggregate screenshot difference percentage. Default: 0
   --max-viewport-percent <v>  Maximum screenshot difference percentage for any viewport. Default: 0
   --preserve-source-text      Preserve text from owned local HTML. Automatically enabled for generated targets
+  --icon-mapping <file>       Bind every captured icon surface to one native icon from the live catalog
 
 Runs one local visual-fidelity iteration:
   1. start-visual-benchmark.js creates/captures the target
@@ -495,6 +501,7 @@ function readinessArgs(options, referenceManifest) {
   ];
 
   if (referenceManifest && fs.existsSync(referenceManifest)) {
+    args.push('--reference-manifest', referenceManifest);
     const manifest = readJson(referenceManifest);
     const manifestDir = path.dirname(referenceManifest);
     const briefFile = typeof manifest.briefJson === 'string' ? manifest.briefJson.trim() : '';
@@ -511,6 +518,10 @@ function readinessArgs(options, referenceManifest) {
         args.push('--reference-layout', layoutFile);
       }
     }
+  }
+
+  if (options.iconMapping) {
+    args.push('--icon-mapping', options.iconMapping);
   }
 
   args.push('--json');
@@ -540,6 +551,9 @@ function draftArgs(options, startReport, referenceManifest) {
   }
   if (options.preserveSourceText) {
     args.push('--preserve-source-text');
+  }
+  if (options.iconMapping) {
+    args.push('--icon-mapping', options.iconMapping);
   }
 
   return args;
@@ -1578,6 +1592,9 @@ function iterationArgsFor(report, candidateLayout = '', overrides = {}) {
   }
   if (options.preserveSourceText) {
     args.push('--preserve-source-text');
+  }
+  if (options.iconMapping) {
+    args.push('--icon-mapping', options.iconMapping);
   }
   if (allowStructuralVerdict) {
     args.push('--allow-structural-verdict');

@@ -3,6 +3,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { createHash } = require('node:crypto');
 const {
   buildContentLedger,
   compareContentLedgers,
@@ -40,16 +41,19 @@ function readJson(file, label) {
 }
 
 function clientDocumentEntries(document) {
+  const allowedTopLevelKeys = document?.schemaVersion === 2
+    ? ['schemaVersion', 'artifact', 'scope', 'source', 'entries']
+    : ['schemaVersion', 'artifact', 'entries'];
   if (
     !document
     || typeof document !== 'object'
     || Array.isArray(document)
-    || document.schemaVersion !== 1
+    || ![1, 2].includes(document.schemaVersion)
     || document.artifact !== 'monteby-client-content-document'
     || !Array.isArray(document.entries)
-    || Object.keys(document).some((key) => !['schemaVersion', 'artifact', 'entries'].includes(key))
+    || Object.keys(document).some((key) => !allowedTopLevelKeys.includes(key))
   ) {
-    throw new Error('Client document must be a monteby-client-content-document v1 artifact');
+    throw new Error('Client document must be a monteby-client-content-document v1 or v2 artifact');
   }
   const ids = new Set();
   return document.entries.map((entry, index) => {
@@ -72,6 +76,56 @@ function clientDocumentEntries(document) {
   });
 }
 
+function canonicalClientSourceSha256(entries) {
+  return createHash('sha256').update(JSON.stringify(entries.map((entry) => ({
+    id: entry.structureKey,
+    text: entry.text,
+  })))).digest('hex');
+}
+
+function validateSourceBinding(document, manifest, entries) {
+  if (document.schemaVersion !== 2) {
+    return { sourceBound: false, scope: null, sourceSha256: '' };
+  }
+  const scope = document.scope;
+  const source = document.source;
+  if (
+    !scope || typeof scope !== 'object' || Array.isArray(scope)
+    || Object.keys(scope).some((key) => !['viewUrl', 'region'].includes(key))
+    || typeof scope.viewUrl !== 'string' || !/^https?:\/\//u.test(scope.viewUrl)
+    || !['page-content', 'full-render'].includes(scope.region)
+    || !source || typeof source !== 'object' || Array.isArray(source)
+    || Object.keys(source).some((key) => !['label', 'sha256'].includes(key))
+    || typeof source.label !== 'string' || !source.label.trim()
+    || typeof source.sha256 !== 'string' || !/^[a-f0-9]{64}$/u.test(source.sha256)
+  ) {
+    throw new Error('Client document v2 requires closed scope and source bindings');
+  }
+  const actualSourceSha256 = canonicalClientSourceSha256(entries);
+  if (source.sha256 !== actualSourceSha256) {
+    throw new Error('Client document source.sha256 does not match its ordered entries');
+  }
+  const manifestUrl = String(manifest?.sourceUrl || '');
+  if (normalizeBoundUrl(scope.viewUrl) !== normalizeBoundUrl(manifestUrl)) {
+    throw new Error('Live manifest sourceUrl does not match the client document scope.viewUrl');
+  }
+  return {
+    sourceBound: true,
+    scope: { viewUrl: scope.viewUrl, region: scope.region },
+    sourceSha256: source.sha256,
+  };
+}
+
+function normalizeBoundUrl(value) {
+  try {
+    const url = new URL(value);
+    url.hash = '';
+    return url.toString().replace(/\/$/u, '');
+  } catch {
+    return '';
+  }
+}
+
 function liveContentLedger(manifest) {
   const ledger = manifest?.contentLedger;
   if (
@@ -85,11 +139,14 @@ function liveContentLedger(manifest) {
 }
 
 function verifyClientContent(clientDocument, liveManifest) {
-  const expected = buildContentLedger(clientDocumentEntries(clientDocument));
+  const entries = clientDocumentEntries(clientDocument);
+  const sourceBinding = validateSourceBinding(clientDocument, liveManifest, entries);
+  const expected = buildContentLedger(entries);
   const comparison = compareContentLedgers(expected, liveContentLedger(liveManifest));
   return {
     ...comparison,
     artifact: 'monteby-client-content-verification',
+    ...sourceBinding,
   };
 }
 
@@ -114,6 +171,7 @@ if (require.main === module) process.exitCode = main();
 
 module.exports = {
   clientDocumentEntries,
+  canonicalClientSourceSha256,
   liveContentLedger,
   main,
   parseArgs,

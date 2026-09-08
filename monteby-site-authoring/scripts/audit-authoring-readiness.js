@@ -3,8 +3,11 @@
 
 const fs = require('fs');
 const path = require('path');
+const { createHash } = require('node:crypto');
 const { isBlockedAuthoringProp } = require('./audit-monteby-layout.js');
 const { PROPORTIONAL_GRID_TOKEN, measureTwoColumnGrid } = require('./measured-grid-geometry');
+const { validateIconMapping } = require('./icon-mapping');
+const { collectControlMetadata } = require('./control-contract');
 
 const REQUIRED_PARITY_SURFACES = [
   'editor schema',
@@ -22,7 +25,9 @@ function parseArgs(argv) {
     startReport: '',
     briefJson: '',
     referenceBrief: '',
+    referenceManifest: '',
     referenceLayouts: [],
+    iconMapping: '',
     json: false,
   };
 
@@ -36,8 +41,12 @@ function parseArgs(argv) {
       options.briefJson = path.resolve(requiredValue(argv, index += 1, arg));
     } else if (arg === '--reference-brief') {
       options.referenceBrief = path.resolve(requiredValue(argv, index += 1, arg));
+    } else if (arg === '--reference-manifest') {
+      options.referenceManifest = path.resolve(requiredValue(argv, index += 1, arg));
     } else if (arg === '--reference-layout') {
       options.referenceLayouts.push(path.resolve(requiredValue(argv, index += 1, arg)));
+    } else if (arg === '--icon-mapping') {
+      options.iconMapping = path.resolve(requiredValue(argv, index += 1, arg));
     } else if (arg === '--json') {
       options.json = true;
     } else if (arg === '--help' || arg === '-h') {
@@ -68,7 +77,7 @@ function requiredValue(argv, index, arg) {
 
 function printHelp() {
   console.log(`Usage:
-  audit-authoring-readiness.js --contract contract.json (--start-report benchmark-start-report.json | --brief-json visual-brief.json) [--reference-brief reference-brief.json] [--reference-layout reference-layout.json ...] [--json]
+  audit-authoring-readiness.js --contract contract.json (--start-report benchmark-start-report.json | --brief-json visual-brief.json) [--reference-brief reference-brief.json] [--reference-manifest reference-manifest.json] [--reference-layout reference-layout.json ...] [--icon-mapping icon-mapping.json] [--json]
 
 Checks whether a live Monteby contract exposes the widgets and props needed by a visual brief before clean JSON authoring starts. Optional captured reference JSON is treated only as untrusted geometry evidence.`);
 }
@@ -155,6 +164,7 @@ function readReferenceEvidence(options) {
   const mediaBoxes = normalizedLayouts.flatMap((layout) => layout.mediaBoxes);
   const landmarks = normalizedLayouts.flatMap((layout) => layout.landmarks);
   const layoutGroups = normalizedLayouts.flatMap((layout) => layout.layoutGroups);
+  const iconSurfaces = normalizedLayouts.flatMap((layout) => layout.iconSurfaces);
   const lineGeometryViewports = new Set(normalizedLayouts
     .filter((layout) => layout.textBoxes.some((box) => Array.isArray(box.lines) && box.lines.some((line) => hasRectGeometry(line?.rect))))
     .map(referenceViewportKey)).size;
@@ -220,6 +230,7 @@ function readReferenceEvidence(options) {
     mediaBoxes,
     landmarks,
     layoutGroups,
+    iconSurfaces,
     requiredMediaRoles,
     firstViewportMediaCoverage: coverage,
     hasHeadingGeometry: textBoxes.some((box) => /^h[1-6]$/i.test(box.tag) && hasRectGeometry(box.rect)),
@@ -316,6 +327,7 @@ function normalizeReferenceLayoutEvidence(value) {
     mediaBoxes: arrayOfObjects(layout.meaningfulMediaBoxes || layout.mediaBoxes || layout.mediaSamples),
     landmarks: arrayOfObjects(layout.landmarks),
     layoutGroups,
+    iconSurfaces: arrayOfObjects(layout.iconSurfaces),
     firstViewportMediaCoverage: firstFiniteNumber([
       summary.meaningfulFirstViewportMediaCoverage,
       summary.firstViewportMediaCoverage,
@@ -333,6 +345,7 @@ function emptyReferenceLayoutEvidence() {
     mediaBoxes: [],
     landmarks: [],
     layoutGroups: [],
+    iconSurfaces: [],
     firstViewportMediaCoverage: NaN,
   };
 }
@@ -520,72 +533,6 @@ function buildContractIndex(contractPayload) {
   return index;
 }
 
-function collectControlMetadata(value) {
-  const props = [];
-  const propOptions = new Map();
-
-  visit(value, (item) => {
-    if (!item || typeof item !== 'object' || Array.isArray(item)) {
-      return;
-    }
-    if (typeof item.type !== 'string' || !item.type.trim()) {
-      return;
-    }
-    const itemProps = [];
-    if (typeof item.prop === 'string') {
-      itemProps.push(item.prop);
-    }
-    if (Array.isArray(item.props)) {
-      itemProps.push(...arrayOfStrings(item.props));
-    }
-    if (item.spacingProps && typeof item.spacingProps === 'object') {
-      itemProps.push(...objectKeys(item.spacingProps).map((key) => item.spacingProps[key]).filter((prop) => typeof prop === 'string'));
-    }
-    props.push(...itemProps);
-    const optionValues = collectControlOptionValues(item.options);
-    for (const prop of itemProps) {
-      if (optionValues.length === 0) {
-        continue;
-      }
-      const existing = propOptions.get(prop) || new Set();
-      for (const value of optionValues) {
-        existing.add(value);
-      }
-      propOptions.set(prop, existing);
-    }
-  });
-
-  return { props, propOptions };
-}
-
-function collectControlOptionValues(options) {
-  const values = Array.isArray(options)
-    ? options
-    : options && typeof options === 'object' ? Object.values(options) : [];
-  return unique(values.map((option) => {
-    if (['string', 'number', 'boolean'].includes(typeof option)) {
-      return String(option);
-    }
-    if (option && typeof option === 'object' && ['string', 'number', 'boolean'].includes(typeof option.value)) {
-      return String(option.value);
-    }
-    return '';
-  }));
-}
-
-function visit(value, callback) {
-  callback(value);
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      visit(item, callback);
-    }
-  } else if (value && typeof value === 'object') {
-    for (const child of Object.values(value)) {
-      visit(child, callback);
-    }
-  }
-}
-
 function auditReadiness(contractIndex, brief, referenceEvidence) {
   const mediaRequirements = authoringRequiredMediaRoles(brief, referenceEvidence);
   const minimumCandidateCoverage = minimumCandidateFirstViewportMediaCoverage(brief);
@@ -611,6 +558,7 @@ function auditReadiness(contractIndex, brief, referenceEvidence) {
       referenceMediaBoxes: referenceEvidence.mediaBoxes.length,
       referenceBands: referenceEvidence.landmarks.length,
       referenceLayoutGroups: referenceEvidence.layoutGroups.length,
+      referenceIconSurfaces: referenceEvidence.iconSurfaces.length,
       referenceFixedTrackGeometry: referenceEvidence.hasFixedTrackGeometry,
       referenceProportionalGridGeometry: referenceEvidence.hasProportionalGridGeometry,
       referenceResponsiveStickyReset: referenceEvidence.hasResponsiveStickyReset,
@@ -634,6 +582,19 @@ function auditReadiness(contractIndex, brief, referenceEvidence) {
 
   if (hasMedia(brief, referenceEvidence)) {
     requireMediaCapability(report, contractIndex, brief, referenceEvidence);
+  }
+
+  if (referenceEvidence.iconSurfaces.length > 0) {
+    requireComponent(report, contractIndex, ['IconBlock'], 'native_icon_surface', 'Captured SVG surfaces must be recreated through native Monteby icons.');
+    requireExactProps(
+      report,
+      contractIndex,
+      'IconBlock',
+      ['icon', 'iconRole', 'iconLabel'],
+      'native_icon_semantics',
+      'missing_native_icon_controls',
+      'Native icon authoring requires a catalog ligature and explicit decorative or meaningful semantics.'
+    );
   }
 
   if (hasStats(brief, referenceEvidence)) {
@@ -1328,10 +1289,6 @@ function arrayOfObjects(value) {
     : [];
 }
 
-function objectKeys(value) {
-  return value && typeof value === 'object' && !Array.isArray(value) ? Object.keys(value) : [];
-}
-
 function arrayOfStrings(value) {
   return Array.isArray(value) ? value.filter((item) => typeof item === 'string') : [];
 }
@@ -1363,6 +1320,26 @@ function main() {
     const brief = readBrief(options);
     const referenceEvidence = readReferenceEvidence(options);
     const report = auditReadiness(buildContractIndex(contract), brief, referenceEvidence);
+    if (referenceEvidence.iconSurfaces.length > 0) {
+      if (!options.iconMapping) {
+        error(report, 'missing_native_icon_mapping', 'Captured SVG surfaces require an explicit mapping to the native icon catalog before authoring starts.');
+      } else if (!options.referenceManifest) {
+        error(report, 'unbound_native_icon_mapping', '--icon-mapping requires the exact --reference-manifest file used to bind its source SHA-256.');
+      } else {
+        try {
+          const referenceManifestSha256 = createHash('sha256').update(fs.readFileSync(options.referenceManifest)).digest('hex');
+          validateIconMapping(readJson(options.iconMapping), {
+            contract,
+            referenceManifestSha256,
+            requiredStructureKeys: new Set(referenceEvidence.iconSurfaces.map((surface) => String(surface.structureKey || '')).filter(Boolean)),
+          });
+          capability(report, 'native_icon_mapping', true, 'Every captured SVG surface maps to a native icon from the bound live catalog.');
+        } catch (mappingError) {
+          error(report, 'invalid_native_icon_mapping', mappingError instanceof Error ? mappingError.message : String(mappingError));
+        }
+      }
+      report.ok = report.errors.length === 0;
+    }
     printReport(report, options.json);
     process.exitCode = report.ok ? 0 : 1;
   } catch (error) {

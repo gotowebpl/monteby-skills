@@ -25,6 +25,10 @@ const {
   effectiveTypographyValue,
   globalStyleLiteralMatch,
 } = require('./resolved-design-profile');
+const {
+  buildControlIndex,
+  normalizeControlValue,
+} = require('./control-contract');
 
 function parseArgs(argv) {
   const args = {};
@@ -53,79 +57,19 @@ function readJson(path, label) {
   return null;
 }
 
-/** Round to the nearest multiple of step, avoiding float dust. */
-function snap(value, step) {
-  const snapped = Math.round(value / step) * step;
-  return Number(snapped.toFixed(6));
-}
-
-function splitCssValue(raw) {
-  const match = /^\s*(-?\d*\.?\d+)\s*([a-z%]*)\s*$/i.exec(raw);
-  if (!match) return null;
-  return { number: Number(match[1]), unit: match[2] || '' };
-}
-
-function buildControlIndex(contract) {
-  const index = new Map();
-  for (const component of contract.components || []) {
-    for (const control of component.controls || []) {
-      for (const prop of control.props || []) {
-        const key = `${component.name}.${prop}`;
-        if (!index.has(key)) index.set(key, control);
-      }
-    }
-  }
-  return index;
-}
-
 /**
  * Bring one value into the shape the control accepts.
  * Returns {value, note} — a null value means the prop must be dropped.
  */
-function normalizeValue(control, value) {
-  if (!control) return { value };
-
-  const { type, options, step, min, max } = control;
-
-  if ((type === 'select' || type === 'segment') && Array.isArray(options)) {
-    if (!options.includes(value)) {
-      return { value: null, note: `wartość ${JSON.stringify(value)} spoza ${JSON.stringify(options)}` };
-    }
-    return { value };
-  }
-
-  if (type === 'number') {
-    const numeric = typeof value === 'number' ? value : Number(value);
-    if (!Number.isFinite(numeric)) {
-      return { value: null, note: `wartość ${JSON.stringify(value)} nie jest liczbą` };
-    }
-    let out = step ? snap(numeric, step) : numeric;
-    if (typeof min === 'number') out = Math.max(min, out);
-    if (typeof max === 'number') out = Math.min(max, out);
-    if (typeof value === 'string') {
-      return { value: out, note: `liczba przekazana jako tekst (${JSON.stringify(value)})` };
-    }
-    return { value: out, note: out !== numeric ? `dociągnięte do kroku/zakresu: ${numeric} → ${out}` : undefined };
-  }
-
-  if (type === 'css-value' && typeof value === 'string') {
-    if (/\s/.test(value.trim())) {
-      return { value: null, note: `kontrolka przyjmuje jedną wartość, podano „${value}”` };
-    }
-    if (!step) return { value };
-    const parts = splitCssValue(value);
-    if (!parts) return { value };
-    let out = snap(parts.number, step);
-    if (typeof min === 'number') out = Math.max(min, out);
-    if (typeof max === 'number') out = Math.min(max, out);
-    if (out === parts.number) return { value };
-    return {
-      value: `${out}${parts.unit}`,
-      note: `dociągnięte do kroku ${step}: ${value} → ${out}${parts.unit}`,
-    };
-  }
-
-  return { value };
+function normalizeValue(control, value, publishedReferences = new Set()) {
+  const result = normalizeControlValue(control, value, publishedReferences);
+  if (!result.accepted) return { value: null, note: result.reason };
+  return {
+    value: result.value,
+    note: result.changed
+      ? result.changeReason || `${JSON.stringify(value)} → ${JSON.stringify(result.value)}`
+      : undefined,
+  };
 }
 
 /** Traps that pass /validate but break the rendered page or the editor canvas. */
@@ -233,6 +177,9 @@ function main() {
   const controls = buildControlIndex(contract);
   const rootComponents = new Set(contract.authoring?.topLevelRootComponents || ['Section']);
   const designProfile = buildResolvedDesignProfile(contract);
+  const publishedReferences = new Set(
+    Object.values(designProfile.tokens).map((token) => token.reference).filter(Boolean)
+  );
 
   const errors = [];
   const repairs = [];
@@ -280,7 +227,7 @@ function main() {
         continue;
       }
       const control = controls.get(`${name}.${prop}`);
-      const { value: normalized, note } = normalizeValue(control, value);
+      const { value: normalized, note } = normalizeValue(control, value, publishedReferences);
       if (note) {
         repairs.push({ node: nodeId, prop, message: note, dropped: normalized === null });
       }

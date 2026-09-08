@@ -23,6 +23,9 @@ const {
   buildResolvedDesignProfile,
   firstTokenReference,
 } = require('./resolved-design-profile');
+const { validateIconMapping } = require('./icon-mapping');
+const { collectControlMetadata } = require('./control-contract');
+const { GENERIC_MEASURED_REFERENCE, selectDraftStrategy } = require('./draft-strategy');
 
 const DEFAULT_REPLACEMENT_PROFILE = {
   name: 'generic-service',
@@ -71,7 +74,6 @@ const DEFAULT_REPLACEMENT_PROFILE = {
   ],
 };
 
-const GENERIC_MEASURED_REFERENCE = 'generic-measured-reference';
 const MAX_GENERIC_REFERENCE_BANDS = 64;
 const MAX_GENERIC_REFERENCE_MEDIA_PER_BAND = 24;
 const MAX_GENERIC_REFERENCE_TEXT_PER_BAND = 256;
@@ -412,6 +414,7 @@ function parseArgs(argv) {
     out: '',
     planOut: '',
     referenceManifest: '',
+    iconMapping: '',
     minMediaSurfaces: null,
     requireRealReference: false,
     requireMarketplaceMedia: false,
@@ -433,6 +436,8 @@ function parseArgs(argv) {
       options.planOut = path.resolve(requiredValue(argv, index += 1, arg));
     } else if (arg === '--reference-manifest') {
       options.referenceManifest = path.resolve(requiredValue(argv, index += 1, arg));
+    } else if (arg === '--icon-mapping') {
+      options.iconMapping = path.resolve(requiredValue(argv, index += 1, arg));
     } else if (arg === '--min-media-surfaces') {
       options.minMediaSurfaces = parseNonNegativeInteger(requiredValue(argv, index += 1, arg), arg);
     } else if (arg === '--require-real-reference') {
@@ -482,7 +487,7 @@ function requiredValue(argv, index, arg) {
 
 function printHelp() {
   console.log(`Usage:
-  draft-monteby-layout.js --contract contract.json (--start-report benchmark-start-report.json | --brief-json visual-brief.json) --out layout-draft.json [--plan-out mechanical-layout-plan.json] [--reference-manifest reference-manifest.json] [--require-real-reference] [--require-marketplace-media] [--preserve-source-text] [--json]
+  draft-monteby-layout.js --contract contract.json (--start-report benchmark-start-report.json | --brief-json visual-brief.json) --out layout-draft.json [--plan-out mechanical-layout-plan.json] [--reference-manifest reference-manifest.json] [--icon-mapping icon-mapping.json] [--require-real-reference] [--require-marketplace-media] [--preserve-source-text] [--json]
 
 Writes a clean Monteby JSON draft from a visual brief and live contract. When --plan-out is provided, it also writes a mechanical section-mapping plan. When --reference-manifest is provided, the draft is immediately audited for blocked props, placement, and replacement media roles. This is a first-pass scaffold only; do not treat it as a pixel-perfect result.`);
 }
@@ -540,6 +545,7 @@ function briefWithReferenceMediaRequirements(brief, referenceManifest, options =
       reuseSourceMedia: brief.authoringRequirements?.reuseSourceMedia === true,
       realReferenceSourceUrl: realReferenceSourceUrl || undefined,
       referenceGeometry: referenceGeometry || undefined,
+      iconMapping: options.validatedIconMapping || undefined,
     },
   };
 }
@@ -585,6 +591,8 @@ function referenceGeometryFromManifest(referenceManifest, manifestPath) {
           landmarks: renderedLayout.landmarks,
           textBoxes: renderedLayout.textSamples,
           mediaBoxes: renderedLayout.mediaSamples,
+          iconSurfaces: renderedLayout.iconSurfaces,
+          layoutGroups: renderedLayout.layoutGroups,
         });
       }
     }
@@ -668,6 +676,7 @@ function summarizeReferenceLayout(layout) {
     heroMedia: summarizeReferenceBox(heroMedia),
     secondaryMedia: summarizeReferenceBox(secondaryMedia),
     earlyMedia: meaningfulMedia.slice(0, 4).map(summarizeReferenceBox),
+    icons: (Array.isArray(layout?.iconSurfaces) ? layout.iconSurfaces : []).map(summarizeReferenceBox).filter(Boolean),
   };
 }
 
@@ -680,8 +689,11 @@ function summarizeReferenceCaptureGaps(layout, bands, viewportWidth) {
     || groupKey.startsWith(`${bandKey}.`)
     || bandKey.startsWith(`${groupKey}.`)
   ));
-  const unmappedInlineSvg = (Array.isArray(layout?.mediaBoxes) ? layout.mediaBoxes : [])
-    .filter((box) => String(box?.tag || '').toLowerCase() === 'svg')
+  const iconEvidence = Array.isArray(layout?.iconSurfaces)
+    ? layout.iconSurfaces
+    : (Array.isArray(layout?.mediaBoxes) ? layout.mediaBoxes : [])
+      .filter((box) => String(box?.tag || '').toLowerCase() === 'svg');
+  const unmappedInlineSvg = iconEvidence
     .map((box) => ({
       structureKey: String(box?.structureKey || ''),
       rect: normalizeReferenceRect(box?.rect),
@@ -841,9 +853,18 @@ function summarizeReferenceBands(layout, textBoxes, meaningfulMedia, pageClipsHo
     return [];
   }
 
-  const candidates = layout.landmarks
+  const landmarkCandidates = layout.landmarks
     .map((landmark) => summarizeReferenceLandmark(landmark, viewportWidth, pageHeight))
-    .filter((landmark) => landmark && landmark.flowParticipation !== 'overlay')
+    .filter((landmark) => landmark && landmark.flowParticipation !== 'overlay');
+  const representedKeys = new Set(landmarkCandidates.map((candidate) => candidate.key).filter(Boolean));
+  const rootGroupCandidates = (Array.isArray(layout.layoutGroups) ? layout.layoutGroups : [])
+    .filter((group) => !String(group?.parentKey || ''))
+    .filter((group) => String(group?.flowParticipation || 'normal') !== 'overlay')
+    .filter((group) => !representedKeys.has(String(group?.key || '')))
+    .filter((group) => referenceRootGroupHasContent(group, layout, viewportWidth, pageHeight))
+    .map((group) => summarizeReferenceLandmark(group, viewportWidth, pageHeight))
+    .filter(Boolean);
+  const candidates = landmarkCandidates.concat(rootGroupCandidates)
     .sort((left, right) => left.rect.top - right.rect.top || right.rect.height - left.rect.height);
   const withoutPageWrappers = candidates.filter((candidate) => !isReferencePageWrapper(candidate, candidates));
   const rootBandCandidates = withoutPageWrappers.filter((candidate) => {
@@ -912,6 +933,26 @@ function summarizeReferenceBands(layout, textBoxes, meaningfulMedia, pageClipsHo
   });
 }
 
+function referenceRootGroupHasContent(group, layout, viewportWidth, pageHeight) {
+  const rect = normalizeReferenceRect(group?.rect);
+  const key = String(group?.key || '');
+  if (
+    !key || !rect || rect.height < 40 || rect.width < Math.min(240, viewportWidth * 0.5)
+    || (rect.top <= 1 && rect.height >= pageHeight * 0.85)
+  ) return false;
+  const belongs = (entry) => {
+    const structureKey = String(entry?.structureKey || '');
+    const parentKey = String(entry?.parentGroupKey || '');
+    return structureKey === key || structureKey.startsWith(`${key}.`)
+      || parentKey === key || parentKey.startsWith(`${key}.`);
+  };
+  return group?.paintedBackground === true
+    || (Array.isArray(layout?.textBoxes) && layout.textBoxes.some(belongs))
+    || (Array.isArray(layout?.directTextEntries) && layout.directTextEntries.some(belongs))
+    || (Array.isArray(layout?.mediaBoxes) && layout.mediaBoxes.some(belongs))
+    || (Array.isArray(layout?.iconSurfaces) && layout.iconSurfaces.some(belongs));
+}
+
 function summarizeReferenceLandmark(landmark, viewportWidth, pageHeight) {
   if (!landmark || typeof landmark !== 'object') {
     return null;
@@ -935,6 +976,7 @@ function summarizeReferenceLandmark(landmark, viewportWidth, pageHeight) {
   return {
     key,
     tag,
+    href: String(landmark.href || ''),
     rootSemanticBand,
     rect,
     backgroundColor: String(landmark.backgroundColor || ''),
@@ -1355,6 +1397,12 @@ function summarizeReferenceBandContent(band, index, viewportWidth, textBoxes, me
   };
 }
 
+function normalizeAuthoredText(value) {
+  return String(value || '')
+    .replace(/[\t\n\f\r ]+/gu, ' ')
+    .replace(/^[\t\n\f\r ]+|[\t\n\f\r ]+$/gu, '');
+}
+
 function referenceTextBoxesForAuthoring(textBoxes) {
   const boxes = Array.isArray(textBoxes) ? textBoxes.filter(Boolean) : [];
   const inlineTags = new Set(['span', 'strong', 'em', 'b', 'i', 'small']);
@@ -1381,7 +1429,7 @@ function referenceTextBoxesForAuthoring(textBoxes) {
   return boxes.filter((candidate) => {
     const key = String(candidate?.structureKey || '');
     const tag = String(candidate?.tag || '').toLowerCase();
-    const text = String(candidate?.text || '').trim().replace(/\s+/gu, ' ');
+    const text = normalizeAuthoredText(candidate?.text);
     if (!key || !text) {
       return true;
     }
@@ -1394,7 +1442,7 @@ function referenceTextBoxesForAuthoring(textBoxes) {
       return isAncestor(key, otherKey) || isAncestor(otherKey, key);
     });
     const exactPreferredRelative = relatives.some((other) => {
-      const otherText = String(other?.text || '').trim().replace(/\s+/gu, ' ');
+      const otherText = normalizeAuthoredText(other?.text);
       if (otherText !== text) {
         return false;
       }
@@ -1410,7 +1458,7 @@ function referenceTextBoxesForAuthoring(textBoxes) {
     if (inlineTags.has(tag) && relatives.some((other) => {
       const otherKey = String(other?.structureKey || '');
       const otherTag = String(other?.tag || '').toLowerCase();
-      const otherText = String(other?.text || '').trim().replace(/\s+/gu, ' ');
+      const otherText = normalizeAuthoredText(other?.text);
       return isAncestor(otherKey, key)
         && semanticContainerTags.has(otherTag)
         && otherText.includes(text);
@@ -1936,9 +1984,9 @@ function summarizeReferenceTabs(interactions, layoutGroups, textBoxes, mediaBoxe
     const prefixBox = descendants.find((box) => String(box?.tag || '').toLowerCase() === 'span');
     const suffixBox = descendants.find((box) => String(box?.tag || '').toLowerCase() === 'small');
     return {
-      labelPrefix: String(prefixBox?.text || '').trim().replace(/\s+/gu, ' '),
-      label: String(labelBox?.text || `Tab ${tabIndex + 1}`).trim().replace(/\s+/gu, ' '),
-      labelSuffix: String(suffixBox?.text || '').trim().replace(/\s+/gu, ' '),
+      labelPrefix: normalizeAuthoredText(prefixBox?.text),
+      label: normalizeAuthoredText(labelBox?.text || `Tab ${tabIndex + 1}`),
+      labelSuffix: normalizeAuthoredText(suffixBox?.text),
     };
   });
   const activeLabelKey = String(activeTab.structureKey || '');
@@ -2187,6 +2235,7 @@ function summarizeReferenceLayoutGroups(layoutGroups, band, textBoxes, mediaBoxe
         key,
         parentKey: String(group.parentKey || ''),
         tag: String(group.tag || 'div').toLowerCase(),
+        href: String(group.href || ''),
         rect,
         backgroundColor: String(group.backgroundColor || ''),
         backgroundType: String(group.backgroundType || ''),
@@ -2592,114 +2641,6 @@ function buildContractIndex(contractPayload) {
   return index;
 }
 
-function collectControlMetadata(value) {
-  const props = [];
-  const propOptions = new Map();
-  const propRules = new Map();
-  const repeaterItemProps = new Map();
-  const repeaterItemRules = new Map();
-
-  visit(value, (item) => {
-    if (!item || typeof item !== 'object' || Array.isArray(item)) {
-      return;
-    }
-    const itemProps = [];
-    if (typeof item.prop === 'string') {
-      itemProps.push(item.prop);
-    }
-    if (Array.isArray(item.props)) {
-      itemProps.push(...arrayOfStrings(item.props));
-    }
-    if (item.spacingProps && typeof item.spacingProps === 'object') {
-      itemProps.push(...objectKeys(item.spacingProps).map((key) => item.spacingProps[key]).filter((prop) => typeof prop === 'string'));
-    }
-
-    props.push(...itemProps);
-
-    if (item.type === 'repeater' && itemProps.length > 0) {
-      const nestedMetadata = collectControlMetadata([item.itemControls, item.itemFields]);
-      for (const repeaterProp of itemProps) {
-        const existingProps = repeaterItemProps.get(repeaterProp) || new Set();
-        for (const nestedProp of nestedMetadata.props) {
-          existingProps.add(nestedProp);
-        }
-        repeaterItemProps.set(repeaterProp, existingProps);
-
-        const existingRules = repeaterItemRules.get(repeaterProp) || new Map();
-        for (const [nestedProp, rule] of nestedMetadata.propRules.entries()) {
-          const options = nestedMetadata.propOptions.get(nestedProp);
-          existingRules.set(nestedProp, options instanceof Set ? { ...rule, options } : rule);
-        }
-        repeaterItemRules.set(repeaterProp, existingRules);
-      }
-    }
-
-    if (typeof item.type === 'string' && itemProps.length > 0) {
-      const rule = { type: item.type };
-      if (typeof item.min === 'number') {
-        rule.min = item.min;
-      }
-      if (typeof item.max === 'number') {
-        rule.max = item.max;
-      }
-      if (typeof item.step === 'number') {
-        rule.step = item.step;
-      }
-      if (Array.isArray(item.units)) {
-        rule.units = item.units.filter((unit) => typeof unit === 'string');
-      }
-      if (typeof item.pattern === 'string' && item.pattern !== '') {
-        rule.pattern = item.pattern;
-      }
-
-      for (const prop of itemProps) {
-        propRules.set(prop, { ...(propRules.get(prop) || {}), ...rule });
-      }
-    }
-
-    const optionValues = collectOptionValues(item.options);
-    if (optionValues.length > 0) {
-      for (const prop of itemProps) {
-        const existing = propOptions.get(prop) || new Set();
-        for (const optionValue of optionValues) {
-          existing.add(optionValue);
-        }
-        propOptions.set(prop, existing);
-      }
-    }
-  });
-
-  return { props, propOptions, propRules, repeaterItemProps, repeaterItemRules };
-}
-
-function collectOptionValues(options) {
-  if (Array.isArray(options)) {
-    return uniqueOptionValues(options.map(optionValue).filter((value) => value !== null));
-  }
-
-  if (options && typeof options === 'object') {
-    return uniqueOptionValues(Object.values(options).map(optionValue).filter((value) => value !== null));
-  }
-
-  return [];
-}
-
-function uniqueOptionValues(items) {
-  return [...new Set(items.filter((item) => typeof item !== 'undefined' && item !== null))];
-}
-
-function optionValue(option) {
-  if (isScalar(option)) {
-    return normalizeComparableValue(option);
-  }
-
-  if (option && typeof option === 'object' && Object.prototype.hasOwnProperty.call(option, 'value') && isScalar(option.value)) {
-    return normalizeComparableValue(option.value);
-  }
-
-  return null;
-}
-
 function isScalar(value) {
   return ['string', 'number', 'boolean'].includes(typeof value);
 }
@@ -2708,21 +2649,9 @@ function normalizeComparableValue(value) {
   return String(value);
 }
 
-function visit(value, callback) {
-  callback(value);
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      visit(item, callback);
-    }
-  } else if (value && typeof value === 'object') {
-    for (const child of Object.values(value)) {
-      visit(child, callback);
-    }
-  }
-}
-
 function draftLayout(contractIndex, brief, contractPayload = {}) {
-  const genericMeasuredReference = isGenericMeasuredReferenceBrief(brief);
+  const draftStrategy = selectDraftStrategy(brief);
+  const genericMeasuredReference = draftStrategy.name === GENERIC_MEASURED_REFERENCE;
   const designProfile = buildResolvedDesignProfile(
     contractPayload,
     brief.projectTokens || brief.designTokens || brief.authoringRequirements?.projectTokens || {}
@@ -2748,7 +2677,10 @@ function draftLayout(contractIndex, brief, contractPayload = {}) {
     genericMeasuredSurfaceNodes: new Map(),
     genericMeasuredOrderEntries: new Map(),
     genericMeasuredLoweredMediaKeys: new Set(),
-    replacementProfile: genericMeasuredReference ? DEFAULT_REPLACEMENT_PROFILE : replacementProfileForBrief(brief),
+    mappedIconKeys: new Set(),
+    replacementProfile: draftStrategy.allowFamilyProfile
+      ? replacementProfileForBrief(brief)
+      : DEFAULT_REPLACEMENT_PROFILE,
   };
   context.warnings.push(...designProfile.conflicts.map((conflict) => (
     `${conflict.code}: ${conflict.token}; globalStyles is authoritative over designTokens.`
@@ -2766,8 +2698,10 @@ function draftLayout(contractIndex, brief, contractPayload = {}) {
     genericPlan = buildGenericMeasuredSectionPlan(brief);
     assertGenericMeasuredContract(context, genericPlan, section, container);
     addGenericMeasuredSections(context, genericPlan, section, container);
+    addGenericMeasuredIcons(context, genericPlan);
+    resolveGenericMeasuredHardConstraints(context, genericPlan);
     context.warnings.push('Generic measured-reference geometry scaffold only; template-family mechanics and 1:1 visual fidelity are not claimed.');
-  } else {
+  } else if (draftStrategy.allowHistoricalRecipes) {
     addNavSection(context, section, container);
     addHeroSection(context, section, container);
     if (isOptomattaProfile(context)) {
@@ -2800,6 +2734,8 @@ function draftLayout(contractIndex, brief, contractPayload = {}) {
     if (isLumenProfile(context)) {
       addLumenHomepageDepthSections(context, section, container);
     }
+  } else {
+    throw new Error(`Unsupported draft strategy: ${draftStrategy.name}`);
   }
 
   const mechanicalPlan = buildMechanicalLayoutPlan(context, genericPlan);
@@ -3173,7 +3109,7 @@ function buildMechanicalLayoutPlan(context, genericPlan) {
     rootSectionIds,
     bands,
     measuredHardConstraints,
-    unmappedInlineSvg: captureGaps.unmappedInlineSvg,
+    unmappedInlineSvg: captureGaps.unmappedInlineSvg.filter((surface) => !context.mappedIconKeys.has(surface.structureKey)),
     uncoveredRootGroups: captureGaps.uncoveredRootGroups,
     completion,
   };
@@ -3206,7 +3142,10 @@ function genericMeasuredHardConstraints(context, genericPlan) {
     const props = Object.entries(node.props || {})
       .filter(([name, value]) => measuredProps.test(name) && ['string', 'number'].includes(typeof value))
       .map(([name, value]) => ({ name, value }));
-    if (props.length === 0) {
+    const omitted = Array.isArray(context.constraintDecisions)
+      ? context.constraintDecisions.filter((decision) => decision.nodeId === nodeId && decision.decision === 'omitted')
+      : [];
+    if (props.length === 0 && omitted.length === 0) {
       return [];
     }
 
@@ -3214,8 +3153,52 @@ function genericMeasuredHardConstraints(context, genericPlan) {
       nodeId,
       sourceKey: String(context.genericMeasuredNodeKeys.get(nodeId) || bandSourceKeys.get(nodeId) || ''),
       props,
+      decisions: props.map(({ name, value }) => ({
+        name, value, decision: 'authored', reason: 'retained-bounded-measurement',
+      })).concat(omitted.map(({ name, value, decision, reason, evidence }) => ({
+        name, value, decision, reason, evidence,
+      }))),
     }];
   });
+}
+
+function resolveGenericMeasuredHardConstraints(context, genericPlan) {
+  context.constraintDecisions = [];
+  const mobileWidth = Number(genericPlan.viewports.find((viewport) => /mobile/u.test(viewport.label))?.width || 0);
+  const rootBandByNode = (nodeId) => {
+    let currentId = nodeId;
+    while (context.nodeMap[currentId]?.parent && context.nodeMap[currentId].parent !== 'ROOT') {
+      currentId = context.nodeMap[currentId].parent;
+    }
+    return genericPlan.bands.find((band) => band.generatedSectionId === currentId) || null;
+  };
+  for (const [nodeId, node] of Object.entries(context.nodeMap)) {
+    if (nodeId === 'ROOT' || !node?.props) continue;
+    const band = rootBandByNode(nodeId);
+    const singleColumnMobile = band ? genericBandColumnCount(band, 'mobile') <= 1 : false;
+    for (const [name, value] of Object.entries({ ...node.props })) {
+      let reason = '';
+      if (singleColumnMobile && name === 'marginLeftMobile' && String(value) !== '0px' && String(value) !== 'auto') {
+        reason = 'single-column-mobile-offset';
+      } else if (mobileWidth > 0 && name === 'maxWidthMobile') {
+        const pixels = pxNumber(value);
+        if (pixels !== null && pixels >= mobileWidth - 1) reason = 'non-constraining-mobile-max-width';
+      } else if (mobileWidth > 0 && name === 'minWidthMobile') {
+        const pixels = pxNumber(value);
+        if (pixels !== null && pixels > mobileWidth) reason = 'overflowing-mobile-min-width';
+      }
+      if (!reason) continue;
+      delete node.props[name];
+      context.constraintDecisions.push({
+        nodeId,
+        name,
+        value,
+        decision: 'omitted',
+        reason,
+        evidence: { mobileWidth, columns: singleColumnMobile ? 1 : null },
+      });
+    }
+  }
 }
 
 function mechanicalBandViewportMeasurement(measurement) {
@@ -3323,17 +3306,6 @@ function finitePlanNumber(value) {
   return Number.isFinite(number) ? number : null;
 }
 
-function isGenericMeasuredReferenceBrief(brief) {
-  const classification = brief.authoringRequirements?.referenceClassification
-    || brief.target?.referenceClassification;
-  if (classification?.kind === GENERIC_MEASURED_REFERENCE) {
-    return true;
-  }
-  return classification?.kind === 'generated-target'
-    && brief.authoringRequirements?.referenceGeometry
-    && typeof brief.authoringRequirements.referenceGeometry === 'object';
-}
-
 function buildGenericMeasuredSectionPlan(brief) {
   const geometry = brief.authoringRequirements?.referenceGeometry;
   if (!geometry || typeof geometry !== 'object') {
@@ -3436,8 +3408,45 @@ function buildGenericMeasuredSectionPlan(brief) {
       tablet: tabletEntry?.[1]?.navigation || null,
       mobile: mobileEntry?.[1]?.navigation || null,
     },
+    icons: Array.isArray(canonicalGeometry.icons) ? canonicalGeometry.icons : [],
+    iconMapping: Array.isArray(brief.authoringRequirements?.iconMapping)
+      ? brief.authoringRequirements.iconMapping
+      : [],
     bands,
   };
+}
+
+function addGenericMeasuredIcons(context, plan) {
+  if (!Array.isArray(plan.icons) || plan.icons.length === 0) return;
+  const iconComponent = findComponent(context.contractIndex, ['IconBlock']);
+  if (!iconComponent) {
+    throw new Error('[generic_icon_component_missing] Native icon mapping requires IconBlock in the live contract.');
+  }
+  const mappings = new Map(plan.iconMapping.map((entry) => [String(entry.structureKey || ''), entry]));
+  for (const surface of plan.icons) {
+    const structureKey = String(surface?.structureKey || '');
+    const mapping = mappings.get(structureKey);
+    if (!mapping) {
+      throw new Error(`[generic_icon_mapping_missing] Captured icon ${structureKey || '(missing key)'} has no validated native mapping.`);
+    }
+    const band = plan.bands.find((candidate) => referenceBoxBelongsToBand(surface, candidate.desktop?.rect));
+    if (!band?.generatedSectionId) {
+      throw new Error(`[generic_icon_band_missing] Captured icon ${structureKey} is outside the authored band plan.`);
+    }
+    const parentId = context.genericMeasuredGroupNodes.get(String(surface.parentGroupKey || ''))
+      || band.generatedSectionId;
+    const size = Math.max(8, Math.min(256, Math.round(Number(surface?.rect?.width || 24) * 100) / 100));
+    const icon = createLeafNode(context, iconComponent.name, parentId, {
+      icon: mapping.icon,
+      iconDisplay: 'font',
+      size,
+      color: normalizedAuthorableColor(surface.color || surface.fill),
+      iconRole: mapping.iconRole,
+      iconLabel: mapping.iconLabel,
+    });
+    context.mappedIconKeys.add(structureKey);
+    registerGenericMeasuredSurface(context, 'icon', structureKey, icon.id, { strategy: 'native-icon-catalog' });
+  }
 }
 
 function viewportEntryForRole(entries, role) {
@@ -5784,6 +5793,8 @@ function addGenericMeasuredGroups(context, parentId, desktopParent, tabletParent
       throw new Error('Generic measured reference contract gaps:\n- [generic_border_control_gap] Divider is required to reproduce a measured top-only border without className or raw CSS.');
     }
     const group = createCanvasNode(context, containerName, parentId, {
+      tag: desktop.tag === 'a' && desktop.href ? 'a' : undefined,
+      href: desktop.tag === 'a' && desktop.href ? desktop.href : undefined,
       ...(topDividerProps ? {
         layoutDisplay: 'flex',
         flexDirection: 'column',
@@ -7039,7 +7050,7 @@ function genericMeasuredMultilineHeadingProps(context, desktop, tablet, mobile, 
 }
 
 function genericMeasuredLineEvidence(box) {
-  const text = String(box?.text || '').trim().replace(/\s+/gu, ' ');
+  const text = normalizeAuthoredText(box?.text);
   const rect = normalizeReferenceRect(box?.rect);
   const textAlign = String(box?.textAlign || '').trim().toLowerCase();
   const rawLines = Array.isArray(box?.lines) ? box.lines : [];
@@ -7050,7 +7061,7 @@ function genericMeasuredLineEvidence(box) {
   let end = 0;
   const lines = [];
   for (const rawLine of rawLines) {
-    const lineText = String(rawLine?.text || '').trim().replace(/\s+/gu, ' ');
+    const lineText = normalizeAuthoredText(rawLine?.text);
     const lineRect = normalizeReferenceRect(rawLine?.rect);
     if (!lineText || !lineRect) {
       return null;
@@ -7195,7 +7206,7 @@ function assertGenericMeasuredTextMarginContract(context, componentName, marginP
 }
 
 function genericMeasuredAuthoringText(box, plan, contentIndex, textIndex) {
-  const source = String(box?.text || '').trim();
+  const source = normalizeAuthoredText(box?.text);
   if (plan.preserveSourceText && source) {
     return source;
   }
@@ -7245,11 +7256,11 @@ function matchedGenericMeasuredItem(canonical, index, items) {
   if (!canonical || candidates.length === 0) {
     return canonical || null;
   }
-  const text = String(canonical.text || '').trim();
+  const text = normalizeAuthoredText(canonical.text);
   const tag = String(canonical.tag || '').toLowerCase();
   if (text) {
     const exact = candidates.find((candidate) => (
-      String(candidate?.text || '').trim() === text
+      normalizeAuthoredText(candidate?.text) === text
       && String(candidate?.tag || '').toLowerCase() === tag
     ));
     if (exact) {
@@ -8522,7 +8533,7 @@ function addMaidyHeroSection(context, sectionName, containerName) {
     paddingTopMobile: usesGeneratedFallback ? '2px' : usesMaidyCutout ? '13px' : undefined,
   });
   let headingLines = maidyHeroHeadingLines(context.brief);
-  const sourceHeading = String(firstHeading(context.brief) || '').replace(/\s+/g, ' ').trim();
+  const sourceHeading = normalizeAuthoredText(firstHeading(context.brief));
   if (usesGeneratedFallback && /avoid the mess/i.test(sourceHeading) && /crisp and calm/i.test(sourceHeading)) {
     headingLines = {
       body: ['Avoid the mess,', 'keep every room'],
@@ -15462,7 +15473,7 @@ function statItems(brief) {
 }
 
 function parseStatItem(item) {
-  const normalized = String(item || '').trim().replace(/\s+/g, ' ');
+  const normalized = normalizeAuthoredText(item);
   if (!normalized) {
     return null;
   }
@@ -15642,6 +15653,22 @@ function main() {
     const options = parseArgs(process.argv.slice(2));
     const contract = readJson(options.contract);
     const referenceManifest = options.referenceManifest ? readJson(options.referenceManifest) : null;
+    if (options.iconMapping) {
+      if (!referenceManifest || !options.referenceManifest) {
+        throw new Error('--icon-mapping requires --reference-manifest');
+      }
+      const requiredStructureKeys = new Set(
+        Object.values(referenceGeometryFromManifest(referenceManifest, options.referenceManifest) || {})
+          .flatMap((geometry) => Array.isArray(geometry.icons) ? geometry.icons : [])
+          .map((surface) => String(surface.structureKey || ''))
+          .filter(Boolean)
+      );
+      options.validatedIconMapping = [...validateIconMapping(readJson(options.iconMapping), {
+        contract,
+        referenceManifestSha256: createHash('sha256').update(fs.readFileSync(options.referenceManifest)).digest('hex'),
+        requiredStructureKeys,
+      }).values()];
+    }
     const brief = briefWithReferenceMediaRequirements(readBrief(options), referenceManifest, options);
     const draft = draftLayout(buildContractIndex(contract), brief, contract);
     const expectedContentLedger = referenceManifest?.contentLedger;

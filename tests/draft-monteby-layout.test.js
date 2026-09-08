@@ -2755,6 +2755,17 @@ test('draft layout preserves seven ordered generic measured bands with responsiv
   assert.match(report.warnings.join(' '), /unmapped_inline_svg/);
   assert.match(report.warnings.join(' '), /uncovered_root_groups/);
   assert.equal(plan.measuredHardConstraints.length > 0, true);
+  for (const constraint of plan.measuredHardConstraints) {
+    assert.equal(constraint.decisions.length >= constraint.props.length, true);
+    for (const prop of constraint.props) {
+      assert.equal(constraint.decisions.some((decision) => (
+        decision.name === prop.name
+        && decision.value === prop.value
+        && decision.decision === 'authored'
+        && decision.reason === 'retained-bounded-measurement'
+      )), true, `${constraint.nodeId}.${prop.name} requires an explicit authored decision`);
+    }
+  }
   assert.deepEqual(
     plan.measuredHardConstraints
       .find((constraint) => constraint.nodeId === layout.ROOT.nodes[0])
@@ -7745,6 +7756,125 @@ test('draft layout can recover generic band geometry from the captured reference
   assert.equal(report.stats.measuredBandCount, 7);
   assert.equal(layout.ROOT.nodes.length, 7);
   assert.deepEqual(layout.ROOT.nodes.map((nodeId) => layout[nodeId].props.minHeightMobile), ['72px', '760px', '680px', '740px', '520px', '720px', '360px']);
+});
+
+test('generic measured drafting authors every captured SVG through a bound native IconBlock mapping', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'monteby-draft-native-icon-'));
+  const contractPath = path.join(directory, 'contract.json');
+  const briefPath = path.join(directory, 'visual-brief.json');
+  const manifestPath = path.join(directory, 'reference-manifest.json');
+  const mappingPath = path.join(directory, 'icon-mapping.json');
+  const layoutPath = path.join(directory, 'layout-draft.json');
+  const planPath = path.join(directory, 'layout-plan.json');
+  const referenceLayoutPath = path.join(directory, 'reference-layout.json');
+  const contractValue = contract();
+  contractValue.components.push({
+    name: 'IconBlock',
+    allowedParents: ['Section', 'Container'],
+    props: ['icon', 'iconDisplay', 'size', 'color', 'iconRole', 'iconLabel'],
+    aiProps: ['icon', 'iconDisplay', 'size', 'color', 'iconRole', 'iconLabel'],
+    controls: [
+      { type: 'text', prop: 'icon' }, { type: 'select', prop: 'iconRole', options: ['auto', 'decorative', 'meaningful'] },
+      { type: 'text', prop: 'iconLabel' }, { type: 'number', prop: 'size', min: 8, max: 256 },
+    ],
+  });
+  const icons = ['arrow_forward', 'menu'];
+  contractValue.iconCatalog = {
+    version: 1,
+    icons,
+    sha256: require('node:crypto').createHash('sha256').update(JSON.stringify(icons)).digest('hex'),
+  };
+  const referenceLayout = genericMeasuredLayout({
+    label: 'desktop', width: 1440, height: 900, bandHeights: [500],
+    bandTags: ['section'], bandColors: ['rgb(250, 250, 250)'], columns: [1],
+  });
+  referenceLayout.iconSurfaces = [{
+    structureKey: 'band.0.icon', parentGroupKey: '', tag: 'svg',
+    rect: measuredRect(80, 120, 32, 32), color: 'rgb(20, 30, 40)', semanticRole: 'meaningful',
+  }];
+  const manifest = {
+    sourceUrl: 'file:///tmp/native-icon-page.html', mediaSurfaces: [], requiredMediaRoles: [],
+    layouts: [{ label: 'desktop', file: 'reference-layout.json', status: 'ok' }],
+  };
+  fs.writeFileSync(contractPath, JSON.stringify(contractValue));
+  fs.writeFileSync(referenceLayoutPath, JSON.stringify(referenceLayout));
+  fs.writeFileSync(manifestPath, JSON.stringify(manifest));
+  fs.writeFileSync(briefPath, JSON.stringify({
+    ...visualBrief({ target: { variant: 'split-hero', archetype: '', referenceStyle: '' } }),
+    media: { surfaces: [], requiredRoles: [] },
+    authoringRequirements: { referenceClassification: { kind: 'generic-measured-reference', family: '', familyMechanics: false } },
+  }));
+  fs.writeFileSync(mappingPath, JSON.stringify({
+    schemaVersion: 1, artifact: 'monteby-icon-mapping',
+    iconCatalogSha256: contractValue.iconCatalog.sha256,
+    referenceManifestSha256: require('node:crypto').createHash('sha256').update(fs.readFileSync(manifestPath)).digest('hex'),
+    mappings: [{ structureKey: 'band.0.icon', icon: 'menu', iconRole: 'meaningful', iconLabel: 'Otwórz menu' }],
+  }));
+
+  const result = spawnSync(process.execPath, [
+    draftScript, '--contract', contractPath, '--brief-json', briefPath, '--out', layoutPath,
+    '--plan-out', planPath, '--reference-manifest', manifestPath, '--icon-mapping', mappingPath, '--json',
+  ], { encoding: 'utf8' });
+
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const layout = JSON.parse(fs.readFileSync(layoutPath, 'utf8'));
+  const icon = Object.values(layout).find((node) => node?.type?.resolvedName === 'IconBlock');
+  assert.deepEqual(icon.props, {
+    icon: 'menu', iconDisplay: 'font', size: 32, color: 'rgb(20, 30, 40)', iconRole: 'meaningful', iconLabel: 'Otwórz menu',
+  });
+  const plan = JSON.parse(fs.readFileSync(planPath, 'utf8'));
+  assert.deepEqual(plan.unmappedInlineSvg, []);
+});
+
+test('generic measured drafting promotes a significant ordinary root div to an authored band', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'monteby-draft-root-div-'));
+  const contractPath = path.join(directory, 'contract.json');
+  const briefPath = path.join(directory, 'visual-brief.json');
+  const manifestPath = path.join(directory, 'reference-manifest.json');
+  const layoutPath = path.join(directory, 'layout-draft.json');
+  const planPath = path.join(directory, 'layout-plan.json');
+  const referenceLayoutPath = path.join(directory, 'reference-layout.json');
+  const rootRect = measuredRect(0, 64, 1440, 420);
+  const contractValue = contract();
+  const container = contractValue.components.find((component) => component.name === 'Container');
+  container.props.push('tag', 'href');
+  fs.writeFileSync(contractPath, JSON.stringify(contractValue));
+  fs.writeFileSync(briefPath, JSON.stringify({
+    ...visualBrief({ target: { variant: 'split-hero', archetype: '', referenceStyle: '' } }),
+    media: { surfaces: [], requiredRoles: [] },
+    authoringRequirements: { referenceClassification: { kind: 'generic-measured-reference', family: '', familyMechanics: false } },
+  }));
+  fs.writeFileSync(referenceLayoutPath, JSON.stringify({
+    viewport: { width: 1440, height: 900, scrollHeight: 640 },
+    landmarks: [],
+    layoutGroups: [
+      { key: '0', parentKey: '', tag: 'div', rect: rootRect, flowParticipation: 'normal', display: 'flex' },
+      { key: '0.0', parentKey: '0', tag: 'a', href: '/oferta', rect: measuredRect(72, 220, 420, 150), flowParticipation: 'normal', display: 'flex', backgroundColor: 'rgb(245, 245, 245)' },
+    ],
+    textBoxes: [
+      { structureKey: '0.1', parentGroupKey: '0', tag: 'h2', text: 'Zwykła sekcja bez znacznika section', rect: measuredRect(72, 120, 600, 60), fontSize: '42px', fontWeight: '700' },
+      { structureKey: '0.0.0', parentGroupKey: '0.0', tag: 'p', text: 'Cała karta jest odnośnikiem', rect: measuredRect(96, 260, 360, 40), fontSize: '18px', fontWeight: '400' },
+    ],
+    mediaBoxes: [], meaningfulMediaBoxes: [], summary: {},
+  }));
+  fs.writeFileSync(manifestPath, JSON.stringify({
+    sourceUrl: 'file:///tmp/ordinary-root-div.html', mediaSurfaces: [], requiredMediaRoles: [],
+    layouts: [{ label: 'desktop', file: 'reference-layout.json', status: 'ok' }],
+  }));
+
+  const result = spawnSync(process.execPath, [
+    draftScript, '--contract', contractPath, '--brief-json', briefPath, '--out', layoutPath,
+    '--plan-out', planPath, '--reference-manifest', manifestPath, '--preserve-source-text', '--json',
+  ], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const plan = JSON.parse(fs.readFileSync(planPath, 'utf8'));
+  assert.equal(plan.bands.length, 1);
+  assert.equal(plan.bands[0].sourceKey, '0');
+  assert.deepEqual(plan.uncoveredRootGroups, []);
+  const layout = JSON.parse(fs.readFileSync(layoutPath, 'utf8'));
+  assert.equal(Object.values(layout).some((node) => node?.props?.text === 'Zwykła sekcja bez znacznika section'), true);
+  const linkedCard = Object.values(layout).find((node) => node?.type?.resolvedName === 'Container' && node?.props?.href === '/oferta');
+  assert.equal(linkedCard.props.tag, 'a');
 });
 
 test('draft layout accepts 40 generic bands and rejects 65 beyond the bounded limit', () => {

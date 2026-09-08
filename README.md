@@ -1,6 +1,6 @@
 # Monteby Skills
 
-Current package release: `0.4.1`. Site Authoring 0.4.1 requires Monteby
+Development candidate: `0.5.0` (not yet published). Site Authoring 0.5.0 requires Monteby
 Builder 1.4.0 for canonical writes and uses named feature gates from the live
 contract; Query controls remain available from Builder 1.3.9. Builder 1.5.0
 adds the optional live `designTokens` contract consumed by the shared design
@@ -8,7 +8,12 @@ profile resolver; older contracts continue through global styles and neutral
 fallbacks. Builder 1.5.0 also exposes the optional bounded `siteBranding`
 resource required by the site-wide logo commands. Builder 1.5.1 adds optional
 composition-plan authoring; the live catalog supplies all recipes, and older
-sites retain the existing pattern-authoring route.
+sites retain the existing pattern-authoring route. Builder 1.5.3 publishes the
+versioned native icon catalog: icon authoring requires its verified SHA and an
+approved reference-bound mapping. Missing catalogs or mappings block that work;
+they never enable raster or raw SVG substitutions. Logo commands accept the
+extended native-identity response while continuing to write only Monteby logo
+settings, without changing the WordPress site name, tagline or site icon.
 
 Reusable Agent Skills for working with the Monteby ecosystem.
 

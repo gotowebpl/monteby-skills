@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
+const { createHash } = require('node:crypto');
 const test = require('node:test');
 
 const root = path.resolve(__dirname, '..');
@@ -164,6 +165,66 @@ test('authoring readiness requires a contract and a visual brief source', () => 
 
   assert.equal(result.status, 1);
   assert.match(result.stderr, /--start-report or --brief-json is required/);
+});
+
+test('authoring readiness blocks SVG evidence until an exact native icon mapping is supplied', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'monteby-readiness-icons-'));
+  const contractPath = path.join(directory, 'contract.json');
+  const briefPath = path.join(directory, 'visual-brief.json');
+  const referenceBriefPath = path.join(directory, 'reference-brief.json');
+  const referenceManifestPath = path.join(directory, 'reference-manifest.json');
+  const mappingPath = path.join(directory, 'icon-mapping.json');
+  const icons = ['arrow_forward', 'menu'];
+  const contract = {
+    components: readyContract().concat({
+      name: 'IconBlock',
+      aiProps: ['icon', 'iconRole', 'iconLabel'],
+      controls: [{ type: 'text', prop: 'icon' }, { type: 'select', prop: 'iconRole' }, { type: 'text', prop: 'iconLabel' }],
+    }),
+    iconCatalog: {
+      version: 1,
+      icons,
+      sha256: createHash('sha256').update(JSON.stringify(icons)).digest('hex'),
+    },
+  };
+  const referenceBrief = {
+    renderedLayouts: [{
+      label: 'desktop',
+      viewport: { width: 1440, height: 900, scrollHeight: 900 },
+      textBoxes: [], mediaBoxes: [], landmarks: [], layoutGroups: [],
+      iconSurfaces: [{ structureKey: '0.1', rect: { left: 10, top: 10, width: 24, height: 24 } }],
+    }],
+  };
+  fs.writeFileSync(contractPath, JSON.stringify(contract));
+  fs.writeFileSync(briefPath, JSON.stringify({
+    visualSignals: { sections: [] }, text: { h1: [], h2: [], ctas: [], stats: [] },
+    media: { surfaces: [], requiredRoles: [] }, authoringRequirements: {},
+  }));
+  fs.writeFileSync(referenceBriefPath, JSON.stringify(referenceBrief));
+  fs.writeFileSync(referenceManifestPath, JSON.stringify({ briefJson: 'reference-brief.json' }));
+
+  const blocked = spawnSync(process.execPath, [
+    auditScript, '--contract', contractPath, '--brief-json', briefPath,
+    '--reference-brief', referenceBriefPath, '--json',
+  ], { encoding: 'utf8' });
+  assert.equal(blocked.status, 1, blocked.stderr || blocked.stdout);
+  assert.ok(JSON.parse(blocked.stdout).errors.some((error) => error.code === 'missing_native_icon_mapping'));
+
+  const referenceManifestSha256 = createHash('sha256').update(fs.readFileSync(referenceManifestPath)).digest('hex');
+  fs.writeFileSync(mappingPath, JSON.stringify({
+    schemaVersion: 1,
+    artifact: 'monteby-icon-mapping',
+    iconCatalogSha256: contract.iconCatalog.sha256,
+    referenceManifestSha256,
+    mappings: [{ structureKey: '0.1', icon: 'menu', iconRole: 'meaningful', iconLabel: 'Otwórz menu' }],
+  }));
+  const ready = spawnSync(process.execPath, [
+    auditScript, '--contract', contractPath, '--brief-json', briefPath,
+    '--reference-brief', referenceBriefPath, '--reference-manifest', referenceManifestPath,
+    '--icon-mapping', mappingPath, '--json',
+  ], { encoding: 'utf8' });
+  assert.equal(ready.status, 0, ready.stderr || ready.stdout);
+  assert.ok(JSON.parse(ready.stdout).capabilities.some((capability) => capability.name === 'native_icon_mapping'));
 });
 
 test('authoring readiness names missing responsive grid and placement controls for multi-viewport targets', () => {

@@ -1,6 +1,6 @@
 {
   "name": "@gotowebpl/monteby-skills",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "Install Monteby Agent Skills for Codex and Claude Code.",
   "license": "MIT",
   "type": "commonjs",

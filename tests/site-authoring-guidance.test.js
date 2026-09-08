@@ -174,6 +174,36 @@ test('subpixel and source-text policies preserve strict verdict semantics', () =
   assert.match(skill, /does not maintain a shared or\s+automatic cross-site residual registry/);
 });
 
+test('mechanical guidance binds icons, client copy, batch saves, and public props to executable gates', () => {
+  const protocol = read(path.join(references, 'mechanical-workflow-protocol.md'));
+  const quickStart = read(path.join(references, 'quick-start-runbook.md'));
+  const workflow = read(path.join(root, '.github', 'workflows', 'windows-browser-preflight.yml'));
+  const requiredScripts = [
+    'browser-preflight.js',
+    'batch-layout-client.js',
+    'icon-mapping.js',
+    'verify-client-content.js',
+    'verify-public-props.js',
+  ];
+
+  for (const script of requiredScripts) {
+    assert.equal(fs.existsSync(path.join(root, 'monteby-site-authoring', 'scripts', script)), true, `${script} exists`);
+    assert.match(`${skill}\n${protocol}\n${quickStart}`, new RegExp(script.replace('.', '\\.')));
+  }
+  assert.match(skill, /monteby-client-content-document` v2/);
+  assert.match(skill, /U\+00A0 non-breaking spaces remain distinct/);
+  assert.match(protocol, /patch-validates every page before the first save/);
+  assert.match(protocol, /Resume re-preflights every unapplied page/);
+  assert.match(protocol, /1440\/834\/390.*375px/s);
+  assert.match(workflow, /workflow_dispatch:/);
+  assert.doesNotMatch(workflow, /^\s*(?:push|schedule):/m);
+  assert.match(workflow, /MONTEBY_PREFLIGHT_URL: \$\{\{ inputs\.url \}\}/);
+  assert.match(workflow, /shell: pwsh/);
+  assert.match(workflow, /shell: bash/);
+  assert.match(workflow, /--url "\$MONTEBY_PREFLIGHT_URL"/);
+  assert.doesNotMatch(workflow, /shell:\s*true|npx\.cmd/);
+});
+
 test('site-authoring uses the live company profile instead of hardcoded identity data', () => {
   const skill = read(skillPath);
 

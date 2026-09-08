@@ -25,6 +25,8 @@ Resolve these before phase 1:
 - `PAGE_ID`: exact target page ID;
 - `PUBLIC_PAGE_URL`: canonical public URL of that page;
 - `REFERENCE_HTML`: absolute path to the owned/licensed HTML file;
+- `CLIENT_CONTENT`: source-bound v2 client content document when exact supplied
+  copy is part of the acceptance claim.
 
 The WordPress client reads authentication from the environment variable named
 `MONTEBY_AUTH_HEADER`. Populate it through the project's approved secret
@@ -59,6 +61,19 @@ call `curl.exe` with a `/wp-json/...` path argument, prefix that one invocation
 with `MSYS_NO_PATHCONV=1`; do not export it for the session or attach it to the
 Node workflow. This prevents MSYS from rewriting the REST path into a local
 Windows path while keeping every other path conversion scoped normally.
+
+### 0 — Prove the browser in this environment
+
+```bash
+node "$SKILL/scripts/browser-preflight.js" --url "$PUBLIC_PAGE_URL"
+```
+
+Require successful real Chromium navigation and PNG evidence at 1440, 834, 390,
+and the independent 375px narrow-width stress viewport. On native Windows run
+this with `node` from PowerShell; do not route it through `.cmd`, `shell: true`,
+or a Git Bash path-rewriting wrapper. The repository's manually dispatched
+`Windows browser preflight` workflow provides the same native Windows smoke;
+it is never scheduled automatically.
 
 ### 1 — Snapshot exact site/page
 
@@ -110,6 +125,10 @@ node "$SKILL/scripts/run-visual-iteration.js" \
 
 `--preserve-source-text` is permitted only because this mode already proved
 ownership/licensing. Never add it to an external/public reference run.
+When this complete capture finds icon surfaces, the first run stops at readiness.
+Review those surfaces, create an exact SHA-bound native mapping, and rerun the
+same command with `--icon-mapping "$ICON_MAPPING"`. Omit it only for a capture
+with zero icons. An unknown native equivalent blocks the run.
 
 The runner captures, checks readiness, invokes the generic measured drafter with
 `--plan-out`, audits the resulting candidate, renders a local diagnostic, captures
@@ -231,6 +250,14 @@ to emit `status: "DONE"`.
 Inspect its contact sheet. A green JSON audit cannot override a visible mismatch.
 On failure, consume its blockers, bounded `repairQueue`, and emitted action; do not
 run capture or benchmark ad hoc.
+
+When exact supplied copy is part of acceptance, run
+`verify-client-content.js` with the source-bound v2 `$CLIENT_CONTENT` and the
+canonical capture manifest. Its source SHA-256, public URL, region, occurrence
+counts, and NBSP characters must all match. For explicitly requested multi-page
+work, use `batch-layout-client.js`: it preflights all pages before the first
+write and later stops with a durable resume ledger on conflict; resume
+re-preflights every unapplied page before another write.
 
 ## Content and forms
 

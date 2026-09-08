@@ -1283,7 +1283,16 @@ function siteBrandingCapability(contract, stage) {
 }
 
 function siteBrandingDocument(value, stage) {
-  const exactKeys = ['logoUrl', 'revision', 'version'];
+  const identityKeys = ['siteName', 'tagline', 'siteIconId', 'siteIconUrl'];
+  const includesIdentity = isObject(value) && identityKeys.some((key) => Object.hasOwn(value, key));
+  const exactKeys = ['logoUrl', 'revision', 'version', ...(includesIdentity ? identityKeys : [])].sort();
+  const identityValid = !includesIdentity || (
+    typeof value.siteName === 'string'
+    && typeof value.tagline === 'string'
+    && Number.isSafeInteger(value.siteIconId) && value.siteIconId >= 0
+    && typeof value.siteIconUrl === 'string'
+    && (value.siteIconUrl === '' || isValidLogoUrl(value.siteIconUrl))
+  );
   if (
     !isObject(value)
     || value.version !== 1
@@ -1291,6 +1300,7 @@ function siteBrandingDocument(value, stage) {
     || !/^[a-f0-9]{64}$/.test(value.revision)
     || typeof value.logoUrl !== 'string'
     || (value.logoUrl !== '' && !isValidLogoUrl(value.logoUrl))
+    || !identityValid
     || Object.keys(value).sort().join('\0') !== exactKeys.join('\0')
   ) {
     throw new ClientError('The Monteby Branding endpoint returned a document outside the live contract.', {
@@ -1632,14 +1642,16 @@ async function runBrandingSave(options, authHeader) {
   } catch (error) {
     return resultFromError(error, options.command);
   }
-  if (saved.logoUrl !== options.logoUrl) {
+  if (saved.logoUrl !== options.logoUrl || ['siteName', 'tagline', 'siteIconId', 'siteIconUrl'].some((field) => (
+    Object.hasOwn(current.document, field) && current.document[field] !== saved[field]
+  ))) {
     return createResult({
       ok: false,
       stage: options.command,
       code: 'BRANDING_SAVE_EVIDENCE_INVALID',
       artifacts,
       nextAction: 'Inspect the Builder branding persistence before attempting another write.',
-      message: 'The branding response did not confirm the exact approved logo URL.',
+      message: 'The branding response did not confirm the approved logo and preservation of the native site identity.',
       response: saved,
       scope: { site: options.site },
     });

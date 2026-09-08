@@ -1312,6 +1312,60 @@ test('branding-save sends one exact bounded write and verifies the returned docu
   assert.deepEqual(server.errors, []);
 });
 
+test('branding preserves additive native identity fields while writing only the Monteby logo', async (t) => {
+  for (const corruptIdentity of [false, true]) {
+    const directory = tempDir(t);
+    const identity = { siteName: 'Example site', tagline: 'Native tagline', siteIconId: 91, siteIconUrl: 'https://cdn.example.test/icon.png' };
+    const logoUrl = 'https://cdn.example.test/approved.webp';
+    const original = { ...brandingDocument(), ...identity };
+    const writes = [];
+    const server = await startServer(t, async (request, response) => {
+      if (request.url.endsWith('/contract')) return sendJson(response, 200, brandingContract());
+      if (request.method === 'GET') return sendJson(response, 200, original);
+      writes.push(await readBody(request));
+      return sendJson(response, 200, {
+        ...brandingDocument('b'.repeat(64), logoUrl), ...identity,
+        ...(corruptIdentity ? { siteIconId: 92 } : {}),
+      });
+    });
+    const snapshot = await runClient(['branding-snapshot', '--site', server.site, '--out-dir', directory]);
+    assert.equal(snapshot.exitCode, 0);
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(directory, 'branding-before.json'), 'utf8')).data, original);
+    const saved = await runClient([
+      'branding-save', '--site', server.site, '--logo-url', logoUrl,
+      '--out-dir', directory, '--out', path.join(directory, 'saved.json'),
+    ]);
+    assert.equal(saved.exitCode, corruptIdentity ? 1 : 0);
+    assert.equal(saved.result.code, corruptIdentity ? 'BRANDING_SAVE_EVIDENCE_INVALID' : 'BRANDING_SAVE_OK');
+    assert.deepEqual(writes, [{ logoUrl, expectedRevision: BRANDING_REVISION }]);
+    assert.deepEqual(server.errors, []);
+  }
+});
+
+test('branding rejects partial or invalid native identity and operational response fields', async (t) => {
+  const complete = {
+    ...brandingDocument(), siteName: 'Example', tagline: '', siteIconId: 0, siteIconUrl: '',
+  };
+  for (const invalid of [
+    { ...brandingDocument(), siteName: 'Partial identity' },
+    { ...complete, siteIconId: '91' },
+    { ...complete, siteIconId: -1 },
+    { ...complete, siteIconId: 2.5 },
+    { ...complete, siteIconUrl: 'javascript:alert(1)' },
+    { ...complete, tagline: null },
+    { ...complete, custom_logo: 91 },
+    { ...complete, smtpPassword: 'not-public' },
+  ]) {
+    const server = await startServer(t, (request, response) => sendJson(
+      response, 200, request.url.endsWith('/contract') ? brandingContract() : invalid
+    ));
+    const result = await runClient(['branding-snapshot', '--site', server.site, '--out-dir', tempDir(t)]);
+    assert.equal(result.exitCode, 1);
+    assert.equal(result.result.code, 'BRANDING_DOCUMENT_INVALID');
+    assert.deepEqual(server.errors, []);
+  }
+});
+
 test('branding-save rejects cross-site and stale snapshots without unsafe writes', async (t) => {
   const directory = tempDir(t);
   const crossSiteFile = path.join(directory, 'cross-site.json');

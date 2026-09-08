@@ -44,6 +44,14 @@ test('query control gate is available from Builder 1.3.9', () => {
   }, 'queryControls', manifest).ok, true);
 });
 
+test('native icon authoring requires the versioned Builder 1.5.3 catalog', () => {
+  assert.equal(evaluateFeatureGate({ productVersion: '1.5.2', iconCatalog: { version: 1 } }, 'nativeIconAuthoring', manifest).code, 'blocked_plugin_version');
+  for (const iconCatalog of [undefined, {}, { version: 2 }]) {
+    assert.equal(evaluateFeatureGate({ productVersion: '1.5.3', iconCatalog }, 'nativeIconAuthoring', manifest).code, 'blocked_contract_inconsistency');
+  }
+  assert.equal(evaluateFeatureGate({ productVersion: '1.5.3', iconCatalog: { version: 1 } }, 'nativeIconAuthoring', manifest).ok, true);
+});
+
 
 test('composition gate requires Builder 1.5.1 and the declared live composition version', () => {
   assert.equal(evaluateFeatureGate({ productVersion: '1.5.0', authoring: { compositions: { version: 1 } } }, 'compositions', manifest).code, 'blocked_plugin_version');

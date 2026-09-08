@@ -48,6 +48,11 @@ Local visual work requires:
 - full-page capture;
 - an output directory dedicated to one page.
 
+Before capture, run `scripts/browser-preflight.js` against the exact public
+origin in the execution environment. It must complete real Chromium navigation,
+two animation frames, and a PNG capture at 1440, 834, 390, and 375 pixels.
+Installing Playwright alone is not evidence that its browser can run there.
+
 Canonical WordPress work additionally requires:
 
 - site URL;
@@ -92,7 +97,9 @@ entry with an explicit decision, never a silent pass:
   in the report.
 - **Image format**: authored raster media uses WebP or AVIF (JPEG acceptable
   for photography when the host pipeline cannot serve WebP); PNG only for
-  transparency/cutouts; no BMP/TIFF; SVG for vectors.
+  transparency/cutouts; no BMP/TIFF. Captured SVG icon surfaces must map to a
+  native entry in the live `iconCatalog`; never author raw SVG or substitute a
+  raster image when no native icon matches.
 - **Video**: background video without `backgroundVideoPoster` is forbidden, and
   `backgroundVideoMobileBehavior` must be explicit (`poster` is the default
   policy; `autoplay` on mobile requires a recorded justification).
@@ -107,6 +114,7 @@ Every artifact is JSON unless its name says otherwise.
 | Artifact | Producer | Required proof |
 |---|---|---|
 | `contract.json` | site contract endpoint or supplied fixture | exact components, `aiProps`, controls, allowed parents, defaults |
+| browser preflight report | `browser-preflight.js` | real Chromium navigation and captures at 1440/834/390/375 in the execution environment |
 | `benchmark-start-report.json` | `start-visual-benchmark.js` | source classification and complete capture paths |
 | `reference-manifest.json` | `capture-template-reference.js` | all canonical viewports and complete layout evidence |
 | `layout-plan.json` | `draft-monteby-layout.js --plan-out` | every measured band and text/media/group/child surface, stable generated IDs, source node-map SHA-256, no truncation |
@@ -158,6 +166,12 @@ Capture full-page rendered geometry at all three canonical viewports. The
 reference manifest must mark essential evidence complete. Viewport-only capture
 is diagnostic and cannot advance to canonical validation.
 
+Capture visible SVG/icon surfaces separately from photographic media. Evidence
+may retain geometry, accessible semantics, color, and stable structure keys,
+but never SVG markup or path data. Each surface must be mapped through the live
+`iconCatalog` by an exact SHA-bound mapping artifact before readiness can pass.
+A missing native equivalent is a blocker, not permission to drop or rasterize it.
+
 ### PLAN
 
 Run the measured drafter with `--plan-out`. The plan must contain every
@@ -179,6 +193,11 @@ normal-flow band in source order and must report:
 
 Any truncation or omission is a hard failure. A long page is not permission to
 drop sections, media, text, repeated items, or responsive measurements.
+
+Every captured hard minimum/maximum width or offset needs a recorded decision:
+preserve it, replace it with an equivalent live responsive control, or omit it
+only when measured evidence proves it non-constraining and the 375px stress
+check stays free of overflow. Silent removal is incomplete authoring.
 
 The generic path is complete only inside its declared resource envelope: at
 most 64 normal-flow bands, 24 meaningful media surfaces per band, 256 text
@@ -283,6 +302,12 @@ live presentation unless the user explicitly supplied a presentation override.
 Never implement “fetch and repeat” after HTTP 409/428. Reconcile against the
 snapshot first.
 
+For a requested multi-page batch, `batch-layout-client.js` snapshots and
+patch-validates every page before the first save, then writes sequentially. A
+conflict stops the batch and persists the exact applied/remaining preflight
+ledger for explicit `--resume`. Resume re-preflights every unapplied page before
+another write; this is not a database-wide transaction.
+
 ### PHP_PREVIEW
 
 Render through WordPress/PHP after save. The saved REST response and a local
@@ -317,6 +342,8 @@ mismatch into a pass.
   results with zero mismatched pixels, zero aggregate percent, and zero maximum
   viewport percent;
 - no required interaction or media is missing;
+- required public computed-prop expectations pass at 1440/834/390 and the 375px
+  stress capture has no horizontal overflow;
 - no unsupported CSS/HTML/theme workaround was used.
 
 Only then may the result be described as complete or 1:1.

@@ -17,7 +17,7 @@ test('site contract compatibility manifest requires the exact live contract with
 
   assert.deepEqual(manifest, {
     schemaVersion: 3,
-    skillVersion: '0.4.1',
+    skillVersion: '0.5.0',
     minimumBuilderVersion: '1.4.0',
     contractEndpoint: '/wp-json/monteby/v1/contract',
     liveContractRequired: true,
@@ -47,6 +47,13 @@ test('site contract compatibility manifest requires the exact live contract with
         valueType: 'object',
         optional: true,
         fallback: 'no-site-wide-logo-write',
+      },
+      nativeIconAuthoring: {
+        minimumBuilderVersion: '1.5.3',
+        contractPath: 'iconCatalog.version',
+        expectedValue: 1,
+        optional: true,
+        fallback: 'block-native-icon-authoring-without-approved-catalog',
       },
       compositions: {
         minimumBuilderVersion: '1.5.1',

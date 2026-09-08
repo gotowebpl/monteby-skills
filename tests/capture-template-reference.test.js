@@ -232,6 +232,97 @@ test('captured font stacks accept bounded quoted names and reject unsafe source 
   }
 });
 
+test('reference capture records visible SVG icon semantics without retaining source markup', () => {
+  const icon = layoutElement('svg', rect(24, 32, 36, 36), [], {
+    color: 'rgb(18, 52, 86)',
+    fill: 'rgb(18, 52, 86)',
+  });
+  icon.outerHTML = '<svg><path d="private-source-path" /></svg>';
+  icon.getAttribute = (name) => ({
+    'aria-hidden': null,
+    'aria-label': 'Open navigation',
+    role: 'img',
+  })[name] || null;
+  icon.querySelector = () => null;
+
+  const { layout } = captureWithMockDom([], [icon], {}, { bodyChildren: [icon] });
+
+  assert.deepEqual(layout.iconSurfaces, [{
+    order: 0,
+    structureKey: '0',
+    parentGroupKey: '',
+    rect: rect(24, 32, 36, 36),
+    flowParticipation: 'normal',
+    kind: 'icon',
+    semanticRole: 'meaningful',
+    accessibleName: 'Open navigation',
+    color: 'rgb(18, 52, 86)',
+    fill: 'rgb(18, 52, 86)',
+  }]);
+  assert.deepEqual(layout.mediaBoxes, []);
+  assert.doesNotMatch(JSON.stringify(layout.iconSurfaces), /private-source-path|outerHTML|<svg|<path/);
+  assert.deepEqual(layout.evidenceCompleteness.categories.iconSurfaces, {
+    total: 1,
+    retained: 1,
+    truncated: 0,
+    limit: 160,
+  });
+});
+
+test('reference capture keeps photographic thresholds independent from small SVG evidence', () => {
+  const tinySvg = layoutElement('svg', rect(10, 10, 7, 7));
+  const boundedSvg = layoutElement('svg', rect(20, 20, 12, 12));
+  boundedSvg.getAttribute = (name) => name === 'aria-hidden' ? 'true' : null;
+  boundedSvg.querySelector = () => null;
+
+  const { layout } = captureWithMockDom([], [tinySvg, boundedSvg], {}, {
+    bodyChildren: [tinySvg, boundedSvg],
+  });
+
+  assert.equal(layout.mediaBoxes.length, 0);
+  assert.equal(layout.iconSurfaces.length, 1);
+  assert.equal(layout.iconSurfaces[0].semanticRole, 'decorative');
+});
+
+test('reference capture separates Material font icons from ordinary page text without importing glyph markup', () => {
+  const icon = textElement('span', 'schedule', rect(20, 20, 24, 24), [rect(20, 20, 24, 24)], {
+    fontFamily: '"Material Symbols Rounded", sans-serif',
+    color: 'rgb(18, 52, 86)',
+  });
+  icon.getAttribute = (name) => ({ 'aria-label': 'Opening hours', role: 'img' })[name] || null;
+  const label = textElement('p', 'Hours\u00a09:00', rect(60, 20, 130, 24), [rect(60, 20, 130, 24)]);
+  const notAnIcon = textElement('span', 'schedule', rect(20, 70, 100, 24), [rect(20, 70, 100, 24)]);
+  const { layout } = captureWithMockDom([icon, label, notAnIcon], [], {}, { bodyChildren: [icon, label, notAnIcon] });
+  assert.equal(layout.iconSurfaces.length, 1);
+  assert.equal(layout.iconSurfaces[0].structureKey, '0');
+  assert.equal(layout.iconSurfaces[0].accessibleName, 'Opening hours');
+  assert.equal(layout.iconSurfaces[0].semanticRole, 'meaningful');
+  assert.equal(layout.iconSurfaces[0].color, 'rgb(18, 52, 86)');
+  assert.deepEqual(layout.textBoxes.map((entry) => entry.text), ['Hours\u00a09:00', 'schedule']);
+  assert.equal(layout.directTextEntries.some((entry) => entry.structureKey === '0'), false);
+  assert.equal(layout.contentTextEntries.some((entry) => entry.structureKey === '0'), false);
+  assert.equal(layout.mediaBoxes.length, 0);
+});
+
+test('reference capture excludes decorative font ligatures from a containing button and its content ledger', () => {
+  const icon = textElement('span', 'arrow_forward', rect(140, 20, 24, 24), [rect(140, 20, 24, 24)], {
+    fontFamily: 'Material Icons',
+  });
+  icon.getAttribute = (name) => name === 'aria-hidden' ? 'true' : null;
+  const label = textElement('span', 'Explore\u00a0more', rect(20, 20, 110, 24), Array.from('Explore\u00a0more', (_, index) => rect(20 + index * 8, 20, 8, 24)));
+  const button = layoutElement('button', rect(10, 10, 170, 44), [label, icon]);
+  button.innerText = 'Explore\u00a0more arrow_forward';
+  button.textNodes = [...label.textNodes, ...icon.textNodes];
+  label.textNodes[0].parentElement = label;
+  icon.textNodes[0].parentElement = icon;
+  const { layout } = captureWithMockDom([button, label, icon], [], {}, { bodyChildren: [button] });
+  assert.equal(layout.iconSurfaces.length, 1);
+  assert.equal(layout.iconSurfaces[0].semanticRole, 'decorative');
+  assert.deepEqual(layout.contentTextEntries.map((entry) => entry.text), ['Explore\u00a0more']);
+  assert.deepEqual(layout.textBoxes.map((entry) => entry.text), ['Explore\u00a0more']);
+  assert.equal(layout.textBoxes[0].lines[0].text, 'Explore\u00a0more');
+});
+
 test('full-page lazy-media warmup reaches the measured bottom beyond 12,000px', async () => {
   const documentHeight = 26000;
   const viewportHeight = 1000;
@@ -2850,8 +2941,11 @@ function captureWithMockDom(elementOrElements, mediaElements = [], backgroundDim
       if (selector === TEXT_SELECTOR) {
         return elements;
       }
-      if (selector === 'img,video,svg,canvas,[style*="background"]') {
-        return mediaElements;
+      if (selector === 'img,video,canvas,[style*="background"]') {
+        return mediaElements.filter((element) => String(element.tagName || '').toLowerCase() !== 'svg');
+      }
+      if (selector === 'svg') {
+        return mediaElements.filter((element) => String(element.tagName || '').toLowerCase() === 'svg');
       }
       if (selector === LANDMARK_SELECTOR) {
         return landmarkElements;

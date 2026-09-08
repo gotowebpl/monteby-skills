@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.5.0 - Unreleased
+
+- Use generic capture and drafting with ordered non-landmark bands, preserved
+  non-breaking spaces and evidence-backed constraint decisions across viewports.
+- Resolve icons through the versioned native catalog and an approved SHA-bound
+  mapping. Unsupported icons block authoring without raster or raw SVG fallback.
+- Share published control metadata and the resolved design profile across the
+  Kit, drafter, normalization, repair and capability audits.
+- Preflight all pages before a multi-page write and persist a conflict-aware
+  resume ledger without claiming a cross-page database transaction.
+- Bind content completeness and applied-prop verification to the exact source,
+  site, page and scope; ambiguous evidence cannot receive a one-to-one verdict.
+- Probe actual browser startup, frames, screenshots and shutdown before capture.
+  The native Windows and Git Bash workflow remains manual and awaits execution.
+- Accept the expanded native site-identity document while logo operations still
+  write only Monteby Branding and verify that native identity remains unchanged.
+
 ## 0.4.1 - 2026-09-07
 
 - Reset the layout Kit only after a successful write, validate published style

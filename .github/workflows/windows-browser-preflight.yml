@@ -1,0 +1,32 @@
+name: Windows browser preflight
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: Public HTTP(S) URL to verify
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  chromium:
+    runs-on: windows-latest
+    env:
+      MONTEBY_PREFLIGHT_URL: ${{ inputs.url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npx --yes playwright@1.54.1 install chromium
+      - name: Run native Windows browser preflight
+        shell: pwsh
+        run: node monteby-site-authoring/scripts/browser-preflight.js --url $env:MONTEBY_PREFLIGHT_URL
+      - name: Run the same browser preflight from Git Bash
+        shell: bash
+        run: node monteby-site-authoring/scripts/browser-preflight.js --url "$MONTEBY_PREFLIGHT_URL"

@@ -35,6 +35,15 @@ test('remote references cannot opt into source-text copying', () => {
   );
 });
 
+test('icon mapping is resolved once and retained by the iteration', () => {
+  const options = parseArgs([
+    '--contract', '/tmp/contract.json',
+    '--icon-mapping', './mapping.json',
+  ]);
+
+  assert.equal(options.iconMapping, path.resolve('./mapping.json'));
+});
+
 test('canonical viewport coverage stays incomplete when either visual budget is nonzero', () => {
   const report = initialReport(parseArgs([
     '--contract', '/tmp/contract.json',
@@ -737,6 +746,8 @@ childProcess.spawnSync = function runVisualIterationHarness(command, args, optio
     'mobile:390x844',
     '--viewport-timeout-ms',
     '240000',
+    '--icon-mapping',
+    path.join(directory, 'icon-mapping.json'),
     '--json',
   ], spawnOptions);
 
@@ -775,7 +786,9 @@ childProcess.spawnSync = function runVisualIterationHarness(command, args, optio
   assert.equal(timeoutValue(fullPageStart.args), '240000');
   assert.equal(fullPageStart.args.includes('--full-page'), true);
   assert.equal(argumentValue(fullPageReadiness.args, '--reference-layout'), path.join(directory, 'target-layout-mobile.json'));
+  assert.equal(argumentValue(fullPageReadiness.args, '--icon-mapping'), path.join(directory, 'icon-mapping.json'));
   assert.equal(fullPageDraft.args.includes('--preserve-source-text'), true);
+  assert.equal(argumentValue(fullPageDraft.args, '--icon-mapping'), path.join(directory, 'icon-mapping.json'));
   assert.equal(
     argumentValue(fullPageDraft.args, '--plan-out'),
     path.join(directory, 'candidate', 'layout-plan.json')

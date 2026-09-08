@@ -2104,6 +2104,7 @@ function captureRenderedLayout(
       textBoxes: Math.min(2500, Math.max(300, documentScreens * 80)),
       directTextEntries: Math.min(2500, Math.max(300, documentScreens * 80)),
       mediaBoxes: Math.min(1500, Math.max(200, documentScreens * 40)),
+      iconSurfaces: Math.min(1500, Math.max(200, documentScreens * 40)),
       layoutGroups: Math.min(2000, Math.max(300, documentScreens * 60)),
       landmarks: Math.min(1000, Math.max(160, documentScreens * 30)),
       interactions: Math.min(1500, Math.max(200, documentScreens * 40)),
@@ -2112,6 +2113,7 @@ function captureRenderedLayout(
       textBoxes: 240,
       directTextEntries: 240,
       mediaBoxes: 160,
+      iconSurfaces: 160,
       layoutGroups: 240,
       landmarks: 160,
       interactions: 200,
@@ -2475,9 +2477,9 @@ function captureRenderedLayout(
   };
   const elementChildren = (element) => Array.from(element?.children || []);
   const elementTag = (element) => String(element?.tagName || '').toLowerCase();
-  const isSvgTreeElement = (element) => {
+  const isIconTreeElement = (element) => {
     for (let current = element; current && current !== document.body; current = current.parentElement) {
-      if (elementTag(current) === 'svg') {
+      if (elementTag(current) === 'svg' || fontIconElements.has(current)) {
         return true;
       }
     }
@@ -2503,6 +2505,17 @@ function captureRenderedLayout(
     return current === document.body ? pathParts.reverse().join('.') : '';
   };
   const allDocumentElements = Array.from(document.querySelectorAll('*'));
+  const fontIconElements = new Set(allDocumentElements.filter((element) => {
+    const family = String(window.getComputedStyle(element).fontFamily || '').split(',')[0].trim().replace(/^["']|["']$/gu, '');
+    return /^Material (?:Symbols (?:Rounded|Outlined|Sharp)|Icons(?: (?:Round|Outlined|Sharp|Two Tone))?)$/u.test(family)
+      && elementChildren(element).length === 0 && /^[a-z][a-z0-9_]{0,79}$/u.test(normalizeText(element.textContent));
+  }));
+  const fontIconAncestors = new Set();
+  for (const icon of fontIconElements) {
+    for (let parent = icon.parentElement; parent && parent !== document.body; parent = parent.parentElement) {
+      fontIconAncestors.add(parent);
+    }
+  }
   const horizontalOverflowOffenderLimit = 20;
   const horizontalOverflowPx = Math.max(0, documentScrollWidth - viewport.width);
   const containsInternalHorizontalOverflow = (element) => {
@@ -2615,7 +2628,7 @@ function captureRenderedLayout(
   const allLayoutGroupCandidates = allDocumentElements
     .map((element) => {
       const tag = elementTag(element);
-      if (!tag || excludedGroupTags.has(tag) || isSvgTreeElement(element)) {
+      if (!tag || excludedGroupTags.has(tag) || isIconTreeElement(element)) {
         return null;
       }
 
@@ -2674,10 +2687,15 @@ function captureRenderedLayout(
     const styleEvidence = layoutGroupStyleEvidence(style, rect);
     const visualFrame = generatedVisualFrameEvidence(element, rect, style, styleEvidence);
     const stackingIndex = safeStackingIndex(style.zIndex);
+    const href = tag === 'a' ? boundedAttribute(element, 'href', 2048) : '';
     return {
       key,
+      ...(typeof element.getAttribute === 'function' && element.getAttribute('data-monteby-node-id')
+        ? { montebyNodeId: String(element.getAttribute('data-monteby-node-id')) }
+        : {}),
       parentKey: nearestLayoutGroupKey(element),
       tag,
+      ...(href && !/^\s*(?:data|javascript|vbscript):/iu.test(href) ? { href } : {}),
       rect,
       firstViewportArea: viewportArea(rect),
       flowParticipation: elementFlowParticipation(element),
@@ -2717,7 +2735,7 @@ function captureRenderedLayout(
 
     for (let textNode = walker.nextNode(); textNode; textNode = walker.nextNode()) {
       const parentElement = textNode.parentElement || element;
-      if (!isVisible(parentElement, elementRect, window.getComputedStyle(parentElement))) {
+      if (isIconTreeElement(parentElement) || !isVisible(parentElement, elementRect, window.getComputedStyle(parentElement))) {
         continue;
       }
 
@@ -2823,9 +2841,12 @@ function captureRenderedLayout(
   const renderedTextBoxKeys = new Set();
   const allTextCandidates = Array.from(document.querySelectorAll(textSelector))
     .map((element) => {
+      if (isIconTreeElement(element)) return null;
       const rect = readRect(element);
       const style = window.getComputedStyle(element);
-      const text = normalizeText(typeof element.innerText === 'string' ? element.innerText : element.textContent);
+      const text = fontIconAncestors.has(element)
+        ? normalizeText(renderedTextLines(element).map((line) => line.text).join(' '))
+        : normalizeText(typeof element.innerText === 'string' ? element.innerText : element.textContent);
       if (!intersectsDocumentCanvas(rect) || !isVisible(element, rect, style) || !text) {
         return null;
       }
@@ -2925,7 +2946,7 @@ function captureRenderedLayout(
     'html', 'body', 'script', 'style', 'template', 'noscript', 'option', 'a', 'button',
   ]);
   const allDirectTextEntries = allDocumentElements
-    .filter((element) => !directTextExcludedTags.has(elementTag(element)))
+    .filter((element) => !directTextExcludedTags.has(elementTag(element)) && !isIconTreeElement(element))
     .filter((element) => {
       for (let ancestor = element.parentElement; ancestor; ancestor = ancestor.parentElement) {
         if (['a', 'button'].includes(elementTag(ancestor))) {
@@ -2939,7 +2960,7 @@ function captureRenderedLayout(
   const directTextEntries = allDirectTextEntries.slice(0, evidenceLimits.directTextEntries);
 
   const mediaElements = uniqueElements([
-    ...Array.from(document.querySelectorAll('img,video,svg,canvas,[style*="background"]')),
+    ...Array.from(document.querySelectorAll('img,video,canvas,[style*="background"]')),
     ...relevantClassMediaCandidates,
   ]);
 
@@ -3041,6 +3062,38 @@ function captureRenderedLayout(
     })
     .sort((left, right) => left.rect.top - right.rect.top || left.rect.left - right.rect.left || left.order - right.order);
   const mediaBoxes = allMediaBoxes.slice(0, evidenceLimits.mediaBoxes);
+  const allIconSurfaces = uniqueElements([...Array.from(document.querySelectorAll('svg')), ...fontIconElements])
+    .map((element, order) => {
+      const rect = readRect(element);
+      const style = window.getComputedStyle(element);
+      if (!intersectsDocumentCanvas(rect) || !isVisible(element, rect, style) || rect.width < 8 || rect.height < 8) {
+        return null;
+      }
+      const attribute = (name) => typeof element.getAttribute === 'function' ? element.getAttribute(name) : '';
+      const ariaHidden = String(attribute('aria-hidden') || '').toLowerCase() === 'true';
+      const role = String(attribute('role') || '').toLowerCase();
+      const titleElement = typeof element.querySelector === 'function' ? element.querySelector('title') : null;
+      const title = normalizeText(titleElement?.textContent || '');
+      const ariaLabel = normalizeText(attribute('aria-label') || '');
+      const accessibleName = String(ariaLabel || title).slice(0, 160);
+      return {
+        order,
+        structureKey: elementPathKey(element),
+        parentGroupKey: nearestLayoutGroupKey(element),
+        rect,
+        flowParticipation: elementFlowParticipation(element),
+        kind: fontIconElements.has(element) || (rect.width <= 128 && rect.height <= 128) ? 'icon' : 'vector',
+        semanticRole: ariaHidden || role === 'presentation' || role === 'none'
+          ? 'decorative'
+          : accessibleName ? 'meaningful' : 'unknown',
+        accessibleName,
+        color: style.color,
+        fill: style.fill,
+      };
+    })
+    .filter(Boolean)
+    .sort((left, right) => left.rect.top - right.rect.top || left.rect.left - right.rect.left || left.order - right.order);
+  const iconSurfaces = allIconSurfaces.slice(0, evidenceLimits.iconSurfaces);
 
   const allLandmarks = Array.from(document.querySelectorAll(landmarkSelector))
     .map((element, order) => {
@@ -3294,6 +3347,12 @@ function captureRenderedLayout(
       truncated: Math.max(0, allMediaBoxes.length - mediaBoxes.length),
       limit: evidenceLimits.mediaBoxes,
     },
+    iconSurfaces: {
+      total: allIconSurfaces.length,
+      retained: iconSurfaces.length,
+      truncated: Math.max(0, allIconSurfaces.length - iconSurfaces.length),
+      limit: evidenceLimits.iconSurfaces,
+    },
     layoutGroups: {
       total: allLayoutGroupCandidates.length,
       retained: layoutGroups.length,
@@ -3360,7 +3419,7 @@ function captureRenderedLayout(
   if (lazyMediaWarmup && lazyMediaWarmup.complete === false) {
     reasons.push('lazy-media-warmup-incomplete');
   }
-  const essentialGeometryTruncated = ['textBoxes', 'directTextEntries', 'mediaBoxes', 'layoutGroups', 'landmarks', 'mediaClassCandidates']
+  const essentialGeometryTruncated = ['textBoxes', 'directTextEntries', 'mediaBoxes', 'iconSurfaces', 'layoutGroups', 'landmarks', 'mediaClassCandidates']
     .some((name) => categoryCounts[name].truncated > 0)
     || categoryCounts.directTextEntries.geometryIncomplete > 0;
   const evidenceComplete = reasons.length === 0;
@@ -3389,6 +3448,7 @@ function captureRenderedLayout(
     textBoxes,
     directTextEntries,
     mediaBoxes,
+    iconSurfaces,
     layoutGroups,
     landmarks,
     interactions,
@@ -3974,16 +4034,6 @@ async function warmLazyMedia(page, options = {}) {
   };
 }
 
-function renderedLayoutCaptureScript() {
-  return `
-'use strict';
-
-const fs = require('fs');
-const path = require('path');
-
-const { chromium } = loadPlaywright();
-const warmLazyMedia = ${warmLazyMedia.toString()};
-
 function loadPlaywright() {
   try {
     return require('playwright');
@@ -4003,10 +4053,21 @@ function loadPlaywright() {
       }
     }
     const directMessage = directError instanceof Error ? directError.message : String(directError);
-    const suffix = pathErrorMessage ? \` Last PATH lookup error: \${pathErrorMessage}\` : '';
-    throw new Error(\`\${directMessage}. Could not resolve playwright from npx/npm PATH.\${suffix}\`);
+    const suffix = pathErrorMessage ? ` Last PATH lookup error: ${pathErrorMessage}` : '';
+    throw new Error(`${directMessage}. Could not resolve playwright from npx/npm PATH.${suffix}`);
   }
 }
+
+function renderedLayoutCaptureScript() {
+  return `
+'use strict';
+
+const fs = require('fs');
+const path = require('path');
+
+const loadPlaywright = ${loadPlaywright.toString()};
+const { chromium } = loadPlaywright();
+const warmLazyMedia = ${warmLazyMedia.toString()};
 
 (async () => {
   const browser = await chromium.launch({
@@ -4739,6 +4800,7 @@ module.exports = {
   captureViewportTimeoutMs,
   finalizeCapturedLayoutCoverage,
   meaningfulFirstViewportMediaCoverage,
+  loadPlaywright,
   paintedBackgroundImageRect,
   parseArgs,
   primaryFontEvidence,
