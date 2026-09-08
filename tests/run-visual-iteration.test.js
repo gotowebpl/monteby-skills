@@ -14,8 +14,10 @@ const iterationScript = path.join(root, 'monteby-site-authoring', 'scripts', 'ru
 const {
   buildRepairQueue,
   initialReport,
+  iterationArgsFor,
   nextActionFor,
   parseArgs,
+  readCaptureCheckpoint,
   validateCandidatePlanBinding,
   validateLayoutPlan,
 } = require(iterationScript);
@@ -42,6 +44,39 @@ test('icon mapping is resolved once and retained by the iteration', () => {
   ]);
 
   assert.equal(options.iconMapping, path.resolve('./mapping.json'));
+});
+
+test('native icon mapping action resumes the exact captured checkpoint', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'monteby-icon-resume-action-'));
+  const checkpoint = path.join(directory, 'reference-capture-checkpoint.json');
+  const report = initialReport(parseArgs([
+    '--contract', path.join(directory, 'contract.json'),
+    '--out-dir', directory,
+    '--reference-html-file', path.join(directory, 'reference.html'),
+  ]));
+  report.status = 'readiness_failed';
+  report.blockers = [{ code: 'missing_native_icon_mapping' }];
+  report.files.captureCheckpoint = checkpoint;
+
+  const action = nextActionFor(report);
+  assert.equal(action.id, 'approve_native_icon_mapping_and_resume');
+  assert.deepEqual(action.requires, ['ICON_MAPPING_FILE']);
+  assert.equal(argumentValue(action.args, '--resume-capture'), checkpoint);
+  assert.equal(argumentValue(action.args, '--icon-mapping'), '$ICON_MAPPING_FILE');
+  assert.equal(argumentValue(action.args, '--reference-html-file'), path.join(directory, 'reference.html'));
+});
+
+test('repair reruns preserve the capture checkpoint and approved icon mapping', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'monteby-repair-resume-action-'));
+  const report = initialReport(parseArgs([
+    '--contract', path.join(directory, 'contract.json'),
+    '--out-dir', directory,
+    '--icon-mapping', path.join(directory, 'icon-mapping.json'),
+  ]));
+  const args = iterationArgsFor(report, path.join(directory, 'candidate', 'layout-repaired.json'));
+
+  assert.equal(argumentValue(args, '--resume-capture'), report.files.captureCheckpoint);
+  assert.equal(argumentValue(args, '--icon-mapping'), path.join(directory, 'icon-mapping.json'));
 });
 
 test('canonical viewport coverage stays incomplete when either visual budget is nonzero', () => {
@@ -501,6 +536,11 @@ test('retry transitions require explicit failure resolution and unknown stages s
   assert.equal(blocked.tool, '');
   assert.deepEqual(blocked.args, []);
   assert.deepEqual(blocked.requires, ['ITERATION_BLOCKERS_RESOLVED']);
+
+  const invalidCheckpoint = nextActionFor({ ...base, status: 'capture_resume_failed' });
+  assert.equal(invalidCheckpoint.id, 'blocked_capture_checkpoint');
+  assert.equal(invalidCheckpoint.tool, '');
+  assert.deepEqual(invalidCheckpoint.requires, ['MATCHING_CAPTURE_CHECKPOINT']);
 });
 
 test('run visual iteration documents the viewport timeout option', () => {
@@ -514,6 +554,7 @@ test('run visual iteration documents the viewport timeout option', () => {
   assert.match(result.stdout, /--max-percent/);
   assert.match(result.stdout, /--max-viewport-percent/);
   assert.match(result.stdout, /--candidate-layout/);
+  assert.match(result.stdout, /--resume-capture/);
   assert.match(result.stdout, /layout-plan/);
   assert.match(result.stdout, /nextAction/);
   assert.match(result.stdout, /locally installed Chrome/);
@@ -801,6 +842,66 @@ childProcess.spawnSync = function runVisualIterationHarness(command, args, optio
   assert.equal(fullPageBenchmarks[0].args.includes('--candidate-manifest'), true);
   assert.equal(fullPageBenchmarks[0].args.includes('--candidate-dir'), false);
 
+  const captureCheckpoint = fullPageReport.files.captureCheckpoint;
+  assert.equal(fs.existsSync(captureCheckpoint), true);
+  fs.writeFileSync(spawnLog, '');
+  const resumedResult = spawnSync(process.execPath, [
+    iterationScript,
+    '--contract', contract,
+    '--out-dir', directory,
+    '--seed', fullPageReport.options.seed,
+    '--variant', 'split-hero',
+    '--viewport', 'mobile:390x844',
+    '--viewport-timeout-ms', '240000',
+    '--icon-mapping', path.join(directory, 'icon-mapping.json'),
+    '--resume-capture', captureCheckpoint,
+    '--json',
+  ], spawnOptions);
+  assert.equal(resumedResult.status, 0, resumedResult.stderr || resumedResult.stdout);
+  const resumedReport = JSON.parse(resumedResult.stdout);
+  assert.equal(resumedReport.steps.start.resumed, true);
+  const resumedSpawns = fs.readFileSync(spawnLog, 'utf8')
+    .trim()
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line));
+  assert.equal(resumedSpawns.some((spawn) => spawn.script === 'start-visual-benchmark.js'), false);
+
+  const resumeOptions = parseArgs([
+    '--contract', contract,
+    '--out-dir', directory,
+    '--seed', fullPageReport.options.seed,
+    '--variant', 'split-hero',
+    '--viewport', 'mobile:390x844',
+    '--viewport-timeout-ms', '240000',
+    '--icon-mapping', path.join(directory, 'icon-mapping.json'),
+    '--resume-capture', captureCheckpoint,
+  ]);
+  assert.doesNotThrow(() => readCaptureCheckpoint(resumeOptions));
+  assert.throws(
+    () => readCaptureCheckpoint(parseArgs([
+      '--contract', contract,
+      '--out-dir', directory,
+      '--seed', fullPageReport.options.seed,
+      '--variant', 'split-hero',
+      '--viewport', 'desktop:1440x1200',
+      '--viewport-timeout-ms', '240000',
+      '--resume-capture', captureCheckpoint,
+    ])),
+    /source scope or capture options no longer match/
+  );
+
+  const capturedLayout = path.join(directory, 'target-layout-mobile.json');
+  const capturedLayoutBytes = fs.readFileSync(capturedLayout);
+  fs.appendFileSync(capturedLayout, '\n');
+  assert.throws(() => readCaptureCheckpoint(resumeOptions), /artifact set or SHA-256 no longer matches/);
+  fs.writeFileSync(capturedLayout, capturedLayoutBytes);
+
+  const contractBytes = fs.readFileSync(contract);
+  fs.appendFileSync(contract, '\n');
+  assert.throws(() => readCaptureCheckpoint(resumeOptions), /contract path or SHA-256 no longer matches/);
+  fs.writeFileSync(contract, contractBytes);
+
   fs.writeFileSync(spawnLog, '');
   const genericDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'monteby-generic-html-iteration-'));
   const genericReference = path.join(genericDirectory, 'reference.html');
@@ -836,6 +937,24 @@ childProcess.spawnSync = function runVisualIterationHarness(command, args, optio
   assert.equal(genericBenchmarks[0].args.includes('--require-real-reference'), false);
   assert.equal(genericBenchmarks[0].args.includes('--require-marketplace-media'), false);
   assert.equal(genericBenchmarks[0].args.includes('--candidate-manifest'), true);
+
+  const genericReport = JSON.parse(genericResult.stdout);
+  const genericResumeOptions = parseArgs([
+    '--contract', contract,
+    '--out-dir', genericDirectory,
+    '--seed', genericReport.options.seed,
+    '--reference-html-file', genericReference,
+    '--preserve-source-text',
+    '--viewport', 'mobile:390x844',
+    '--viewport-timeout-ms', '240000',
+    '--resume-capture', genericReport.files.captureCheckpoint,
+  ]);
+  assert.doesNotThrow(() => readCaptureCheckpoint(genericResumeOptions));
+  fs.appendFileSync(genericReference, '<!-- changed -->');
+  assert.throws(
+    () => readCaptureCheckpoint(genericResumeOptions),
+    /artifact set or SHA-256 no longer matches/
+  );
 
   fs.writeFileSync(spawnLog, '');
   const viewportDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'monteby-timeout-viewport-iteration-'));

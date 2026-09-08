@@ -43,6 +43,7 @@ function parseArgs(argv) {
     allowStructuralVerdict: false,
     preserveSourceText: false,
     iconMapping: '',
+    resumeCapture: '',
     json: false,
     help: false,
   };
@@ -98,6 +99,7 @@ function parseArgs(argv) {
       '--max-viewport-percent',
       '--rendered-min-coverage-ratio',
       '--icon-mapping',
+      '--resume-capture',
     ].includes(arg);
 
     if (!valueOption) {
@@ -168,6 +170,9 @@ function parseArgs(argv) {
       case '--icon-mapping':
         options.iconMapping = path.resolve(value);
         break;
+      case '--resume-capture':
+        options.resumeCapture = path.resolve(value);
+        break;
       default:
         break;
     }
@@ -200,7 +205,7 @@ function parsePositiveInteger(value, label) {
 
 function usage() {
   return `Usage:
-  run-visual-iteration.js --contract contract.json [--seed value] [--variant auto|split-hero|editorial-ledger|bento-showcase|tabbed-program|marketplace-service] [--archetype name] [--reference-url url | --reference-html-file file] [--candidate-layout layout.json] [--preserve-source-text] [--icon-mapping file] [--out-dir dir] [--viewport label:WIDTHxHEIGHT] [--full-page | --viewport-only] [--viewport-timeout-ms milliseconds] [--channel chrome] [--max-percent value] [--max-viewport-percent value] [--allow-structural-verdict] [--json]
+  run-visual-iteration.js --contract contract.json [--seed value] [--variant auto|split-hero|editorial-ledger|bento-showcase|tabbed-program|marketplace-service] [--archetype name] [--reference-url url | --reference-html-file file] [--candidate-layout layout.json] [--preserve-source-text] [--icon-mapping file] [--resume-capture checkpoint.json] [--out-dir dir] [--viewport label:WIDTHxHEIGHT] [--full-page | --viewport-only] [--viewport-timeout-ms milliseconds] [--channel chrome] [--max-percent value] [--max-viewport-percent value] [--allow-structural-verdict] [--json]
 
 Options:
   --reference-html-file <file>  Use a local HTML document as the measured reference without requiring a remote URL.
@@ -213,6 +218,7 @@ Options:
   --max-viewport-percent <v>  Maximum screenshot difference percentage for any viewport. Default: 0
   --preserve-source-text      Preserve text from owned local HTML. Automatically enabled for generated targets
   --icon-mapping <file>       Bind every captured icon surface to one native icon from the live catalog
+  --resume-capture <file>     Reuse one hash-bound capture checkpoint; any source, contract, option, viewport, or captured-file change blocks the run
 
 Runs one local visual-fidelity iteration:
   1. start-visual-benchmark.js creates/captures the target
@@ -460,6 +466,135 @@ function iterationReportPath(options) {
 
 function iterationMarkdownPath(options) {
   return path.join(options.outDir, 'VISUAL-ITERATION.md');
+}
+
+function captureCheckpointPath(options) {
+  return path.join(options.outDir, 'reference-capture-checkpoint.json');
+}
+
+function effectiveCaptureViewports(options) {
+  return options.viewports.length > 0 ? [...options.viewports] : [...CANONICAL_VIEWPORTS];
+}
+
+function captureScope(options) {
+  return {
+    label: options.label,
+    seed: options.seed,
+    variant: options.variant,
+    archetype: options.archetype,
+    marketplaceReference: options.marketplaceReference,
+    referenceUrls: [...options.referenceUrls],
+    referenceHtmlFile: options.referenceHtmlFile,
+    preserveSourceText: options.preserveSourceText,
+    viewports: effectiveCaptureViewports(options),
+    fullPage: options.fullPage,
+    waitMs: options.waitMs,
+    referenceWaitMs: options.referenceWaitMs,
+    channel: options.channel,
+    playwrightPackage: options.playwrightPackage,
+    viewportTimeoutMs: options.viewportTimeoutMs,
+  };
+}
+
+function resolvedArtifactPath(ownerFile, value) {
+  if (typeof value !== 'string' || !value.trim()) return '';
+  return path.isAbsolute(value) ? path.normalize(value) : path.resolve(path.dirname(ownerFile), value);
+}
+
+function captureArtifactBindings(options, startReport) {
+  const bindings = new Map();
+  const add = (role, file) => {
+    const resolved = resolvedArtifactPath(startReportPath(options), file);
+    if (!resolved || !fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) return;
+    const current = bindings.get(resolved) || new Set();
+    current.add(role);
+    bindings.set(resolved, current);
+  };
+  const addManifest = (role, file) => {
+    const manifestFile = resolvedArtifactPath(startReportPath(options), file);
+    add(`${role}-manifest`, manifestFile);
+    if (!manifestFile || !fs.existsSync(manifestFile)) return;
+    const manifest = readJson(manifestFile);
+    for (const screenshot of Array.isArray(manifest.screenshots) ? manifest.screenshots : []) {
+      add(`${role}-screenshot`, resolvedArtifactPath(manifestFile, screenshot?.file));
+    }
+    add(`${role}-layout`, resolvedArtifactPath(manifestFile, manifest.layout));
+    for (const layout of Array.isArray(manifest.layouts) ? manifest.layouts : []) {
+      add(`${role}-layout`, resolvedArtifactPath(manifestFile, layout?.file));
+    }
+    add(`${role}-brief`, resolvedArtifactPath(manifestFile, manifest.brief));
+    add(`${role}-brief-json`, resolvedArtifactPath(manifestFile, manifest.briefJson));
+  };
+
+  add('benchmark-start-report', startReportPath(options));
+  add('owned-reference-html', options.referenceHtmlFile);
+  add('generated-target-html', startReport?.files?.targetHtml);
+  addManifest('generated-target', startReport?.files?.targetManifest);
+  for (const reference of Array.isArray(startReport?.references) ? startReport.references : []) {
+    addManifest('captured-reference', reference?.manifest);
+    add('captured-reference-brief', reference?.brief);
+    add('captured-reference-brief-json', reference?.briefJson);
+    add('captured-reference-layout', reference?.layout);
+    for (const layout of Array.isArray(reference?.layouts) ? reference.layouts : []) add('captured-reference-layout', layout);
+    for (const screenshot of Array.isArray(reference?.screenshots) ? reference.screenshots : []) add('captured-reference-screenshot', screenshot);
+  }
+
+  return [...bindings.entries()]
+    .map(([file, roles]) => ({ file, roles: [...roles].sort(), sha256: fileSha256(file) }))
+    .sort((left, right) => left.file.localeCompare(right.file));
+}
+
+function writeCaptureCheckpoint(options, startReport) {
+  const checkpoint = {
+    schemaVersion: 1,
+    artifact: 'monteby-reference-capture-checkpoint',
+    createdAt: new Date().toISOString(),
+    digestFormat: 'sha256:file-bytes',
+    contract: {
+      file: path.normalize(options.contract),
+      sha256: fileSha256(options.contract),
+    },
+    captureScope: captureScope(options),
+    startReport: {
+      file: startReportPath(options),
+      sha256: fileSha256(startReportPath(options)),
+    },
+    artifacts: captureArtifactBindings(options, startReport),
+  };
+  writeJson(captureCheckpointPath(options), checkpoint);
+  return checkpoint;
+}
+
+function readCaptureCheckpoint(options) {
+  if (path.normalize(options.resumeCapture) !== captureCheckpointPath(options)) {
+    throw new Error('Capture checkpoint must be the canonical checkpoint for this output directory');
+  }
+  const checkpoint = readJson(options.resumeCapture);
+  if (
+    checkpoint?.schemaVersion !== 1
+    || checkpoint?.artifact !== 'monteby-reference-capture-checkpoint'
+    || checkpoint?.digestFormat !== 'sha256:file-bytes'
+    || !Array.isArray(checkpoint?.artifacts)
+  ) throw new Error('Capture checkpoint is not a supported monteby-reference-capture-checkpoint v1 artifact');
+  if (
+    checkpoint.contract?.file !== path.normalize(options.contract)
+    || checkpoint.contract?.sha256 !== fileSha256(options.contract)
+  ) throw new Error('Capture checkpoint contract path or SHA-256 no longer matches');
+  if (JSON.stringify(checkpoint.captureScope) !== JSON.stringify(captureScope(options))) {
+    throw new Error('Capture checkpoint source scope or capture options no longer match');
+  }
+  if (
+    checkpoint.startReport?.file !== startReportPath(options)
+    || !fs.existsSync(checkpoint.startReport.file)
+    || checkpoint.startReport.sha256 !== fileSha256(checkpoint.startReport.file)
+  ) throw new Error('Capture checkpoint start report is missing or changed');
+
+  const startReport = readJson(checkpoint.startReport.file);
+  const expected = captureArtifactBindings(options, startReport);
+  if (JSON.stringify(checkpoint.artifacts) !== JSON.stringify(expected)) {
+    throw new Error('Capture checkpoint artifact set or SHA-256 no longer matches');
+  }
+  return { checkpoint, startReport };
 }
 
 function referenceManifestFor(startReport) {
@@ -907,6 +1042,7 @@ function initialReport(options) {
       longMobileBenchmarkMarkdown: longMobileBenchmarkMarkdownPath(options),
       benchmarkReport: benchmarkReportPath(options),
       benchmarkMarkdown: benchmarkMarkdownPath(options),
+      captureCheckpoint: captureCheckpointPath(options),
       iterationReport: iterationReportPath(options),
       iterationMarkdown: iterationMarkdownPath(options),
     },
@@ -927,8 +1063,11 @@ function initialReport(options) {
       maxViewportPercent: options.maxViewportPercent,
       allowStructuralVerdict: options.allowStructuralVerdict,
       preserveSourceText: options.preserveSourceText,
+      iconMapping: options.iconMapping,
+      resumeCapture: options.resumeCapture,
       referenceHtmlFile: options.referenceHtmlFile,
       candidateLayout: options.candidateLayout,
+      renderedMinCoverageRatio: options.renderedMinCoverageRatio,
     },
     referenceManifest: '',
     targetManifest: '',
@@ -1563,6 +1702,9 @@ function iterationArgsFor(report, candidateLayout = '', overrides = {}) {
   const allowStructuralVerdict = typeof overrides.allowStructuralVerdict === 'boolean'
     ? overrides.allowStructuralVerdict
     : options.allowStructuralVerdict;
+  const iconMapping = typeof overrides.iconMapping === 'string'
+    ? overrides.iconMapping
+    : options.iconMapping;
   const args = [
     '--label', report.label,
     '--contract', report.files.sourceContract,
@@ -1593,8 +1735,11 @@ function iterationArgsFor(report, candidateLayout = '', overrides = {}) {
   if (options.preserveSourceText) {
     args.push('--preserve-source-text');
   }
-  if (options.iconMapping) {
-    args.push('--icon-mapping', options.iconMapping);
+  if (iconMapping) {
+    args.push('--icon-mapping', iconMapping);
+  }
+  if (report.files.captureCheckpoint) {
+    args.push('--resume-capture', report.files.captureCheckpoint);
   }
   if (allowStructuralVerdict) {
     args.push('--allow-structural-verdict');
@@ -1679,6 +1824,27 @@ function nextActionFor(report) {
   }
 
   const blockers = Array.isArray(report.blockers) ? report.blockers : [];
+  const iconMappingBlocker = (blocker) => [
+    'missing_native_icon_mapping',
+    'invalid_native_icon_mapping',
+    'unbound_native_icon_mapping',
+  ].includes(String(blocker?.code || ''));
+  if (
+    report.status === 'readiness_failed'
+    && blockers.length > 0
+    && blockers.every(iconMappingBlocker)
+    && report.files.captureCheckpoint
+  ) {
+    return {
+      id: 'approve_native_icon_mapping_and_resume',
+      tool: scriptPath('run-visual-iteration.js'),
+      args: iterationArgsFor(report, report.files.sourceCandidateLayout || '', {
+        iconMapping: '$ICON_MAPPING_FILE',
+      }),
+      requires: ['ICON_MAPPING_FILE'],
+      instruction: 'Review the captured icon evidence, approve a complete native mapping bound to this checkpoint reference manifest, then resume without recapturing.',
+    };
+  }
   const productGapBlocker = (blocker) => {
     const code = String(blocker?.code || '');
     return /(?:^|_)(?:product|capability|control)_gap(?:_|$)/i.test(code)
@@ -1714,6 +1880,16 @@ function nextActionFor(report) {
       ...retry,
       requires: ['RENDER_OR_CAPTURE_FAILURE_RESOLVED'],
       instruction: 'Resolve the reported renderer or capture failure, then run this exact command without changing the measured plan.',
+    };
+  }
+
+  if (report.status === 'capture_resume_failed') {
+    return {
+      id: 'blocked_capture_checkpoint',
+      tool: '',
+      args: [],
+      requires: ['MATCHING_CAPTURE_CHECKPOINT'],
+      instruction: 'Stop. The capture checkpoint no longer matches its contract, source scope, capture options, or bound files; do not recapture or continue implicitly.',
     };
   }
 
@@ -1997,24 +2173,58 @@ function main() {
     report = initialReport(options);
     persist(report);
 
-    const startRun = runNodeScript('start-visual-benchmark.js', startArgs(options));
-    report.steps.start = stepSummary(startRun);
-    if (startRun.report) {
-      report.start = {
-        ok: startRun.report.ok,
-        target: startRun.report.target,
-        files: startRun.report.files,
-      };
+    let startReport;
+    if (options.resumeCapture) {
+      try {
+        const resumed = readCaptureCheckpoint(options);
+        startReport = resumed.startReport;
+        report.steps.start = {
+          script: 'start-visual-benchmark.js',
+          status: 0,
+          ok: true,
+          stderr: '',
+          resumed: true,
+          checkpoint: options.resumeCapture,
+        };
+      } catch (error) {
+        report = finish(report, 'capture_resume_failed', [{
+          source: 'capture-checkpoint',
+          code: 'capture_checkpoint_invalid',
+          message: error instanceof Error ? error.message : String(error),
+        }]);
+        output(report, options);
+        process.exitCode = 1;
+        return;
+      }
+    } else {
+      const startRun = runNodeScript('start-visual-benchmark.js', startArgs(options));
+      report.steps.start = stepSummary(startRun);
+      if (startRun.report) {
+        report.start = {
+          ok: startRun.report.ok,
+          target: startRun.report.target,
+          files: startRun.report.files,
+        };
+      }
+      persist(report);
+      if (startRun.status !== 0 || startRun.report?.ok === false || !startRun.report) {
+        report = failAt(report, 'start_failed', 'start', startRun);
+        output(report, options);
+        process.exitCode = 1;
+        return;
+      }
+      startReport = startRun.report;
+      writeCaptureCheckpoint(options, startReport);
     }
+    report.start = {
+      ok: startReport.ok,
+      target: startReport.target,
+      files: startReport.files,
+      captureCheckpoint: captureCheckpointPath(options),
+      resumed: Boolean(options.resumeCapture),
+    };
     persist(report);
-    if (startRun.status !== 0 || startRun.report?.ok === false || !startRun.report) {
-      report = failAt(report, 'start_failed', 'start', startRun);
-      output(report, options);
-      process.exitCode = 1;
-      return;
-    }
 
-    const startReport = startRun.report;
     const referenceManifest = referenceManifestFor(startReport);
     const targetManifest = targetManifestFor(startReport, referenceManifest);
     report.referenceManifest = referenceManifest;
@@ -2210,10 +2420,13 @@ if (require.main === module) {
 module.exports = {
   CANONICAL_VIEWPORTS,
   buildRepairQueue,
+  captureCheckpointPath,
   initialReport,
   iterationArgsFor,
   nextActionFor,
   parseArgs,
+  readCaptureCheckpoint,
   validateCandidatePlanBinding,
   validateLayoutPlan,
+  writeCaptureCheckpoint,
 };

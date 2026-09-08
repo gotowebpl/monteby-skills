@@ -314,6 +314,13 @@ Do not rerun the drafter after a passing runner. When a report emits AUTHOR,
 execute its `scripts/apply-layout-repair-queue.js` action; never translate the
 queue into a manual edit. The applier changes only mechanically proven targets
 and stops on ambiguous content, identity, contract, or graph evidence.
+When captured icons require an approved native mapping, the first run writes a
+hash-bound `reference-capture-checkpoint.json` and emits
+`approve_native_icon_mapping_and_resume`. Supply the approved mapping to that
+exact action. `--resume-capture` reuses the bound capture only when the contract,
+source scope, capture options, viewports, full-page mode, owned HTML, manifests,
+layouts, and screenshots are unchanged; otherwise it stops without recapturing.
+Repair actions retain the same checkpoint and mapping.
 This prohibition applies only in `owned-html-reconstruction`, where a measurable reference exists. In `content-brief-authoring` there is no reference to measure, and the canonical route is `layout-kit.mjs` — see `references/brief-to-monteby.md`.
 
 Do not replace this path with a browser snippet, a hand-written `build.mjs`,

@@ -122,6 +122,7 @@ function createFixture({
       layout: candidatePath,
       sourceCandidateLayout: '',
       iterationReport: iterationReportPath,
+      captureCheckpoint: path.join(directory, 'reference-capture-checkpoint.json'),
     },
     options: {
       seed: 'repair-applier-seed',
@@ -145,6 +146,7 @@ function createFixture({
       allowStructuralVerdict: false,
       preserveSourceText: true,
       referenceHtmlFile: path.join(directory, 'owned-reference.html'),
+      iconMapping: path.join(directory, 'icon-mapping.json'),
       candidateLayout: '',
     },
     repairQueue,
@@ -281,6 +283,14 @@ test('recursively restores a complete planned subtree and applies responsive Sec
   assert.equal(
     report.nextAction.args[report.nextAction.args.indexOf('--candidate-layout') + 1],
     fixture.out
+  );
+  assert.equal(
+    report.nextAction.args[report.nextAction.args.indexOf('--resume-capture') + 1],
+    path.join(fixture.directory, 'reference-capture-checkpoint.json')
+  );
+  assert.equal(
+    report.nextAction.args[report.nextAction.args.indexOf('--icon-mapping') + 1],
+    path.join(fixture.directory, 'icon-mapping.json')
   );
   assert.match(report.inputLayoutSha256, /^[a-f0-9]{64}$/);
   assert.match(report.outputLayoutSha256, /^[a-f0-9]{64}$/);

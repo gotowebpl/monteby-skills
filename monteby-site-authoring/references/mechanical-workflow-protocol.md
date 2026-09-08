@@ -79,7 +79,10 @@ One rule governs every tablet width in this skill:
 `WPMenu.mobileBreakpoint` is an independent component behavior, not a third
 layout stylesheet boundary. Read its live control value (`sm` 640, `md` 768,
 `lg` 1024, `xl` 1280 or `2xl` 1536) and test the drawer on both sides of that
-chosen threshold. A measurement at 834px still uses tablet layout props even
+chosen threshold. These legacy values switch below their named width. When
+published by the live contract, `tablet` instead means at or below 900px and
+`mobile` means at or below 767px; test 900/901 and 767/768 respectively.
+A measurement at 834px still uses tablet layout props even
 when the menu's own `md` drawer has already switched state. Never infer the
 menu threshold from 834px, 900px or 767px.
 
@@ -116,6 +119,7 @@ Every artifact is JSON unless its name says otherwise.
 | `contract.json` | site contract endpoint or supplied fixture | exact components, `aiProps`, controls, allowed parents, defaults |
 | browser preflight report | `browser-preflight.js` | real Chromium navigation and captures at 1440/834/390/375 in the execution environment |
 | `benchmark-start-report.json` | `start-visual-benchmark.js` | source classification and complete capture paths |
+| `reference-capture-checkpoint.json` | `run-visual-iteration.js` | exact contract/source/options/full-page scope plus file-byte SHA-256 bindings for the start report, owned HTML, manifests, layouts, and screenshots |
 | `reference-manifest.json` | `capture-template-reference.js` | all canonical viewports and complete layout evidence |
 | `layout-plan.json` | `draft-monteby-layout.js --plan-out` | every measured band and text/media/group/child surface, stable generated IDs, source node-map SHA-256, no truncation |
 | `layout-draft.json` | `draft-monteby-layout.js` | contract-valid generated node map |
@@ -171,6 +175,17 @@ may retain geometry, accessible semantics, color, and stable structure keys,
 but never SVG markup or path data. Each surface must be mapped through the live
 `iconCatalog` by an exact SHA-bound mapping artifact before readiness can pass.
 A missing native equivalent is a blocker, not permission to drop or rasterize it.
+
+The runner writes `reference-capture-checkpoint.json` immediately after a
+successful capture. When readiness stops on a missing or invalid native icon
+mapping, execute only its `approve_native_icon_mapping_and_resume` action. That
+action carries the original source arguments, the approved mapping placeholder,
+and `--resume-capture` for the exact checkpoint. Resume never invokes
+`start-visual-benchmark.js`; it verifies the contract path and bytes, source
+scope, capture-affecting options, viewport list, full-page mode, owned HTML, and
+every bound manifest/layout/screenshot byte first. Any mismatch returns
+`blocked_capture_checkpoint` and must not silently recapture. A deliberate fresh
+capture is a new run and invalidates the old icon mapping by design.
 
 ### PLAN
 

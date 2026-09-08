@@ -149,6 +149,16 @@ discriminator the document validates cleanly and paints nothing.
    budgets advisory. Final site work must still validate through `/validate`,
    save through `/pages/{id}/layout`, and preview through WordPress/PHP.
 
+   If readiness finds captured icon surfaces but no approved native mapping, do
+   not rerun the command from scratch. Review the captured evidence, create the
+   complete mapping bound to the reported reference-manifest SHA-256, and execute
+   the report's exact `approve_native_icon_mapping_and_resume` action. Its
+   `--resume-capture reference-capture-checkpoint.json` argument preserves the
+   original snapshot through later repair iterations. A changed contract,
+   reference URL or owned HTML, capture option, viewport/full-page mode,
+   manifest, layout, or screenshot blocks reuse instead of triggering an
+   implicit recapture.
+
    Read `REFERENCE-BRIEF.md` and inspect `reference-layout*.json` for every captured real reference before reading fallback `VISUAL-BRIEF.md`. Use the reference brief, screenshots, rendered layout snapshots, and required replacement media roles to identify real page hierarchy, CTA pressure, media density, image scale, and first-viewport composition across desktop, tablet, and mobile. Then inspect generated `target-layout*.json` and use `VISUAL-BRIEF.md` to understand the original fallback target. The fallback brief includes rendered layout snapshots, first-viewport coverage, text/media box samples, required replacement media roles, viewport targets, priority media boxes, and the candidate minimum media coverage that the first Monteby pass must preserve before pixel diffing. Do not copy class names, source HTML, captured media URLs, or marketplace copy from any brief or layout snapshot into Monteby JSON; these artifacts are measurement guidance only.
 
    Use the lower-level generator directly only when debugging target generation:

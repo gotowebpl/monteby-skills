@@ -6,6 +6,9 @@
   non-breaking spaces and evidence-backed constraint decisions across viewports.
 - Resolve icons through the versioned native catalog and an approved SHA-bound
   mapping. Unsupported icons block authoring without raster or raw SVG fallback.
+- Resume icon approval and later repairs from the exact hash-bound reference
+  capture. Changed source, contract, options or captured files stop the run
+  instead of silently taking a different screenshot set.
 - Share published control metadata and the resolved design profile across the
   Kit, drafter, normalization, repair and capability audits.
 - Preflight all pages before a multi-page write and persist a conflict-aware
