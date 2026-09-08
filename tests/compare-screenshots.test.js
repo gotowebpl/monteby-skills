@@ -11,6 +11,47 @@ const test = require('node:test');
 const root = path.resolve(__dirname, '..');
 const compareScript = path.join(root, 'monteby-site-authoring', 'scripts', 'compare-screenshots.js');
 
+test('screenshot budgets retain sub-hundredth precision for one-pixel differences', (context) => {
+  const dependencies = loadImageDependencies();
+  assert.ok(dependencies, 'pngjs is required for pixel-budget regression coverage');
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'monteby-compare-exact-budget-'));
+  context.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const targetPng = path.join(directory, 'reference-desktop.png');
+  const candidatePng = path.join(directory, 'candidate-desktop.png');
+  const targetManifest = path.join(directory, 'reference-manifest.json');
+  const candidateManifest = path.join(directory, 'candidate-manifest.json');
+  writeImageWithRectangles(dependencies.PNG, targetPng, []);
+  writeImageWithRectangles(dependencies.PNG, candidatePng, [
+    { rect: { x: 100, y: 100, width: 1, height: 1 }, color: [0, 0, 0, 255] },
+  ]);
+  writeManifest(targetManifest, 'reference-desktop.png', 'reference-layout.json');
+  writeManifest(candidateManifest, 'candidate-desktop.png', 'candidate-layout.json');
+  const onePixelPercent = 100 / (200 * 200);
+  for (const inputs of [
+    ['--target', targetPng, '--candidate', candidatePng],
+    ['--target-manifest', targetManifest, '--candidate-manifest', candidateManifest],
+  ]) {
+    for (const maximum of [0, 0.002, onePixelPercent]) {
+      const result = runCompare([
+        ...inputs, '--max-percent', String(maximum), '--max-viewport-percent', String(maximum), '--json',
+      ]);
+      const expectedPass = maximum >= onePixelPercent;
+      assert.equal(result.status, expectedPass ? 0 : 1, result.stderr || result.stdout);
+      const report = JSON.parse(result.stdout);
+      assert.equal(report.mismatched, 1);
+      assert.equal(report.percent, onePixelPercent);
+      assert.equal(report.ok, expectedPass);
+      assert.deepEqual(report.budgetErrors.map((error) => error.code), expectedPass ? [] : [
+        'max_percent_exceeded', 'max_viewport_percent_exceeded',
+      ]);
+      if (report.results) {
+        assert.equal(report.results[0].percent, onePixelPercent);
+        assert.equal(report.maxPercent, onePixelPercent);
+      }
+    }
+  }
+});
+
 test('masked media comparison ignores legal replacement photo pixels inside matching media boxes', (context) => {
   const dependencies = loadImageDependencies();
   if (!dependencies) {

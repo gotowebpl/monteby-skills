@@ -212,7 +212,7 @@ function compareScreenshots(options) {
     height: target.height,
     mismatched,
     total,
-    percent: Number(((mismatched / total) * 100).toFixed(2)),
+    percent: (mismatched / total) * 100,
     diff: options.diff ? path.resolve(options.diff) : '',
     padded,
     maskRectangles: {
@@ -292,7 +292,7 @@ function compareScreenshotManifest(options) {
     count: results.length,
     mismatched,
     total,
-    percent: total > 0 ? Number(((mismatched / total) * 100).toFixed(2)) : 0,
+    percent: total > 0 ? (mismatched / total) * 100 : 0,
     maxPercent: percents.length > 0 ? Math.max(...percents) : 0,
     results,
     mediaMask: summarizePairedMediaMasks(results, options.maskPairedMediaContent === true),
@@ -1036,7 +1036,7 @@ function applyBudget(result, options) {
         code: 'max_percent_exceeded',
         percent: result.percent,
         maxPercent: options.maxPercent,
-        message: `${result.label} diff ${result.percent.toFixed(2)}% exceeds max ${options.maxPercent.toFixed(2)}%.`,
+        message: `${result.label} diff ${result.mismatched}/${result.total} pixels (${result.percent}%) exceeds max ${options.maxPercent}%.`,
       });
     }
   }
@@ -1051,7 +1051,7 @@ function applyBudget(result, options) {
           label: item.label,
           percent: item.percent,
           maxViewportPercent: options.maxViewportPercent,
-          message: `${item.label} diff ${item.percent.toFixed(2)}% exceeds viewport max ${options.maxViewportPercent.toFixed(2)}%.`,
+          message: `${item.label} diff ${item.mismatched}/${item.total} pixels (${item.percent}%) exceeds viewport max ${options.maxViewportPercent}%.`,
         });
       }
     }
