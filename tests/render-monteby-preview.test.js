@@ -33,6 +33,41 @@ function renderPreview(layout, prefix) {
   return fs.readFileSync(previewPath, 'utf8');
 }
 
+test('native IconBlock preview preserves measured glyphs, sizing, colours and accessible names', () => {
+  const cases = [
+    ['decorative', { icon: 'tune', size: 32, color: '#365985', iconRole: 'decorative' }],
+    ['meaningful', { icon: 'check_circle', size: 48, iconDisplay: 'block', iconRole: 'meaningful', iconLabel: 'Checked & approved' }],
+    ['unnamed', { icon: 'schedule', size: 4, iconRole: 'meaningful', iconLabel: '' }],
+    ['bounded', { size: 999, iconDisplay: 'flex' }],
+    ['invalid', { icon: '<script>invalid-icon</script>', color: 'red;position:fixed', iconLabel: 'bad\nlabel' }],
+    ['raw-svg', { icon: 'tune', svg: '<svg onload="bad()"></svg>' }],
+  ];
+  const nodes = { ROOT: { type: { resolvedName: 'RootCanvas' }, props: {}, nodes: cases.map(([id]) => id) } };
+  for (const [id, props] of cases) {
+    nodes[id] = { type: { resolvedName: 'IconBlock' }, props, nodes: [], parent: 'ROOT' };
+  }
+  const html = renderPreview(nodes, 'monteby-preview-native-icons-');
+  assert.match(html, /class="material-symbols-rounded" aria-hidden="true" style="font-size:32px;line-height:1;color:#365985;flex-shrink:0">tune<\/span>/);
+  assert.match(html, /class="material-symbols-rounded" role="img" aria-label="Checked &amp; approved" style="font-size:48px;line-height:1;color:#3b82f6;flex-shrink:0">check_circle<\/span>/);
+  assert.match(html, /aria-hidden="true" style="font-size:8px;[^>]*>schedule<\/span>/);
+  assert.match(html, /font-size:256px;[^>]*>check_circle<\/span>/);
+  assert.match(html, /family=Material\+Symbols\+Rounded/);
+  assert.doesNotMatch(html, /invalid-icon|<svg|onload|bad\(\)|position:fixed/);
+  assert.equal((html.match(/class="material-symbols-rounded"/g) || []).length, 4);
+});
+
+test('textarea diagnostic keeps the public frontend minimum independently of single-line height', () => {
+  const html = renderPreview({
+    ROOT: { type: { resolvedName: 'RootCanvas' }, props: {}, nodes: ['form'] },
+    form: {
+      type: { resolvedName: 'FormBlock' }, parent: 'ROOT', nodes: [],
+      props: { inputHeight: '50px', fields: [{ type: 'textarea', name: 'message', label: 'Message', rows: 4 }] },
+    },
+  }, 'monteby-preview-textarea-minimum-');
+  assert.match(html, /\.monteby-preview-form textarea\{min-height:120px;resize:vertical\}/);
+  assert.match(html, /<textarea[^>]*rows="4"[^>]*height:50px;/);
+});
+
 test('button preview does not invent a browser border from a colour-only binding', () => {
   const cases = [
     ['plain', {}, '0px'],

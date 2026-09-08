@@ -2496,6 +2496,12 @@ function compareGenericGeometryViewport(referenceEntry, candidateEntry) {
     reorderedBands: reordered.inversions,
     referenceSourceLandmarks: reference.evidence.sourceLandmarks,
     candidateSourceLandmarks: candidate.evidence.sourceLandmarks,
+    referenceSourceLayoutGroups: reference.evidence.sourceLayoutGroups,
+    candidateSourceLayoutGroups: candidate.evidence.sourceLayoutGroups,
+    referenceMajorLandmarks: reference.evidence.majorLandmarks,
+    candidateMajorLandmarks: candidate.evidence.majorLandmarks,
+    referenceMajorBands: reference.evidence.majorBands,
+    candidateMajorBands: candidate.evidence.majorBands,
     referenceCollapsedLandmarks: reference.evidence.collapsedLandmarks,
     candidateCollapsedLandmarks: candidate.evidence.collapsedLandmarks,
     missing: alignment.missing.map((index) => geometryBandSummary(referenceBands[index], index)),
@@ -2555,7 +2561,7 @@ function compareGenericGeometryViewport(referenceEntry, candidateEntry) {
       result,
       'generic_geometry_major_band_missing',
       result.label,
-      `Candidate is missing ${alignment.missing.length} ordered major normal-flow landmark band(s): ${formatGeometryBandList(result.bands.missing)}.`
+      `Candidate is missing ${alignment.missing.length} ordered major normal-flow captured band(s): ${formatGeometryBandList(result.bands.missing)}.`
     );
   }
   if (alignment.extra.length > GENERIC_GEOMETRY_THRESHOLDS.maxExtraBands) {
@@ -2563,7 +2569,7 @@ function compareGenericGeometryViewport(referenceEntry, candidateEntry) {
       result,
       'generic_geometry_major_band_extra',
       result.label,
-      `Candidate has ${alignment.extra.length} extra ordered major normal-flow landmark band(s): ${formatGeometryBandList(result.bands.extra)}.`
+      `Candidate has ${alignment.extra.length} extra ordered major normal-flow captured band(s): ${formatGeometryBandList(result.bands.extra)}.`
     );
   }
   if (reordered.inversions > GENERIC_GEOMETRY_THRESHOLDS.maxReorderedBands) {
@@ -2679,8 +2685,11 @@ function inspectGenericGeometryLayout(layout, side, label) {
       evidence: {
         complete: false,
         sourceLandmarks: Array.isArray(layout?.landmarks) ? layout.landmarks.length : 0,
+        sourceLayoutGroups: Array.isArray(layout?.layoutGroups) ? layout.layoutGroups.length : 0,
         majorLandmarks: 0,
         collapsedLandmarks: 0,
+        majorBands: 0,
+        collapsedBands: 0,
       },
       errors,
     };
@@ -2691,7 +2700,7 @@ function inspectGenericGeometryLayout(layout, side, label) {
     errors.push({
       code: `generic_geometry_${side}_major_bands_missing`,
       label,
-      message: `${capitalizeGeometrySide(side)} layout has no measurable normal-flow section/header/footer/nav bands.`,
+      message: `${capitalizeGeometrySide(side)} layout has no measurable normal-flow captured bands.`,
     });
   }
 
@@ -2702,8 +2711,11 @@ function inspectGenericGeometryLayout(layout, side, label) {
     evidence: {
       complete: errors.length === 0,
       sourceLandmarks: extracted.sourceLandmarks,
+      sourceLayoutGroups: extracted.sourceLayoutGroups,
       majorLandmarks: extracted.majorLandmarks,
       collapsedLandmarks: extracted.collapsedLandmarks,
+      majorBands: extracted.majorBands,
+      collapsedBands: extracted.collapsedBands,
     },
     errors,
   };
@@ -2718,14 +2730,59 @@ function extractMajorNormalFlowBands(layout) {
     viewportHeight * GENERIC_GEOMETRY_THRESHOLDS.minBandHeightViewportRatio
   );
   const landmarks = Array.isArray(layout.landmarks) ? layout.landmarks : [];
+  const layoutGroups = Array.isArray(layout.layoutGroups) ? layout.layoutGroups : [];
   const meaningfulMedia = Array.isArray(layout.meaningfulMediaBoxes) ? layout.meaningfulMediaBoxes : [];
-  const rawCandidates = landmarks.map((landmark, index) => {
-    const tag = String(landmark?.tag || '').trim().toLowerCase();
-    if (!GENERIC_GEOMETRY_MAJOR_TAGS.has(tag) || landmark?.flowParticipation === 'overlay') {
+  const landmarkSources = landmarks.map((landmark, index) => ({
+    entry: landmark,
+    index,
+    kind: 'landmark',
+    tag: String(landmark?.tag || '').trim().toLowerCase(),
+  }));
+  const representedLandmarkKeys = new Set(landmarkSources
+    .map(({ entry }) => String(entry?.key || entry?.groupKey || ''))
+    .filter(Boolean));
+  const contentCollections = [
+    layout.textBoxes,
+    layout.directTextEntries,
+    layout.mediaBoxes,
+    layout.iconSurfaces,
+  ].filter(Array.isArray);
+  const rootGroupSources = layoutGroups.map((group, index) => {
+    const sourceKey = String(group?.key || '');
+    if (!sourceKey || String(group?.parentKey || '') || group?.flowParticipation === 'overlay'
+      || representedLandmarkKeys.has(sourceKey)) {
       return null;
     }
 
-    const rect = geometryRect(landmark?.rect, scrollHeight);
+    const rect = geometryRect(group?.rect, scrollHeight);
+    if (!rect || (rect.top <= 1 && rect.height >= scrollHeight * 0.85)) {
+      return null;
+    }
+    const ownsContent = contentCollections.some((entries) => entries.some((entry) => {
+      const structureKey = String(entry?.structureKey || '');
+      const parentKey = String(entry?.parentGroupKey || '');
+      return structureKey === sourceKey || structureKey.startsWith(`${sourceKey}.`)
+        || parentKey === sourceKey || parentKey.startsWith(`${sourceKey}.`);
+    }));
+    if (group?.paintedBackground !== true && !ownsContent) {
+      return null;
+    }
+
+    return {
+      entry: group,
+      index: landmarks.length + index,
+      kind: 'layoutGroup',
+      tag: String(group?.tag || 'div').trim().toLowerCase() || 'div',
+    };
+  }).filter(Boolean);
+  const rawCandidates = landmarkSources.concat(rootGroupSources).map((source) => {
+    const { entry, index, kind, tag } = source;
+    if ((kind === 'landmark' && !GENERIC_GEOMETRY_MAJOR_TAGS.has(tag))
+      || entry?.flowParticipation === 'overlay') {
+      return null;
+    }
+
+    const rect = geometryRect(entry?.rect, scrollHeight);
     if (!rect || rect.height < minimumHeight) {
       return null;
     }
@@ -2734,7 +2791,7 @@ function extractMajorNormalFlowBands(layout) {
       return null;
     }
 
-    const sourceKey = String(landmark?.key || landmark?.groupKey || '');
+    const sourceKey = String(entry?.key || entry?.groupKey || '');
     const hasFullBandMedia = meaningfulMedia.some((media) => {
       const mediaRect = geometryRect(media?.rect, scrollHeight);
       if (!mediaRect || mediaRect.width < rect.width * 0.9 || mediaRect.height < rect.height * 0.75) {
@@ -2757,11 +2814,12 @@ function extractMajorNormalFlowBands(layout) {
       tags: [tag],
       sourceIndexes: [index],
       sourceKeys: sourceKey ? [sourceKey] : [],
-      montebyNodeIds: typeof landmark?.montebyNodeId === 'string' && landmark.montebyNodeId
-        ? [landmark.montebyNodeId]
+      sourceKinds: [kind],
+      montebyNodeIds: typeof entry?.montebyNodeId === 'string' && entry.montebyNodeId
+        ? [entry.montebyNodeId]
         : [],
-      backgroundColor: String(landmark?.backgroundColor || ''),
-      paintedBackground: landmark?.paintedBackground === true,
+      backgroundColor: String(entry?.backgroundColor || ''),
+      paintedBackground: entry?.paintedBackground === true,
       hasFullBandMedia,
     };
   }).filter(Boolean);
@@ -2797,7 +2855,6 @@ function extractMajorNormalFlowBands(layout) {
   }
 
   bands.sort((left, right) => left.top - right.top || left.sourceIndexes[0] - right.sourceIndexes[0]);
-  const layoutGroups = Array.isArray(layout.layoutGroups) ? layout.layoutGroups : [];
   for (const band of bands) {
     band.contentFrames = layoutGroups.map((group, index) => {
       if (group?.flowParticipation === 'overlay') {
@@ -2863,10 +2920,15 @@ function extractMajorNormalFlowBands(layout) {
       };
     }).filter(Boolean);
   }
+  const majorLandmarks = candidates.filter((candidate) => candidate.sourceKinds.includes('landmark')).length;
+  const retainedLandmarkBands = bands.filter((band) => band.sourceKinds.includes('landmark')).length;
   return {
     sourceLandmarks: landmarks.length,
-    majorLandmarks: candidates.length,
-    collapsedLandmarks: candidates.length - bands.length,
+    sourceLayoutGroups: layoutGroups.length,
+    majorLandmarks,
+    collapsedLandmarks: majorLandmarks - retainedLandmarkBands,
+    majorBands: candidates.length,
+    collapsedBands: candidates.length - bands.length,
     bands,
   };
 }
@@ -2926,6 +2988,7 @@ function mergeGeometryBands(left, right) {
     tags: [...new Set([...left.tags, ...right.tags])].sort(),
     sourceIndexes: [...left.sourceIndexes, ...right.sourceIndexes].sort((first, second) => first - second),
     sourceKeys: [...new Set([...(left.sourceKeys || []), ...(right.sourceKeys || [])])],
+    sourceKinds: [...new Set([...(left.sourceKinds || []), ...(right.sourceKinds || [])])],
     montebyNodeIds: [...new Set([...(left.montebyNodeIds || []), ...(right.montebyNodeIds || [])])],
     backgroundColor: left.backgroundColor || right.backgroundColor || '',
     paintedBackground: left.paintedBackground === true || right.paintedBackground === true,
@@ -2942,7 +3005,9 @@ function normalizeGeometryBands(bands, scrollHeight, viewportWidth, referencePag
     top: band.top / scrollHeight,
     height: band.height / scrollHeight,
     width: band.width / viewportWidth,
-    geometrySource: 'landmark',
+    geometrySource: Array.isArray(band.sourceKinds) && band.sourceKinds.includes('layoutGroup')
+      ? 'layoutGroup'
+      : 'landmark',
     backgroundColor: String(band.backgroundColor || ''),
     paintedBackground: band.paintedBackground === true,
     hasFullBandMedia: band.hasFullBandMedia === true,

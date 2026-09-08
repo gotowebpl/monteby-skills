@@ -859,6 +859,83 @@ test('strict generic geometry excludes nested semantic landmarks from root band 
   assert.equal(report.genericGeometry.stats.viewports[0].bands.missingCount, 0);
 });
 
+test('strict generic geometry includes captured ordinary root groups in the reference band inventory', (context) => {
+  const dependencies = loadImageDependencies();
+  if (!dependencies) {
+    context.skip('pngjs is not installed in this checkout');
+    return;
+  }
+
+  const bands = [
+    { key: '0', tag: 'section', top: 0, height: 64, width: 1440 },
+    { key: '1', tag: 'section', top: 64, height: 420, width: 1440 },
+    { key: '2', tag: 'section', top: 484, height: 500, width: 1440 },
+    { key: '3', tag: 'section', top: 984, height: 500, width: 1440 },
+  ];
+  const fixture = createStrictGenericGeometryFixture(dependencies.PNG, {
+    referenceScrollHeight: 1484,
+    candidateScrollHeight: 1484,
+    referenceBands: bands,
+    candidateBands: bands,
+  });
+  const referenceLayout = JSON.parse(fs.readFileSync(fixture.referenceLayoutPath, 'utf8'));
+  referenceLayout.landmarks = referenceLayout.landmarks.filter(({ key }) => ['1', '3'].includes(key));
+  referenceLayout.layoutGroups = bands.map((band) => ({
+    key: band.key,
+    parentKey: '',
+    tag: ['0', '2'].includes(band.key) ? 'div' : 'section',
+    flowParticipation: 'normal',
+    backgroundColor: band.key === '0' ? 'rgb(246, 240, 224)' : 'rgba(0, 0, 0, 0)',
+    paintedBackground: band.key === '0',
+    rect: {
+      x: 0,
+      y: band.top,
+      width: band.width,
+      height: band.height,
+      top: band.top,
+      bottom: band.top + band.height,
+      left: 0,
+      right: band.width,
+    },
+  }));
+  referenceLayout.textBoxes = [
+    { structureKey: '0.0', parentGroupKey: '0', text: 'Wiadomość', rect: referenceLayout.layoutGroups[0].rect },
+    { structureKey: '2.0', parentGroupKey: '2', text: 'Zawartość zwykłego pasma', rect: referenceLayout.layoutGroups[2].rect },
+  ];
+  referenceLayout.evidenceCompleteness.categories.landmarks = {
+    total: 2,
+    retained: 2,
+    truncated: 0,
+    limit: 160,
+  };
+  referenceLayout.evidenceCompleteness.categories.layoutGroups = {
+    total: 4,
+    retained: 4,
+    truncated: 0,
+    limit: 240,
+  };
+  fs.writeFileSync(fixture.referenceLayoutPath, JSON.stringify(referenceLayout));
+
+  const result = runStrictGenericGeometryBenchmark(fixture, 'unit-generic-geometry-root-groups');
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const report = JSON.parse(result.stdout);
+  const viewport = report.genericGeometry.stats.viewports[0];
+  assert.equal(viewport.bands.referenceCount, 4);
+  assert.equal(viewport.bands.candidateCount, 4);
+  assert.equal(viewport.bands.missingCount, 0);
+  assert.equal(viewport.bands.extraCount, 0);
+  assert.equal(viewport.bands.referenceSourceLandmarks, 2);
+  assert.equal(viewport.bands.referenceSourceLayoutGroups, 4);
+  assert.equal(viewport.bands.referenceMajorLandmarks, 2);
+  assert.equal(viewport.bands.referenceMajorBands, 4);
+  assert.deepEqual(viewport.geometry.pairs.map(({ referenceTags }) => referenceTags), [
+    ['div'],
+    ['section'],
+    ['div'],
+    ['section'],
+  ]);
+});
+
 test('viewport-only real-reference geometry remains diagnostic', (context) => {
   const dependencies = loadImageDependencies();
   if (!dependencies) {

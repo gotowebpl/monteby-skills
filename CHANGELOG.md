@@ -23,6 +23,10 @@
   a deterministic unique FormBlock identifier; unsafe or shared source IDs still stop drafting.
 - Preserve ordinary top-level notice and content bands through neutral page wrappers,
   and decompose compound linked cards without turning simple links into nested containers.
+- Compare captured ordinary root groups alongside semantic landmarks so valid notice
+  and content bands are not misreported as removable candidate sections.
+- Render native IconBlock glyphs and their accessible names in diagnostic previews;
+  load their font dependency and retain the public textarea minimum height.
 
 ## 0.4.1 - 2026-09-07
 
