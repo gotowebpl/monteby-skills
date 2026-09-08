@@ -168,6 +168,7 @@ statyczny i obejrzyj go, zanim przejdziesz dalej:
 
 ```bash
 node monteby-site-authoring/scripts/render-monteby-preview.js \
+  --contract .monteby/contract.json \
   --layout .monteby/layout-<slug>.json \
   --out .monteby/preview-<slug>.html
 ```
@@ -177,6 +178,12 @@ złamane siatki, brakujące media i rozjechane odstępy od tokenów, zanim
 zapłacisz koszt pełnego zapisu. Iteruj na pojedynczej sekcji do skutku, dopiero
 potem dodawaj kolejną. Kanoniczna prawda pozostaje po stronie zapisanej strony
 WordPress/PHP.
+
+Przekazuj ten sam pełny kontrakt, którego użył Kit lub drafter. Podgląd korzysta
+z jego `globalStyles`, `designTokens`, `typographyPreset` i `fontCatalog`,
+bez przepisywania powiązań na literały w JSON. Nierozpoznana referencja, preset
+lub brak źródła opublikowanego fontu blokuje podgląd; nie zastępuj go przypadkowym
+fontem ani paletą. Samo poprawne wygenerowanie HTML nie potwierdza pobrania fontu.
 
 ## Bramka końcowa: porównanie zrzutów
 
@@ -297,17 +304,18 @@ do payloadu i zachowaj zapisany profil bez zmian.
 
 ## Czego kontrakt nie wystawia
 
-- `ButtonBlock` ma wyłącznie `fontSize` — brak wariantów responsywnych i
-  `lineHeight*`. Reguła „zawsze podawaj warianty" dotyczy tylko komponentów,
-  które je mają (`Heading`, `Text`, `Container`). Kit powie to wprost zamiast
-  rzucać ogólnym „prop spoza kontraktu".
+- Zakres typografii `ButtonBlock` i pozostałych widgetów odczytuj z bieżących
+  `props` i `controls`. Nie zakładaj braku `fontSizeTablet`, `fontSizeMobile`
+  ani `lineHeight` na podstawie starszej wersji; nie dopisuj też wariantów,
+  których aktualny kontrakt nie publikuje.
 - `components[].defaults` to domyślne **edytora**. Renderer czyta
   `$props[...] ?? null` i pominiętego propa nie dokłada — nie zerujesz ich
   ręcznie.
-- Kontrolki typu `custom`, `spacing`, `color`, `font-picker`, `media` nie mają
-  opisanego kształtu wartości i **nie są sprawdzane** przez `normalize-layout.js`
-  ani `/validate`. Nie autoryzuj zbiorczego `Container.padding` (typ `custom`) —
-  składaj odstęp z `paddingTop/Right/Bottom/Left`.
+- Typ kontrolki nie zwalnia z walidacji. Korzystaj ze wspólnego indeksu
+  opublikowanych metadanych: zakresów, jednostek, repeaterów i referencji.
+  Uruchamiaj `normalize-layout.js` i `/validate`; nie zakładaj, że `custom`,
+  `color`, `font-picker` lub `media` oznacza dowolną wartość. Nieznany kształt
+  wymaga sprawdzenia kontraktu, nie obejścia przez surowy CSS.
 - Kit emituje skrócony kształt węzła (5 pól); serwer dopisuje `displayName`,
   `custom`, `hidden`, `linkedNodes`, `schemaVersion` przy zapisie. To jest
   poprawne, nie brak.

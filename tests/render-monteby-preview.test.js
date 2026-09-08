@@ -12,11 +12,13 @@ const vm = require('node:vm');
 const root = path.resolve(__dirname, '..');
 const renderScript = path.join(root, 'monteby-site-authoring', 'scripts', 'render-monteby-preview.js');
 
-function renderPreview(layout, prefix) {
+function renderPreview(layout, prefix, contract = null) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   const layoutPath = path.join(directory, 'layout.json');
   const previewPath = path.join(directory, 'preview.html');
   fs.writeFileSync(layoutPath, JSON.stringify(layout));
+  const contractPath = path.join(directory, 'contract.json');
+  if (contract) fs.writeFileSync(contractPath, JSON.stringify(contract));
 
   const result = spawnSync(process.execPath, [
     renderScript,
@@ -24,6 +26,7 @@ function renderPreview(layout, prefix) {
     layoutPath,
     '--out',
     previewPath,
+    ...(contract ? ['--contract', contractPath] : []),
   ], {
     cwd: root,
     encoding: 'utf8',
@@ -47,6 +50,7 @@ test('native IconBlock preview preserves measured glyphs, sizing, colours and ac
     nodes[id] = { type: { resolvedName: 'IconBlock' }, props, nodes: [], parent: 'ROOT' };
   }
   const html = renderPreview(nodes, 'monteby-preview-native-icons-');
+  assert.match(html, /font-variation-settings:"FILL" 0,"wght" 500,"GRAD" 0,"opsz" 24/);
   assert.match(html, /class="material-symbols-rounded" aria-hidden="true" style="font-size:32px;line-height:1;color:#365985;flex-shrink:0">tune<\/span>/);
   assert.match(html, /class="material-symbols-rounded" role="img" aria-label="Checked &amp; approved" style="font-size:48px;line-height:1;color:#3b82f6;flex-shrink:0">check_circle<\/span>/);
   assert.match(html, /aria-hidden="true" style="font-size:8px;[^>]*>schedule<\/span>/);
@@ -124,6 +128,29 @@ test('form preview separates textarea dimensions and submit geometry without cha
   assert.match(widthOnly, /<button[^>]*width:50%;max-width:100%;justify-self:start;/);
 });
 
+test('form preview normalizes numeric field padding without losing zero, strings or fallbacks', () => {
+  for (const [values, expected] of [
+    [[12, 16, 12, 16], '12px 16px 12px 16px'],
+    [[0, 16, 0, 16], '0 16px 0 16px'],
+    [['12', '16', '12', '16'], '12px 16px 12px 16px'],
+    [['12px', '1rem', '12px', '1rem'], '12px 1rem 12px 1rem'],
+    [[undefined, null, '', 'url(https://evil.test)'], '14px 16px 14px 16px'],
+  ]) {
+    const html = renderPreview({
+      ROOT: { type: { resolvedName: 'RootCanvas' }, props: {}, nodes: ['form'] },
+      form: { type: { resolvedName: 'FormBlock' }, nodes: [], props: {
+        ...Object.fromEntries(['Top', 'Right', 'Bottom', 'Left'].map((side, index) => [`inputPadding${side}`, values[index]])),
+        fields: [{ type: 'email', name: 'email' }, { type: 'textarea', name: 'message' }, { type: 'select', name: 'topic', options: ['One'] }],
+      } },
+    }, 'monteby-form-field-padding-');
+    for (const tag of ['input', 'textarea', 'select']) {
+      const control = html.match(new RegExp(`<${tag}[^>]*name="(?:email|message|topic)"[^>]*>`))?.[0];
+      assert.ok(control, `${tag} was rendered`);
+      assert.ok(control.includes(`padding:${expected};`), `${tag} retains ${expected}: ${control}`);
+    }
+  }
+});
+
 test('form preview preserves exact field radii and legacy global bindings', () => {
   for (const [value, expected] of [
     ['6px', '6px'],
@@ -138,7 +165,9 @@ test('form preview preserves exact field radii and legacy global bindings', () =
         inputBorderRadius: value,
         fields: [{ type: 'email', name: 'email' }, { type: 'textarea', name: 'message' }],
       } },
-    }, 'monteby-form-exact-radius-');
+    }, 'monteby-form-exact-radius-', value === 'var(--monteby-token-forms-radius)' ? {
+      designTokens: { version: 1, tokens: { 'forms.radius': { value: '11px', cssVariable: '--monteby-token-forms-radius', reference: 'var(--monteby-token-forms-radius)' } } },
+    } : null);
     for (const tag of ['input', 'textarea']) {
       const control = html.match(new RegExp(`<${tag}[^>]*name="(?:email|message)"[^>]*>`))?.[0];
       assert.ok(control, `${tag} was rendered`);

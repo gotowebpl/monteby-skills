@@ -2438,6 +2438,7 @@ function compareGenericGeometryViewport(referenceEntry, candidateEntry) {
       },
       signedTopDelta: candidateBand.top - referenceBand.top,
       signedHeightDelta: candidateBand.height - referenceBand.height,
+      signedHeightDeltaPx: candidateBand.heightPx - referenceBand.heightPx,
       signedWidthDelta: candidateBand.width - referenceBand.width,
       topDelta: Math.abs(referenceBand.top - candidateBand.top),
       heightDelta: Math.abs(referenceBand.height - candidateBand.height),
@@ -2523,6 +2524,7 @@ function compareGenericGeometryViewport(referenceEntry, candidateEntry) {
       widthDelta: roundGeometry(pair.widthDelta, 4),
       signedTopDelta: roundGeometry(pair.signedTopDelta, 4),
       signedHeightDelta: roundGeometry(pair.signedHeightDelta, 4),
+      signedHeightDeltaPx: roundGeometry(pair.signedHeightDeltaPx, 4),
       signedWidthDelta: roundGeometry(pair.signedWidthDelta, 4),
       referenceGeometry: Object.fromEntries(
         Object.entries(pair.referenceGeometry).map(([key, value]) => [key, roundGeometry(value, 4)])
@@ -3004,6 +3006,7 @@ function normalizeGeometryBands(bands, scrollHeight, viewportWidth, referencePag
     montebyNodeIds: Array.isArray(band.montebyNodeIds) ? band.montebyNodeIds : [],
     top: band.top / scrollHeight,
     height: band.height / scrollHeight,
+    heightPx: band.height,
     width: band.width / viewportWidth,
     geometrySource: Array.isArray(band.sourceKinds) && band.sourceKinds.includes('layoutGroup')
       ? 'layoutGroup'
@@ -3015,6 +3018,7 @@ function normalizeGeometryBands(bands, scrollHeight, viewportWidth, referencePag
     contentFrames: (band.contentFrames || []).map((frame) => ({
       top: frame.top / scrollHeight,
       height: frame.height / scrollHeight,
+      heightPx: frame.height,
       width: frame.width / viewportWidth,
       geometrySource: `layoutGroup:${frame.key}`,
       backgroundColor: String(frame.backgroundColor || ''),

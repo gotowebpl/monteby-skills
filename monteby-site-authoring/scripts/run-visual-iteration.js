@@ -723,6 +723,8 @@ function renderArgs(options) {
     previewPath(options),
     '--fragment-out',
     previewFragmentPath(options),
+    '--contract',
+    candidateContractPath(options),
     '--title',
     `${options.label} Monteby draft`,
   ];

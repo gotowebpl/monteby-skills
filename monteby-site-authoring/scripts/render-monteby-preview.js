@@ -3,6 +3,10 @@
 
 const fs = require('fs');
 const path = require('path');
+const {
+  buildResolvedDesignProfile,
+  effectiveTypographyValue,
+} = require('./resolved-design-profile.js');
 
 const GRID_COLUMNS = new Map([
   ['one', 'repeat(1,minmax(0,1fr))'],
@@ -108,6 +112,7 @@ function parseArgs(argv) {
     out: '',
     title: 'Monteby Preview',
     fragmentOut: '',
+    contract: '',
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -120,6 +125,8 @@ function parseArgs(argv) {
       options.title = requiredValue(argv, index += 1, arg);
     } else if (arg === '--fragment-out') {
       options.fragmentOut = path.resolve(requiredValue(argv, index += 1, arg));
+    } else if (arg === '--contract') {
+      options.contract = path.resolve(requiredValue(argv, index += 1, arg));
     } else if (arg === '--help' || arg === '-h') {
       printHelp();
       process.exit(0);
@@ -148,7 +155,7 @@ function requiredValue(argv, index, arg) {
 
 function printHelp() {
   console.log(`Usage:
-  render-monteby-preview.js --layout layout.json --out preview.html [--fragment-out fragment.html] [--title "Monteby Preview"]
+  render-monteby-preview.js --layout layout.json --out preview.html [--contract contract.json] [--fragment-out fragment.html] [--title "Monteby Preview"]
 
 Renders a diagnostic static HTML preview from a Monteby node map. This is only for local screenshot/capture loops; WordPress/PHP remains the canonical frontend renderer.`);
 }
@@ -175,10 +182,225 @@ function isNodeMap(value) {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value) && value.ROOT && typeof value.ROOT === 'object');
 }
 
-function renderDocument(nodeMap, title) {
-  const fragment = renderChildren(nodeMap, 'ROOT');
+function renderDocument(nodeMap, title, contract = null) {
+  let renderNodeMap = nodeMap;
+  let designProfileCss = '';
+  let googleFontWeights = null;
+  let publishedGoogleCatalog = null;
+  const diagnostics = new Set();
+  if (contract && typeof contract === 'object' && !Array.isArray(contract)) {
+    const profile = buildResolvedDesignProfile(contract);
+    const referenceValues = new Map();
+    const declarations = new Map();
+    const localFontFaces = [];
+    const fontCatalog = contract.fontCatalog?.version === 1 && contract.fontCatalog && typeof contract.fontCatalog === 'object'
+      ? contract.fontCatalog
+      : null;
+    const localChoices = Array.isArray(fontCatalog?.local?.choices)
+      ? fontCatalog.local.choices.filter((choice) => choice && typeof choice.value === 'string')
+      : [];
+    const localFaces = fontCatalog?.local?.faces && typeof fontCatalog.local.faces === 'object'
+      ? Object.values(fontCatalog.local.faces).flat().filter((face) => face && typeof face === 'object')
+      : [];
+    const systemCatalog = fontCatalog?.system && typeof fontCatalog.system === 'object' ? fontCatalog.system : {};
+    const googleCatalog = fontCatalog?.google && typeof fontCatalog.google === 'object' ? fontCatalog.google : {};
+    publishedGoogleCatalog = googleCatalog;
+    googleFontWeights = new Map();
+    const typographyFields = new Map([
+      ['fontFamily', 'font-family'],
+      ['fontSize', 'font-size'],
+      ['fontWeight', 'font-weight'],
+      ['lineHeight', 'line-height'],
+      ['letterSpacing', 'letter-spacing'],
+      ['textTransform', 'text-transform'],
+      ['color', 'color'],
+    ]);
+    const publish = (reference, value, kind = '') => {
+      const match = /^var\((--(?:gcb-(?:color|font|typo)-|monteby-token-)[a-z0-9_-]+)\)$/iu.exec(String(reference || '').trim());
+      let safeValue = cssValue(value);
+      if (kind === 'font') {
+        const systemValue = typeof systemCatalog[value] === 'string' ? systemCatalog[value] : value;
+        safeValue = cssFontFamilyValue(systemValue) || (/^var\(--gcb-font-[a-z0-9_-]+\)$/iu.test(String(value || '').trim()) ? String(value).trim() : '');
+      }
+      if (kind === 'color') safeValue = cssColorValue(value);
+      if (match && safeValue) {
+        declarations.set(match[1], safeValue);
+        referenceValues.set(`var(${match[1]})`, safeValue);
+      }
+    };
+
+    for (const [key, token] of Object.entries(profile.tokens || {})) {
+      const kind = key.startsWith('fonts.') ? 'font' : key.startsWith('colors.') ? 'color' : '';
+      publish(token.reference, token.value, kind);
+      const publishedToken = contract?.designTokens?.tokens?.[key];
+      if (publishedToken && typeof publishedToken === 'object') {
+        publish(publishedToken.reference || (publishedToken.cssVariable ? `var(${publishedToken.cssVariable})` : ''), token.value, kind);
+      }
+    }
+    for (const [presetId, preset] of Object.entries(profile.typographyPresets || {})) {
+      for (const [field, suffix] of typographyFields) {
+        publish(`var(--gcb-typo-${presetId}-${suffix})`, preset[field], field === 'fontFamily' ? 'font' : field === 'color' ? 'color' : '');
+      }
+    }
+    publish('var(--monteby-token-layout-content-width)', profile.layout?.contentWidth);
+
+    const validatePublishedReference = (value) => {
+      let reference = String(value || '').trim();
+      const origin = reference;
+      const seen = new Set();
+      while (/^var\(--[a-z0-9_-]+\)$/iu.test(reference)) {
+        if (seen.has(reference)) {
+          diagnostics.add(`cyclic-design-reference:${origin}`);
+          return;
+        }
+        seen.add(reference);
+        if (!referenceValues.has(reference)) {
+          diagnostics.add(`unresolved-design-reference:${reference}`);
+          return;
+        }
+        reference = String(referenceValues.get(reference) || '').trim();
+      }
+    };
+    const usedLocalFamilies = new Set();
+    const resolveFontReference = (value) => {
+      let resolved = String(value || '').trim();
+      const seen = new Set();
+      while (referenceValues.has(resolved) && !seen.has(resolved)) {
+        seen.add(resolved);
+        resolved = referenceValues.get(resolved);
+      }
+      if (/^var\(--[a-z0-9_-]+\)$/iu.test(String(resolved || '').trim())) return value;
+      const safeStack = cssFontFamilyValue(resolved);
+      const primary = cssFontFamilyValue(resolved, true);
+      const localChoice = localChoices.find((choice) => {
+        const choicePrimary = cssFontFamilyValue(choice.value, true);
+        return choice.value.trim().toLowerCase() === resolved.toLowerCase() || choicePrimary.toLowerCase() === primary.toLowerCase();
+      });
+      if (localChoice) {
+        const matchingFaces = localFaces.filter((face) => cssFontFamilyValue(String(face['font-family'] || ''), true).toLowerCase() === primary.toLowerCase());
+        if (matchingFaces.length === 0) diagnostics.add(`unresolved-local-font-face:${localChoice.value.trim()}`);
+        else usedLocalFamilies.add(primary.toLowerCase());
+      } else {
+        const providerKey = primary.replace(/^"|"$/gu, '').replace(/\\(["'\\])/gu, '$1').toLowerCase();
+        const googleEntry = googleCatalog[providerKey];
+        if (googleEntry && typeof googleEntry === 'object' && typeof googleEntry.family === 'string') {
+          const token = googleFontToken(googleEntry.family, googleCatalog);
+          const parts = typeof googleEntry.weights === 'string' ? googleEntry.weights.split(';') : [];
+          let previousMaximum = 0;
+          const weightsAreValid = parts.length > 0 && parts.length <= 12 && parts.every((part) => {
+            const match = /^([1-9][0-9]{0,3})(?:\.\.([1-9][0-9]{0,3}))?$/u.exec(part);
+            const minimum = match ? Number(match[1]) : 0;
+            const maximum = match ? Number(match[2] || match[1]) : 0;
+            const valid = Boolean(match) && minimum <= 1000 && maximum <= 1000 && minimum <= maximum && minimum > previousMaximum;
+            previousMaximum = maximum;
+            return valid;
+          });
+          const weights = weightsAreValid ? parts.join(';') : '';
+          if (token && weights) googleFontWeights.set(token, weights);
+          else if (seen.size > 0) diagnostics.add(`unresolved-font-provider:${String(value).trim()}`);
+        } else if (seen.size > 0 && !NON_GOOGLE_FONT_NAMES.has(providerKey) && !SYSTEM_FONT_STACKS.has(resolved)) {
+          diagnostics.add(`unresolved-font-provider:${String(value).trim()}`);
+        }
+      }
+      return cssFontFamilyValue(resolved) ? resolved : value;
+    };
+    renderNodeMap = Object.fromEntries(Object.entries(nodeMap).map(([nodeId, node]) => {
+      if (!node || typeof node !== 'object' || !node.props || typeof node.props !== 'object') return [nodeId, node];
+      let props = { ...node.props };
+      const presetId = typeof props.typographyPreset === 'string' ? props.typographyPreset.trim() : '';
+      if (presetId && !profile.typographyPresets?.[presetId]) {
+        diagnostics.add(`unresolved-typography-preset:${presetId}`);
+      }
+      if (presetId && profile.typographyPresets?.[presetId]) {
+        for (const field of ['fontFamily', 'fontSize', 'fontWeight', 'lineHeight', 'letterSpacing', 'textTransform']) {
+          if (props[field] === undefined || props[field] === null || props[field] === '') {
+            const value = effectiveTypographyValue(props, profile, field);
+            if (value) props[field] = value;
+          }
+        }
+        if ((props.textColor === undefined || props.textColor === null || props.textColor === '')
+          && (props.color === undefined || props.color === null || props.color === '')) {
+          const value = effectiveTypographyValue(props, profile, 'color');
+          if (value) props.textColor = value;
+        }
+      }
+      for (const [prop, value] of Object.entries(props)) {
+        if (typeof value === 'string') validatePublishedReference(value);
+        if (typeof value === 'string' && (prop === 'fontFamily' || prop.endsWith('FontFamily'))) {
+          props[prop] = resolveFontReference(value);
+        } else if (Array.isArray(value)) {
+          props[prop] = value.map((item) => {
+            if (!item || typeof item !== 'object' || Array.isArray(item)) return item;
+            const resolvedItem = { ...item };
+            for (const [itemProp, itemValue] of Object.entries(resolvedItem)) {
+              if (typeof itemValue === 'string') validatePublishedReference(itemValue);
+              if (typeof itemValue === 'string' && (itemProp === 'fontFamily' || itemProp.endsWith('FontFamily'))) {
+                resolvedItem[itemProp] = resolveFontReference(itemValue);
+              }
+            }
+            return resolvedItem;
+          });
+        }
+      }
+      return [nodeId, { ...node, props }];
+    }));
+    const faceProperties = new Set(['font-style', 'font-weight', 'font-display', 'ascent-override', 'descent-override', 'font-stretch', 'font-variant', 'font-feature-settings', 'font-variation-settings', 'line-gap-override', 'size-adjust', 'unicode-range']);
+    const emittedLocalFamilies = new Set();
+    for (const face of localFaces) {
+      const family = String(face['font-family'] || '').trim();
+      const primaryFamily = cssFontFamilyValue(family, true);
+      if (!usedLocalFamilies.has(primaryFamily.toLowerCase())) continue;
+      const safeFamily = primaryFamily;
+      const sources = Array.isArray(face.src) ? face.src.map((source) => safeUrlValue(source, BACKGROUND_MEDIA_URL_SCHEMES)).filter((source) => {
+        if (!source || !/^https?:\/\//iu.test(source) || hasUnsafeCssSyntax(source) || /["']/u.test(source)) return false;
+        try {
+          const url = new URL(source);
+          return !url.username && !url.password;
+        } catch {
+          return false;
+        }
+      }) : [];
+      if (!safeFamily || sources.length === 0) continue;
+      const descriptors = [`font-family:${safeFamily}`, `src:${sources.map((source) => `url("${source}")`).join(',')}`];
+      for (const property of faceProperties) {
+        const value = cssValue(face[property]);
+        if (value) descriptors.push(`${property}:${value}`);
+      }
+      localFontFaces.push(`@font-face{${descriptors.join(';')}}`);
+      emittedLocalFamilies.add(primaryFamily.toLowerCase());
+    }
+    for (const family of usedLocalFamilies) {
+      if (!emittedLocalFamilies.has(family)) diagnostics.add(`unresolved-local-font-face:${family}`);
+    }
+    if (declarations.size > 0) designProfileCss = `:root{${Array.from(declarations, ([name, value]) => `${name}:${value}`).join(';')}}`;
+    designProfileCss += localFontFaces.join('');
+  } else {
+    for (const node of Object.values(nodeMap)) {
+      const props = node?.props && typeof node.props === 'object' ? node.props : {};
+      if (typeof props.typographyPreset === 'string' && props.typographyPreset.trim()) {
+        diagnostics.add(`design-contract-required:typographyPreset:${props.typographyPreset.trim()}`);
+      }
+      for (const value of Object.values(props)) {
+        if (typeof value === 'string' && /^var\(--(?:gcb-|monteby-token-)/iu.test(value.trim())) {
+          diagnostics.add(`design-contract-required:${value.trim()}`);
+        } else if (Array.isArray(value)) {
+          for (const item of value) {
+            if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+            for (const itemValue of Object.values(item)) {
+              if (typeof itemValue === 'string' && /^var\(--(?:gcb-|monteby-token-)/iu.test(itemValue.trim())) {
+                diagnostics.add(`design-contract-required:${itemValue.trim()}`);
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  const fragment = renderChildren(renderNodeMap, 'ROOT');
   return {
     fragment,
+    diagnostics: Array.from(diagnostics).sort(),
     html: [
       '<!doctype html>',
       '<html>',
@@ -186,8 +408,8 @@ function renderDocument(nodeMap, title) {
       '<meta charset="utf-8">',
       '<meta name="viewport" content="width=device-width,initial-scale=1">',
       `<title>${escapeHtml(title)}</title>`,
-      googleFontLinks(nodeMap),
-      `<style>${baseCss()}</style>`,
+      googleFontLinks(renderNodeMap, googleFontWeights, publishedGoogleCatalog),
+      `<style>${designProfileCss}${baseCss()}</style>`,
       '</head>',
       '<body>',
       '<div class="monteby-preview">',
@@ -200,15 +422,32 @@ function renderDocument(nodeMap, title) {
   };
 }
 
-function googleFontLinks(nodeMap) {
+function googleFontLinks(nodeMap, allowedFontWeights = null, publishedCatalog = null) {
   const fontTokens = new Set();
   let usesMaterialSymbols = false;
+  const contractFonts = allowedFontWeights instanceof Map || publishedCatalog !== null;
 
   for (const node of Object.values(nodeMap)) {
-    const rawFamily = typeof node?.props?.fontFamily === 'string' ? node.props.fontFamily.trim() : '';
-    const fontToken = googleFontToken(rawFamily);
-    if (fontToken) {
-      fontTokens.add(fontToken);
+    const props = node?.props && typeof node.props === 'object' ? node.props : {};
+    if (!contractFonts) {
+      const fontToken = googleFontToken(typeof props.fontFamily === 'string' ? props.fontFamily.trim() : '');
+      if (fontToken) fontTokens.add(fontToken);
+    } else {
+      for (const [prop, value] of Object.entries(props)) {
+        if (typeof value === 'string' && (prop === 'fontFamily' || prop.endsWith('FontFamily'))) {
+          const fontToken = googleFontToken(value.trim(), publishedCatalog);
+          if (fontToken && allowedFontWeights?.has(fontToken)) fontTokens.add(fontToken);
+        } else if (Array.isArray(value)) {
+          for (const item of value) {
+            if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+            for (const [itemProp, itemValue] of Object.entries(item)) {
+              if (typeof itemValue !== 'string' || (itemProp !== 'fontFamily' && !itemProp.endsWith('FontFamily'))) continue;
+              const fontToken = googleFontToken(itemValue.trim(), publishedCatalog);
+              if (fontToken && allowedFontWeights?.has(fontToken)) fontTokens.add(fontToken);
+            }
+          }
+        }
+      }
     }
 
     if (nodeType(node) === 'StatsGrid' && Array.isArray(node?.props?.items)) {
@@ -236,7 +475,7 @@ function googleFontLinks(nodeMap) {
   if (fontTokens.size > 0) {
     const familyQuery = Array.from(fontTokens)
       .sort((left, right) => left.localeCompare(right))
-      .map((fontToken) => `family=${fontToken.replace(/_/g, '+')}:wght@100;200;300;400;500;600;700;800;900`)
+      .map((fontToken) => `family=${encodeURIComponent(fontToken.replace(/_/g, ' ')).replace(/%20/g, '+')}:wght@${allowedFontWeights?.get(fontToken) || '100;200;300;400;500;600;700;800;900'}`)
       .join('&');
     links.push(`<link rel="stylesheet" href="${escapeAttr(`https://fonts.googleapis.com/css2?${familyQuery}&display=swap`)}">`);
   }
@@ -246,16 +485,21 @@ function googleFontLinks(nodeMap) {
   return links.join('');
 }
 
-function googleFontToken(value) {
+function googleFontToken(value, publishedCatalog = null) {
   if (typeof value !== 'string' || SYSTEM_FONT_STACKS.has(value.trim())) {
     return '';
   }
 
-  const safeStack = cssFontFamilyValue(value);
-  if (!safeStack) {
+  const primaryFamily = cssFontFamilyValue(value, true);
+  if (!primaryFamily) {
     return '';
   }
-  const primary = safeStack.split(',')[0].trim().replace(/^"|"$/g, '').toLowerCase();
+  const primary = primaryFamily.replace(/^"|"$/gu, '').replace(/\\(["'\\])/gu, '$1').toLowerCase();
+  const published = publishedCatalog && typeof publishedCatalog === 'object' ? publishedCatalog[primary] : null;
+  if (published && typeof published.family === 'string' && published.family.trim().toLowerCase() === primary
+    && /^[A-Za-z0-9][A-Za-z0-9 .'-]{0,95}$/u.test(published.family.trim())) {
+    return published.family.trim().replace(/ /g, '_');
+  }
   return SUPPORTED_GOOGLE_FONT_BY_NAME.get(primary) || '';
 }
 
@@ -1101,6 +1345,8 @@ function renderFormBlock(props) {
   const buttonWidth = /^(?:0|\d+(?:\.\d+)?(?:px|rem|em|%))$/u.test(buttonWidthCandidate) ? buttonWidthCandidate : '';
   const buttonJustifySelf = ['start', 'center', 'end', 'stretch'].includes(props.buttonJustifySelf)
     ? props.buttonJustifySelf : buttonWidth ? 'start' : '';
+  const buttonLineHeight = String(props.buttonLineHeight ?? '').trim();
+  const safeButtonLineHeight = /^(?:\d+(\.\d+)?(px|rem|em)?|var\(--monteby-token-typography-line-height\)|var\(--gcb-typo-[a-z0-9_-]+-line-height\))$/.test(buttonLineHeight) ? buttonLineHeight : '';
   const submitStyles = [
     'display:inline-flex', 'align-items:center', 'justify-content:center', 'gap:8px',
     styleDeclaration('grid-column', columns === 2 ? 'span 2' : ''),
@@ -1115,7 +1361,7 @@ function renderFormBlock(props) {
     styleDeclaration('border-width', formBorderWidth(props.buttonBorderWidth) || '1px'), 'border-style:solid',
     styleDeclaration('border-color', cssColorValue(props.buttonBorderColor) || '#2563eb'), styleDeclaration('border-radius', formBorderRadius(props.buttonBorderRadius) || '8px'),
     styleDeclaration('background-color', cssColorValue(props.buttonBackgroundColor) || '#2563eb'), styleDeclaration('color', cssColorValue(props.buttonTextColor) || '#ffffff'),
-    styleDeclaration('font-size', cssValue(props.buttonFontSize) || '16px'), styleDeclaration('font-weight', formFontWeight(props.buttonFontWeight) || '600'),
+    styleDeclaration('font-family', cssFontFamilyValue(props.buttonFontFamily) || 'inherit'), styleDeclaration('line-height', safeButtonLineHeight), styleDeclaration('font-size', cssValue(props.buttonFontSize) || '16px'), styleDeclaration('font-weight', formFontWeight(props.buttonFontWeight) || '600'),
   ].filter(Boolean).join(';');
   return `<form class="monteby-preview-form${columns === 2 ? ' monteby-preview-form--two-columns' : ''}"${safeIdentifier(props.formId) ? ` id="${escapeAttr(safeIdentifier(props.formId))}"` : ''} style="${escapeAttr(rootStyles)}">${fieldsHtml}<button type="button" style="${escapeAttr(submitStyles)}">${icon ? `<span class="material-symbols-rounded" aria-hidden="true" style="font-size:1.1em;line-height:1">${escapeHtml(icon)}</span>` : ''}${escapeHtml(safeTextValue(props.submitLabel, 'Send'))}</button></form>`;
 }
@@ -1127,8 +1373,10 @@ function renderFormField(rawField, props, columns, index) {
   const label = safeTextValue(field.label, '');
   const required = field.required === true;
   const column = columns === 2 && Number(field.columnSpan) === 2 ? 'span 2' : '';
-  const labelStyle = `color:${cssColorValue(props.labelColor) || '#111827'};font-size:${cssValue(props.labelFontSize) || '14px'};font-weight:${formFontWeight(props.labelFontWeight) || '600'};font-family:${cssFontFamilyValue(props.labelFontFamily) || 'inherit'};letter-spacing:${formLetterSpacing(props.labelLetterSpacing)};text-transform:${formTextTransform(props.labelTextTransform)}`;
-  const controlStyle = `width:100%;height:${cssValue(props.inputHeight) || 'auto'};padding:${cssValue(props.inputPaddingTop) || '14px'} ${cssValue(props.inputPaddingRight) || '16px'} ${cssValue(props.inputPaddingBottom) || '14px'} ${cssValue(props.inputPaddingLeft) || '16px'};border:${formBorderWidth(props.inputBorderWidth) || '1px'} solid ${cssColorValue(props.inputBorderColor) || '#e5e7eb'};border-radius:${formBorderRadius(props.inputBorderRadius) || '12px'};background-color:${cssColorValue(props.inputBgColor) || '#ffffff'};color:${cssColorValue(props.inputColor) || '#111827'};font-size:${cssValue(props.inputFontSize) || '16px'};font-family:${cssFontFamilyValue(props.inputFontFamily) || 'inherit'};font-weight:${formFontWeight(props.inputFontWeight) || '400'};--monteby-preview-form-focus-color:${cssColorValue(props.inputFocusColor) || '#2563eb'}`;
+  const labelLineHeight = String(props.labelLineHeight ?? '').trim();
+  const safeLabelLineHeight = /^(?:\d+(\.\d+)?(px|rem|em)?|var\(--monteby-token-typography-line-height\)|var\(--gcb-typo-[a-z0-9_-]+-line-height\))$/.test(labelLineHeight) ? labelLineHeight : '';
+  const labelStyle = `color:${cssColorValue(props.labelColor) || '#111827'};font-size:${cssValue(props.labelFontSize) || '14px'};font-weight:${formFontWeight(props.labelFontWeight) || '600'};font-family:${cssFontFamilyValue(props.labelFontFamily) || 'inherit'};letter-spacing:${formLetterSpacing(props.labelLetterSpacing)};text-transform:${formTextTransform(props.labelTextTransform)}${safeLabelLineHeight ? `;line-height:${safeLabelLineHeight}` : ''}`;
+  const controlStyle = `width:100%;height:${cssValue(props.inputHeight) || 'auto'};padding:${statsGridLength(props.inputPaddingTop, '14px')} ${statsGridLength(props.inputPaddingRight, '16px')} ${statsGridLength(props.inputPaddingBottom, '14px')} ${statsGridLength(props.inputPaddingLeft, '16px')};border:${formBorderWidth(props.inputBorderWidth) || '1px'} solid ${cssColorValue(props.inputBorderColor) || '#e5e7eb'};border-radius:${formBorderRadius(props.inputBorderRadius) || '12px'};background-color:${cssColorValue(props.inputBgColor) || '#ffffff'};color:${cssColorValue(props.inputColor) || '#111827'};font-size:${cssValue(props.inputFontSize) || '16px'};font-family:${cssFontFamilyValue(props.inputFontFamily) || 'inherit'};font-weight:${formFontWeight(props.inputFontWeight) || '400'};--monteby-preview-form-focus-color:${cssColorValue(props.inputFocusColor) || '#2563eb'}`;
   const mark = required ? `<span aria-hidden="true" style="color:${escapeAttr(cssColorValue(props.requiredColor) || '#ef4444')}">*</span>` : '';
   if (type === 'checkbox') {
     const linkText = safeTextValue(field.linkText, '');
@@ -1610,20 +1858,43 @@ function cssNumber(value) {
   return typeof value === 'number' && Number.isFinite(value) ? String(value) : cssValue(value);
 }
 
-function cssFontFamilyValue(value) {
+function cssFontFamilyValue(value, primaryOnly = false) {
   if (typeof value !== 'string') {
     return '';
   }
 
   const systemStack = SYSTEM_FONT_STACKS.get(value.trim());
-  if (systemStack) {
-    return systemStack;
-  }
+  const input = systemStack || value;
 
-  const families = value
-    .split(',')
-    .map((family) => family.trim())
-    .filter(Boolean);
+  const families = [];
+  let family = '';
+  let quote = '';
+  for (let index = 0; index < input.length; index += 1) {
+    const character = input[index];
+    if (quote) {
+      family += character;
+      if (character === '\\') {
+        if (index + 1 >= input.length) return '';
+        family += input[index += 1];
+        continue;
+      }
+      if (character === quote) quote = '';
+      continue;
+    }
+    if (character === '"' || character === "'") {
+      if (family.trim() === '') quote = character;
+      family += character;
+      continue;
+    }
+    if (character === ',') {
+      if (family.trim() !== '') families.push(family.trim());
+      family = '';
+      continue;
+    }
+    family += character;
+  }
+  if (quote) return '';
+  if (family.trim() !== '') families.push(family.trim());
 
   if (families.length === 0) {
     return '';
@@ -1633,12 +1904,17 @@ function cssFontFamilyValue(value) {
   for (const family of families) {
     const quote = family[0];
     const quoted = (quote === '"' || quote === "'") && family[family.length - 1] === quote;
-    const name = (quoted ? family.slice(1, -1).trim() : family).replace(/_/g, ' ');
-    if (!name || !/^[a-zA-Z0-9 _-]+$/.test(name)) {
+    const rawName = (quoted ? family.slice(1, -1).trim() : family).replace(/_/g, ' ');
+    if (/\\(?!["'\\])/u.test(rawName)) return '';
+    const name = rawName.replace(/\\(["'\\])/gu, '$1');
+    if (!name || !/^[\p{L}\p{M}\p{N} _.,'"-]+$/u.test(name)) {
       return '';
     }
-    normalized.push(quoted || name.includes(' ') ? `"${name}"` : name);
+    const escapedName = name.replace(/\\/gu, '\\\\').replace(/"/gu, '\\"');
+    normalized.push(quoted || /[ .,'"]/u.test(name) ? `"${escapedName}"` : name);
   }
+
+  if (primaryOnly) return normalized[0].startsWith('"') ? normalized[0] : `"${normalized[0]}"`;
 
   if (normalized.length === 1 && !NON_GOOGLE_FONT_NAMES.has(normalized[0].replace(/"/g, '').toLowerCase())) {
     normalized.push('sans-serif');
@@ -1831,7 +2107,7 @@ function baseCss() {
     '@media (max-width:900px){.gotoweb-margin-left--responsive{margin-left:var(--gotoweb-margin-left-tablet,var(--gotoweb-margin-left-base))!important}}',
     '@media (max-width:767px){.gotoweb-margin-left--responsive{margin-left:var(--gotoweb-margin-left-mobile,var(--gotoweb-margin-left-tablet,var(--gotoweb-margin-left-base)))!important}}',
     '.monteby-preview a{cursor:pointer}',
-    '.material-symbols-rounded{font-family:"Material Symbols Rounded";font-weight:normal;font-style:normal;font-size:24px;line-height:1;letter-spacing:normal;text-transform:none;display:inline-block;white-space:nowrap;word-wrap:normal;direction:ltr}',
+    '.material-symbols-rounded{font-family:"Material Symbols Rounded";font-weight:normal;font-style:normal;font-size:24px;line-height:1;letter-spacing:normal;text-transform:none;display:inline-block;white-space:nowrap;word-wrap:normal;direction:ltr;-webkit-font-feature-settings:"liga";font-feature-settings:"liga";-webkit-font-smoothing:antialiased;vertical-align:middle;font-variation-settings:"FILL" 0,"wght" 500,"GRAD" 0,"opsz" 24}',
     'img{display:block}',
     '.monteby-preview-form-control:focus{outline:2px solid var(--monteby-preview-form-focus-color,#2563eb);outline-offset:2px}',
     '.monteby-preview-form textarea{min-height:120px;resize:vertical}',
@@ -1868,7 +2144,11 @@ function main() {
   try {
     const options = parseArgs(process.argv.slice(2));
     const nodeMap = extractNodeMap(readJson(options.layout));
-    const rendered = renderDocument(nodeMap, options.title);
+    const contract = options.contract ? readJson(options.contract) : null;
+    const rendered = renderDocument(nodeMap, options.title, contract);
+    if (rendered.diagnostics.length > 0) {
+      throw new Error(`Static preview cannot resolve the live design profile: ${rendered.diagnostics.join(', ')}`);
+    }
     writeFile(options.out, rendered.html);
     if (options.fragmentOut) {
       writeFile(options.fragmentOut, rendered.fragment);
@@ -1885,4 +2165,5 @@ if (require.main === module) {
 
 module.exports = {
   googleFontToken,
+  renderDocument,
 };

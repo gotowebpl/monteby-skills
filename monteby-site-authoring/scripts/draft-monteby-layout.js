@@ -1886,6 +1886,8 @@ function summarizeReferenceForm(fields, submit, layoutGroups, textBoxes, band, f
       formBorderRadius: genericCssMetric(candidate.group.borderRadius) || '0px',
       fieldGap: genericCssMetric(firstControl.fieldGap) || '6px',
       labelFontSize: genericCssMetric(labelStyle.fontSize) || '14px',
+      labelLineHeight: genericCssMetric(labelStyle.lineHeight),
+      labelFontFamily: genericMeasuredFontFamily(labelStyle),
       labelFontWeight: fieldFontWeights[genericFontWeight(labelStyle, '600')],
       labelColor: normalizedAuthorableColor(labelStyle.color) || normalizedAuthorableColor(firstControl.color) || '#111827',
       requiredColor: '#ef4444',
@@ -1899,6 +1901,7 @@ function summarizeReferenceForm(fields, submit, layoutGroups, textBoxes, band, f
       inputBgColor: normalizedAuthorableColor(firstControl.backgroundColor) || '#ffffff',
       inputColor: normalizedAuthorableColor(firstControl.color) || '#111827',
       inputFontSize: genericCssMetric(firstControl.fontSize) || '16px',
+      inputFontFamily: genericMeasuredFontFamily(firstControl),
       inputFontWeight: fieldFontWeights[genericFontWeight(firstControl, '400')],
       inputHeight: `${Math.round(firstControl.rect.height * 100) / 100}px`,
       ...(textarea ? { textareaHeight: `${Math.round(textarea.rect.height * 100) / 100}px`, textareaMinHeight: genericCssMetric(textarea.minHeight) || genericCssMetric(textarea.constraintEvidence?.minHeight) } : {}),
@@ -1916,6 +1919,8 @@ function summarizeReferenceForm(fields, submit, layoutGroups, textBoxes, band, f
             ? 'end'
             : Math.abs((candidate.submit.rect.left + candidate.submit.rect.right) - (fieldBounds.left + fieldBounds.right)) <= 2 ? 'center' : undefined } : {}),
       buttonMinHeight: `${Math.round(candidate.submit.rect.height * 100) / 100}px`,
+      buttonFontFamily: genericMeasuredFontFamily(buttonBox),
+      buttonLineHeight: genericCssMetric(buttonBox.lineHeight),
       buttonPaddingY: genericCssMetric(buttonBox.paddingTop) || '12px',
       buttonPaddingX: genericCssMetric(buttonBox.paddingLeft) || '24px',
       buttonBorderWidth: genericCssMetric(buttonBox.borderTopWidth) || '0px',
@@ -2527,6 +2532,8 @@ function summarizeReferenceBox(box) {
     letterSpacing: box.letterSpacing || '',
     textAlign: box.textAlign || '',
     textTransform: box.textTransform || '',
+    display: box.display || '',
+    alignSelf: box.alignSelf || '',
     color: box.color || '',
     backgroundColor: box.backgroundColor || '',
     borderRadius: box.borderRadius || '',
@@ -3667,7 +3674,9 @@ function addGenericMeasuredIcons(context, plan) {
       iconLabel: mapping.iconLabel,
     });
     context.mappedIconKeys.add(structureKey);
+    context.genericMeasuredNodeKeys.set(icon.id, structureKey);
     registerGenericMeasuredSurface(context, 'icon', structureKey, icon.id, { strategy: 'native-icon-catalog' });
+    orderGenericMeasuredChildren(context, parentId, [{ id: icon.id, key: structureKey, rect: surface.rect }]);
   }
 }
 
@@ -4255,9 +4264,20 @@ function genericMeasuredJustifyContent(measurement) {
     : 'flex-start';
 }
 
-function genericMeasuredAlignItems(measurement) {
-  const align = String(measurement?.alignItems || '').toLowerCase();
-  const normalized = { start: 'flex-start', end: 'flex-end', normal: 'stretch' }[align] || align;
+function genericMeasuredAlignItems(measurement, item = null) {
+  let align = String(measurement?.alignItems || '').toLowerCase();
+  if (item) {
+    if (['flex', 'inline-flex'].includes(measurement?.display)
+      && ['column', 'column-reverse'].includes(measurement?.flexDirection)) {
+      const self = String(item.alignSelf || '').toLowerCase();
+      if (self && self !== 'auto') align = self;
+    } else if (['inline', 'inline-flex', 'inline-block'].includes(item.display)) {
+      align = 'flex-start';
+    } else {
+      return undefined;
+    }
+  }
+  const normalized = { start: 'flex-start', end: 'flex-end', 'self-start': 'flex-start', 'self-end': 'flex-end', normal: 'stretch' }[align] || align;
   return ['stretch', 'flex-start', 'center', 'flex-end', 'baseline'].includes(normalized)
     ? normalized
     : 'stretch';
@@ -4287,13 +4307,33 @@ function genericBandFrameHeight(measurement, occupiedHeight = 0) {
   return genericMeasuredRectSize(measurement, 'height') || genericBandHeight(measurement);
 }
 
-function genericMeasuredGroupWidth(group, parent) {
+function genericMeasuredGroupWidth(group, parent, tabletGroup, tabletParent, mobileGroup, mobileParent) {
   const groupRect = normalizeReferenceRect(group?.rect);
   const parentRect = normalizeReferenceRect(parent?.rect);
   if (!groupRect || !parentRect) {
     return undefined;
   }
   if (genericMeasuredDisplay(parent) === 'grid') {
+    return '100%';
+  }
+  const declaredMaxWidth = pxNumber(group?.constraintEvidence?.maxWidth);
+  const fluidBelowMaximum = [[tabletGroup, tabletParent], [mobileGroup, mobileParent]]
+    .some(([responsiveGroup, responsiveParent]) => {
+      const responsiveRect = normalizeReferenceRect(responsiveGroup?.rect);
+      const responsiveParentRect = normalizeReferenceRect(responsiveParent?.rect);
+      if (!responsiveRect || !responsiveParentRect || declaredMaxWidth === null) {
+        return false;
+      }
+      const responsivePadding = [responsiveParent?.paddingLeft, responsiveParent?.paddingRight]
+        .map((value) => Number.parseFloat(genericCssMetric(value) || '0'))
+        .reduce((sum, value) => sum + value, 0);
+      const responsiveContentWidth = Math.max(1, responsiveParentRect.width - responsivePadding);
+      return responsiveRect.width < declaredMaxWidth - 1
+        && Math.abs(responsiveRect.width - responsiveContentWidth) <= 1;
+    });
+  if (declaredMaxWidth !== null
+    && Math.abs(groupRect.width - declaredMaxWidth) <= 1
+    && fluidBelowMaximum) {
     return '100%';
   }
   const horizontalPadding = [parent?.paddingLeft, parent?.paddingRight]
@@ -4614,7 +4654,7 @@ function addGenericMeasuredSections(context, plan, sectionName, containerName) {
       && desktopViewportWidth > 0
       && desktopRect.width < desktopViewportWidth * 0.72;
     const desktopNormalFrameWidths = (Array.isArray(desktop?.groups) ? desktop.groups : [])
-      .filter((group) => group?.flowParticipation !== 'overlay')
+      .filter((group) => group?.flowParticipation !== 'overlay' && group?.parentKey === desktop?.key)
       .map((group) => pxNumber(group?.constraintEvidence?.maxWidth))
       .filter((width) => width > 0);
     const measuredSectionWidth = pxNumber(
@@ -4623,15 +4663,26 @@ function addGenericMeasuredSections(context, plan, sectionName, containerName) {
     const explicitFrameMaxWidth = desktopNormalFrameWidths.length > 0
       ? Math.max(...desktopNormalFrameWidths)
       : null;
+    const measuredFramePaddings = [desktop, tablet, mobile].map((measurement) => {
+      const left = pxNumber(genericCssMetric(measurement?.paddingLeft));
+      const right = pxNumber(genericCssMetric(measurement?.paddingRight));
+      return left === null || right === null ? null : { left, right };
+    });
+    const explicitFrameOuterWidth = explicitFrameMaxWidth !== null && measuredFramePaddings[0]
+      ? explicitFrameMaxWidth + measuredFramePaddings[0].left + measuredFramePaddings[0].right
+      : explicitFrameMaxWidth;
     const sectionInnerMaxWidth = explicitFrameMaxWidth !== null
-      ? `${Math.round(explicitFrameMaxWidth * 100) / 100}px`
+      ? `${Math.round(explicitFrameOuterWidth * 100) / 100}px`
       : usesNarrowRootFrame
       ? `${Math.round(desktopViewportWidth * 100) / 100}px`
       : measuredSectionWidth === null
         ? genericBandContentWidth(desktop)
         : `${Math.round((measuredSectionWidth + roundedSectionGutter * 2) * 100) / 100}px`;
     const sectionInnerMaxWidthPixels = pxNumber(sectionInnerMaxWidth);
-    const responsiveSectionGutters = [desktop, tablet, mobile].map((measurement) => {
+    const responsiveSectionGutters = [desktop, tablet, mobile].map((measurement, index) => {
+      if (explicitFrameMaxWidth !== null && measuredFramePaddings[index]) {
+        return 0;
+      }
       const measurementRect = normalizeReferenceRect(measurement?.rect);
       const viewportWidth = Number(measurement?.viewportWidth || 0);
       if (usesNarrowRootFrame && measurementRect && viewportWidth > 0) {
@@ -6064,7 +6115,14 @@ function addGenericMeasuredGroups(context, parentId, desktopParent, tabletParent
       gridColumnSpanMobile: plan.hasMobile ? mobilePlacement.columnSpan : undefined,
       gridRowStartMobile: plan.hasMobile ? mobilePlacement.rowStart : undefined,
       gridRowSpanMobile: plan.hasMobile ? mobilePlacement.rowSpan : undefined,
-      width: genericMeasuredGroupWidth(desktop, desktopParent),
+      width: genericMeasuredGroupWidth(
+        desktop,
+        desktopParent,
+        tablet,
+        tabletParent,
+        mobile,
+        mobileParent
+      ),
       maxWidth: genericMeasuredRectSize(desktop, 'width'),
       maxWidthTablet: plan.hasTablet ? genericMeasuredRectSize(tabletMeasurement, 'width') : undefined,
       maxWidthMobile: plan.hasMobile ? genericMeasuredRectSize(mobileMeasurement, 'width') : undefined,
@@ -6236,6 +6294,18 @@ function addGenericMeasuredGroups(context, parentId, desktopParent, tabletParent
       const measuredFormProps = { ...(desktop.props || {}) };
       delete measuredFormProps.fields;
       delete measuredFormProps.formId;
+      for (const prop of ['labelFontFamily', 'inputFontFamily', 'labelLineHeight', 'buttonFontFamily', 'buttonLineHeight']) {
+        const value = measuredFormProps[prop];
+        if (value === undefined || value === '') continue;
+        const rule = formComponent.propRules?.get(prop);
+        const normalized = rule ? normalizeControlValue(rule, value) : { accepted: false };
+        if (formAuthoringProps.has(prop) && normalized.accepted) {
+          measuredFormProps[prop] = normalized.value;
+        } else {
+          delete measuredFormProps[prop];
+          context.warnings.push(`Measured FormBlock.${prop} ${value} has no matching published control; inherited styling remains unresolved.`);
+        }
+      }
       const radiusOptions = formComponent.propOptions?.get('inputBorderRadius');
       const radiusRule = formComponent.propRules?.get('inputBorderRadius');
       const exactRadiusTokens = { '0px': '', '2px': 'rounded-sm', '4px': 'rounded', '8px': 'rounded-lg', '12px': 'rounded-xl', '16px': 'rounded-2xl', '9999px': 'rounded-full' };
@@ -7010,6 +7080,11 @@ function addGenericMeasuredTextItems(context, parentId, desktopMeasurement, tabl
       layoutDisplay: 'flex',
       flexDirection: 'column',
       justifyContent: 'flex-start',
+      alignItems: interactiveSurface ? genericMeasuredAlignItems(desktopMeasurement, desktop) : undefined,
+      alignItemsTablet: interactiveSurface && plan.hasTablet
+        ? genericMeasuredAlignItems(tabletMeasurement || desktopMeasurement, tablet || desktop) : undefined,
+      alignItemsMobile: interactiveSurface && plan.hasMobile
+        ? genericMeasuredAlignItems(mobileMeasurement || tabletMeasurement || desktopMeasurement, mobile || tablet || desktop) : undefined,
       ...(fixedTrackRow ? {
         width: isFixedTrackItem ? fixedTrackRow.fixedWidth : undefined,
         maxWidth: isFixedTrackItem ? fixedTrackRow.fixedWidth : undefined,
@@ -7116,6 +7191,7 @@ function addGenericMeasuredTextNode(context, parentId, desktop, tablet, mobile, 
     const surfaceColor = normalizedAuthorableColor(desktop?.backgroundColor);
     return addButton(context, parentId, text, plan.preserveSourceText ? String(desktop?.href || '').trim() : '#', {
       ...props,
+      alignment: 'auto',
       buttonDisplay: 'flex',
       paddingTop: genericCssMetric(desktop?.paddingTop) || '0px',
       paddingTopTablet: plan.hasTablet ? genericCssMetric((tablet || desktop)?.paddingTop) : undefined,

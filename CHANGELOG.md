@@ -35,6 +35,15 @@
   published controls instead of approximating the source with preset defaults.
 - Reject incomplete measured-constraint evidence and stale capture checkpoints;
   preserve explicit responsive constraints without freezing text-derived heights.
+- Keep fluid measured content frames responsive without inferring fluidity from
+  fixed-width counterexamples, and retain native icon order and measured CTA alignment.
+- Preserve measured form label/button leading and system font identities through
+  drafting and diagnostic rendering, including published global references.
+- Verify residual geometry in actual CSS pixels. Missing or incomplete pixel
+  evidence cannot be substituted by normalized geometry or receive a subpixel pass.
+- Render published global bindings and typography presets from the same full
+  live contract used for authoring, with explicit system, Google and local font
+  origins. Unresolved references stop the diagnostic without changing page JSON.
 
 ## 0.4.1 - 2026-09-07
 

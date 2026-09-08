@@ -2193,6 +2193,8 @@ function captureRenderedLayout(
       paddingBottom: style.paddingBottom,
       paddingLeft: style.paddingLeft,
       display,
+      ...(['auto', 'normal', 'start', 'end', 'self-start', 'self-end', 'flex-start', 'flex-end', 'center', 'stretch'].includes(style.alignSelf)
+        ? { alignSelf: style.alignSelf } : {}),
       ...(Object.keys(constraintEvidence).length > 0 ? { constraintEvidence } : {}),
       ...(supportsLayoutGap ? {
         gap: style.gap,
@@ -3246,7 +3248,7 @@ function captureRenderedLayout(
     return {
       label: text,
       labelRect: readRect(label),
-      labelStyle: { fontSize: style.fontSize, fontWeight: style.fontWeight, lineHeight: style.lineHeight, color: style.color },
+      labelStyle: { fontSize: style.fontSize, fontWeight: style.fontWeight, fontFamily: sanitizeFontFamily(style.fontFamily), primaryFontEvidence: resolvePrimaryFontEvidence(style.fontFamily, style.fontStyle, style.fontWeight, fontFaceSet), lineHeight: style.lineHeight, color: style.color },
       ...(fieldGap ? { fieldGap } : {}),
     };
   };
@@ -3404,6 +3406,7 @@ function captureRenderedLayout(
         fontWeight: style.fontWeight,
         fontFamily: style.fontFamily,
         ...(['input', 'select', 'textarea', 'button'].includes(tag) ? {
+          primaryFontEvidence: resolvePrimaryFontEvidence(style.fontFamily, style.fontStyle, style.fontWeight, fontFaceSet),
           height: safeMetric(style.height),
           minHeight: safeMetric(style.minHeight),
           alignSelf: style.alignSelf,

@@ -7968,6 +7968,40 @@ test('generic measured drafting authors every captured SVG through a bound nativ
   });
   const plan = JSON.parse(fs.readFileSync(planPath, 'utf8'));
   assert.deepEqual(plan.unmappedInlineSvg, []);
+
+  referenceLayout.landmarks = [{
+    key: '0', tag: 'section', rect: measuredRect(0, 0, 1440, 500),
+  }];
+  referenceLayout.layoutGroups = [{
+    key: '0.0', parentKey: '0', tag: 'div', display: 'flex', flexDirection: 'column',
+    gap: '20px', rect: measuredRect(80, 60, 400, 380),
+  }];
+  referenceLayout.textBoxes = [1, 3].map((index) => ({
+    structureKey: `0.0.${index}`, parentGroupKey: '0.0', tag: 'p', text: `Owned paragraph ${index}`,
+    rect: measuredRect(80, 60 + index * 60, 400, 30), fontSize: '18px', lineHeight: '30px',
+  }));
+  referenceLayout.iconSurfaces = [0, 2, 4].map((index) => ({
+    structureKey: `0.0.${index}`, parentGroupKey: '0.0', tag: 'svg',
+    rect: measuredRect(80, 60 + index * 60, 32, 32), color: 'rgb(20, 30, 40)', semanticRole: 'decorative',
+  }));
+  fs.writeFileSync(referenceLayoutPath, JSON.stringify(referenceLayout));
+  const orderedMapping = JSON.parse(fs.readFileSync(mappingPath, 'utf8'));
+  orderedMapping.mappings = referenceLayout.iconSurfaces.map(({ structureKey }) => ({
+    structureKey, icon: 'menu', iconRole: 'decorative', iconLabel: '',
+  }));
+  fs.writeFileSync(mappingPath, JSON.stringify(orderedMapping));
+  const orderedResult = spawnSync(process.execPath, [
+    draftScript, '--contract', contractPath, '--brief-json', briefPath, '--out', layoutPath,
+    '--plan-out', planPath, '--reference-manifest', manifestPath, '--icon-mapping', mappingPath, '--json',
+  ], { encoding: 'utf8' });
+  assert.equal(orderedResult.status, 0, orderedResult.stderr || orderedResult.stdout);
+  const orderedLayout = JSON.parse(fs.readFileSync(layoutPath, 'utf8'));
+  const orderedIcons = Object.entries(orderedLayout).filter(([, node]) => node.type.resolvedName === 'IconBlock');
+  assert.equal(orderedIcons.length, 3);
+  const owner = orderedLayout[orderedIcons[0][1].parent];
+  assert.deepEqual(owner.nodes.map((nodeId) => orderedLayout[nodeId].type.resolvedName), [
+    'IconBlock', 'Container', 'IconBlock', 'Container', 'IconBlock',
+  ]);
 });
 
 test('generic measured drafting preserves ordinary root bands and compound links across three viewports', () => {
@@ -8105,11 +8139,13 @@ test('generic measured constraints keep explicit frames while short and long con
     for (let index = 0; index < viewports.length; index += 1) {
       const [label, width, viewportHeight] = viewports[index];
       const height = heights[index];
-      const frameWidth = Math.min(1120, width);
+      const framePadding = [32, 24, 16][index];
+      const frameWidth = Math.min(1120, width - (framePadding * 2));
       const declaredCopyMaxWidth = variant === 'long' ? '' : '240px';
       const copyWidth = declaredCopyMaxWidth
         ? label === 'mobile' ? Math.min(variant === 'short' ? 100 : 343, frameWidth) : 240
         : Math.min(720, frameWidth);
+      const fixedWidth = label === 'mobile' ? 200 : 300;
       const frameLeft = Math.max(0, (width - frameWidth) / 2);
       const referenceLayout = {
         constraintEvidenceVersion: 1,
@@ -8118,6 +8154,7 @@ test('generic measured constraints keep explicit frames while short and long con
         landmarks: [{
           key: '0', tag: 'section', rect: measuredRect(0, 0, width, height),
           flowParticipation: 'normal', backgroundColor: 'rgb(245, 246, 247)', paintedBackground: true,
+          paddingLeft: `${framePadding}px`, paddingRight: `${framePadding}px`,
           ...(declaredMinHeight && label !== 'mobile' ? { constraintEvidence: { minHeight: declaredMinHeight } } : {}),
         }],
         layoutGroups: [{
@@ -8129,6 +8166,10 @@ test('generic measured constraints keep explicit frames while short and long con
           ...(declaredCopyMaxWidth
             ? label !== 'mobile' ? { constraintEvidence: { maxWidth: declaredCopyMaxWidth } } : {}
             : { constraintEvidence: { maxWidth: '720px' } }),
+        }, {
+          key: '0.0.1', parentKey: '0.0', tag: 'div', rect: measuredRect(frameLeft, height - 48, fixedWidth, 16),
+          flowParticipation: 'normal',
+          ...(label !== 'mobile' ? { constraintEvidence: { maxWidth: '300px' } } : {}),
         }],
         textBoxes: [{
           structureKey: '0.0.0.0', parentGroupKey: '0.0.0', tag: 'p', text,
@@ -8160,10 +8201,21 @@ test('generic measured constraints keep explicit frames while short and long con
     const layout = JSON.parse(fs.readFileSync(layoutPath, 'utf8'));
     const plan = JSON.parse(fs.readFileSync(planPath, 'utf8'));
     const section = layout[layout.ROOT.nodes[0]];
+    const explicitFrameConstraint = plan.measuredHardConstraints.find((constraint) => constraint.sourceKey === '0.0');
     const explicitCopyConstraint = plan.measuredHardConstraints.find((constraint) => constraint.sourceKey === '0.0.0');
+    const explicitFixedConstraint = plan.measuredHardConstraints.find((constraint) => constraint.sourceKey === '0.0.1');
     const declaredCopyMaxWidth = variant === 'long' ? '' : '240px';
 
-    assert.equal(section.props.innerMaxWidth, '1120px');
+    assert.equal(section.props.innerMaxWidth, '1184px');
+    assert.equal(section.props.innerPaddingX, '0px');
+    assert.equal(section.props.innerPaddingXTablet, '0px');
+    assert.equal(section.props.innerPaddingXMobile, '0px');
+    assert.equal(layout[explicitFrameConstraint.nodeId].props.width, '100%');
+    assert.equal(layout[explicitFrameConstraint.nodeId].props.maxWidth, '1120px');
+    assert.equal(layout[explicitCopyConstraint.nodeId].props.width, variant === 'long' ? '100%' : '240px');
+    assert.equal(layout[explicitFixedConstraint.nodeId].props.width, '300px');
+    assert.equal(layout[explicitFixedConstraint.nodeId].props.maxWidth, '300px');
+    assert.equal(layout[explicitFixedConstraint.nodeId].props.maxWidthMobile, '100%');
     assert.equal(section.props.minHeight, declaredMinHeight || undefined);
     assert.equal(section.props.minHeightTablet, undefined);
     assert.equal(section.props.minHeightMobile, declaredMinHeight ? '0px' : undefined);
@@ -8408,9 +8460,12 @@ test('generic measured drafting keeps a painted CTA surface on the clickable But
       bandColors: ['rgb(255, 255, 255)'],
       columns: [1],
     });
+    Object.assign(layout.landmarks.at(-1), { display: 'flex', flexDirection: 'column', alignItems: 'stretch' });
     layout.textBoxes[0] = {
       ...layout.textBoxes[0],
       tag: 'a',
+      display: 'flex',
+      alignSelf: label === 'desktop' ? 'flex-start' : label === 'tablet' ? 'center' : 'stretch',
       text: 'Umów konsultację',
       href: '/kontakt/',
       backgroundColor: 'rgb(24, 63, 52)',
@@ -8476,10 +8531,14 @@ test('generic measured drafting keeps a painted CTA surface on the clickable But
   assert.equal(cta.props.borderColor, 'rgb(24, 63, 52)');
   assert.equal(cta.props.paddingTop, '12px');
   assert.equal(cta.props.paddingLeft, '24px');
+  assert.equal(cta.props.alignment, 'auto');
   assert.equal(wrapper.props.backgroundColor, undefined);
   assert.equal(wrapper.props.borderRadius, undefined);
   assert.equal(wrapper.props.borderWidth, undefined);
   assert.equal(wrapper.props.paddingTop, undefined);
+  assert.equal(wrapper.props.alignItems, 'flex-start');
+  assert.equal(wrapper.props.alignItemsTablet, 'center');
+  assert.equal(wrapper.props.alignItemsMobile, 'stretch');
 });
 
 function genericMeasuredLayout({ label, width, height, bandHeights, bandTags, bandColors, columns }) {

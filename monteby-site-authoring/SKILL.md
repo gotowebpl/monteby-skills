@@ -118,6 +118,12 @@ tokens, `globalStyles`, `designTokens`, and finally the mode's neutral fallback.
 must be reported. Never consume `globalStyles.customCSS` as an authoring token.
 An older live contract without `designTokens` remains valid; do not invent the
 missing host values.
+For a static diagnostic preview, pass that same full response through
+`render-monteby-preview.js --contract contract.json`. Use its published
+`fontCatalog` for system, Google and local font origins; do not infer a provider
+from a family name. Unresolved references or font sources block the diagnostic,
+and generated HTML alone never proves the font loaded. Canonical acceptance
+still requires the saved WordPress/PHP render.
 Schema 3 also publishes this skill's `skillVersion`, `minimumBuilderVersion`,
 and named feature gates. Compare those gates to the live contract's
 `productVersion`; the contract's existing `version` remains the contract schema

@@ -16,27 +16,32 @@ function roundHundredth(value) {
 function geometryHeightResiduals(report) {
   const viewports = report?.genericGeometry?.stats?.viewports;
   if (!Array.isArray(viewports)) return [];
-  return viewports.map((viewport) => {
-    const deltas = (Array.isArray(viewport?.geometry?.pairs) ? viewport.geometry.pairs : [])
-      .map((pair) => ({
-        referenceIndex: Number(pair?.referenceIndex),
-        candidateIndex: Number(pair?.candidateIndex),
-        delta: roundHundredth(
-          Number.isFinite(Number(pair?.signedHeightDelta))
-            ? pair.signedHeightDelta
-            : pair?.heightDelta
-        ),
-      }))
-      .filter((pair) => Number.isFinite(pair.referenceIndex)
-        && Number.isFinite(pair.candidateIndex)
-        && Number.isFinite(pair.delta));
-    return {
-      label: String(viewport?.label || ''),
+  const residuals = [];
+  for (const viewport of viewports) {
+    const label = String(viewport?.label || '');
+    const pairs = Array.isArray(viewport?.geometry?.pairs) ? viewport.geometry.pairs : [];
+    if (!label || pairs.length === 0) return [];
+    const deltas = [];
+    for (const pair of pairs) {
+      if (!Number.isFinite(pair?.referenceIndex)
+        || !Number.isFinite(pair?.candidateIndex)
+        || !Number.isFinite(pair?.signedHeightDeltaPx)) {
+        return [];
+      }
+      deltas.push({
+        referenceIndex: pair.referenceIndex,
+        candidateIndex: pair.candidateIndex,
+        delta: roundHundredth(pair.signedHeightDeltaPx),
+      });
+    }
+    residuals.push({
+      label,
       deltas,
       sumAbsoluteDelta: roundHundredth(deltas.reduce((total, pair) => total + Math.abs(pair.delta), 0)),
       maxAbsoluteDelta: roundHundredth(deltas.reduce((maximum, pair) => Math.max(maximum, Math.abs(pair.delta)), 0)),
-    };
-  }).filter((viewport) => viewport.label && viewport.deltas.length > 0);
+    });
+  }
+  return residuals;
 }
 
 function sameResiduals(left, right) {

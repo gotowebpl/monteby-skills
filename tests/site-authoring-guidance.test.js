@@ -115,10 +115,18 @@ test('skill gates provider-rendered host widgets and separates them from product
 
 test('global styles are an explicit site-wide GET merge save task with no imports or custom JS', () => {
   const guidance = read(path.join(references, 'global-styles-authoring.md'));
+  const brief = read(path.join(references, 'brief-to-monteby.md'));
+  const benchmark = read(path.join(references, 'visual-benchmark-loop.md'));
   assert.match(skill, /references\/global-styles-authoring\.md/);
   assert.match(guidance, /GET → merge → full save|Fetch[\s\S]*Merge[\s\S]*Save/);
   assert.match(guidance, /`@import` is invalid/);
   assert.match(guidance, /Do not write Custom JS/);
+  assert.match(skill, /render-monteby-preview\.js --contract contract\.json/);
+  assert.match(skill, /`fontCatalog` for system, Google and local font origins/);
+  assert.match(brief, /render-monteby-preview\.js \\\n  --contract \.monteby\/contract\.json/);
+  assert.match(benchmark, /render-monteby-preview\.js --contract contract\.json/);
+  assert.match(brief, /Typ kontrolki nie zwalnia z walidacji/);
+  assert.doesNotMatch(brief, /ButtonBlock` ma wyłącznie `fontSize`|nie są sprawdzane/);
 });
 
 test('global templates use activePostId and snapshots use the layout identity resource', () => {

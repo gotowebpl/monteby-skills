@@ -517,7 +517,7 @@ childProcess.spawnSync = function canonicalHarness(command, args, options) {
       stats: {
         viewports: ['desktop', 'tablet', 'mobile'].map((label) => ({
           label,
-          geometry: { pairs: [{ referenceIndex: 0, candidateIndex: 0, signedHeightDelta: 0.2 }] },
+          geometry: { pairs: [{ referenceIndex: 0, candidateIndex: 0, signedHeightDelta: 0.0002, signedHeightDeltaPx: 0.2 }] },
         })),
       },
     },
@@ -638,7 +638,7 @@ function subpixelGeometryReport() {
         viewports: ['desktop', 'tablet', 'mobile'].map((label) => ({
           label,
           geometry: {
-            pairs: [{ referenceIndex: 0, candidateIndex: 0, signedHeightDelta: 0.2 }],
+            pairs: [{ referenceIndex: 0, candidateIndex: 0, signedHeightDelta: 0.0002, signedHeightDeltaPx: 0.2 }],
           },
         })),
       },

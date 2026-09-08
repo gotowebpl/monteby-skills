@@ -18,7 +18,8 @@ function geometry(deltasByViewport) {
             pairs: deltas.map((delta, index) => ({
               referenceIndex: index,
               candidateIndex: index,
-              signedHeightDelta: delta,
+              signedHeightDelta: typeof delta === 'number' ? delta / 1000 : delta.normalized,
+              signedHeightDeltaPx: typeof delta === 'number' ? delta : delta.pixels,
             })),
           },
         })),
@@ -35,6 +36,30 @@ test('subpixel fixed point accepts stable 0.99px sums and rejects 1.01px', () =>
 
   const over = geometry({ desktop: [0.5, 0.5, 0.01] });
   assert.equal(evaluateSubpixelFixedPoint(over, over, []).eligible, false);
+});
+
+test('subpixel fixed point uses pixel evidence instead of normalized geometry deltas', () => {
+  const eighteenPixels = geometry({ desktop: [{ normalized: 0.001, pixels: 18 }] });
+  const evaluation = evaluateSubpixelFixedPoint(eighteenPixels, eighteenPixels, []);
+
+  assert.equal(evaluation.stableAtHundredthPixel, true);
+  assert.equal(evaluation.withinBudget, false);
+  assert.equal(evaluation.eligible, false);
+  assert.equal(evaluation.viewports[0].maxAbsoluteDelta, 18);
+});
+
+test('subpixel fixed point fails closed for missing or partially invalid pixel evidence', () => {
+  const valid = geometry({ desktop: [0.2] });
+  for (const signedHeightDeltaPx of [undefined, null, Number.NaN, Number.POSITIVE_INFINITY]) {
+    const invalid = geometry({ desktop: [0.2] });
+    invalid.genericGeometry.stats.viewports[0].geometry.pairs[0].signedHeightDeltaPx = signedHeightDeltaPx;
+    assert.equal(evaluateSubpixelFixedPoint(invalid, invalid, []).eligible, false);
+  }
+
+  const partial = geometry({ desktop: [0.2, 0.3] });
+  delete partial.genericGeometry.stats.viewports[0].geometry.pairs[1].signedHeightDeltaPx;
+  assert.equal(evaluateSubpixelFixedPoint(partial, partial, []).eligible, false);
+  assert.equal(evaluateSubpixelFixedPoint(valid, partial, []).stableAtHundredthPixel, false);
 });
 
 test('subpixel fixed point rejects unstable measurements and semantic blockers', () => {

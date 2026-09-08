@@ -1218,6 +1218,7 @@ test('rendered text boxes retain control-backed computed style evidence without 
     marginBottom: '20px',
     marginLeft: '-4px',
     display: 'inline-flex',
+    alignSelf: 'flex-start',
     gap: '10px',
     rowGap: '6px',
     columnGap: '10px',
@@ -1242,6 +1243,7 @@ test('rendered text boxes retain control-backed computed style evidence without 
     padding: [textBox.paddingTop, textBox.paddingRight, textBox.paddingBottom, textBox.paddingLeft],
     margins: [textBox.marginTop, textBox.marginRight, textBox.marginBottom, textBox.marginLeft],
     display: textBox.display,
+    alignSelf: textBox.alignSelf,
     gaps: [textBox.gap, textBox.rowGap, textBox.columnGap],
     constraintEvidence: textBox.constraintEvidence,
   }, {
@@ -1256,6 +1258,7 @@ test('rendered text boxes retain control-backed computed style evidence without 
     padding: ['6px', '14px', '8px', '16px'],
     margins: ['12px', '18px', '20px', '-4px'],
     display: 'inline-flex',
+    alignSelf: 'flex-start',
     gaps: ['10px', '6px', '10px'],
     constraintEvidence: { minHeight: '44px', maxWidth: '320px' },
   });
