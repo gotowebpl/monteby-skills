@@ -27,6 +27,8 @@
   and content bands are not misreported as removable candidate sections.
 - Render native IconBlock glyphs and their accessible names in diagnostic previews;
   load their font dependency and retain the public textarea minimum height.
+- Preserve boundary non-breaking spaces in content verification and diagnostic labels;
+  losing a hard space can no longer produce an exact-content verdict.
 
 ## 0.4.1 - 2026-09-07
 

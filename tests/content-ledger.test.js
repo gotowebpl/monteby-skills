@@ -48,6 +48,19 @@ test('node-map ledger reads only content-bearing props, including repeater items
   ]);
 });
 
+test('content ledger preserves boundary NBSP and detects its loss instead of declaring exact parity', () => {
+  const text = '\u00a0Cena\u00a0';
+  assert.equal(normalizeContentText(' \t<strong>&nbsp;Cena&#160;</strong>\r\n '), text);
+  assert.equal(normalizeContentText('\u00a0\u00a0'), '\u00a0\u00a0');
+  assert.equal(normalizeContentText(' \tCena \r\n '), 'Cena');
+  const reference = buildContentLedger([{ structureKey: '0.0', text }]);
+  const exact = buildContentLedger(nodeMapContentEntries({ title: { props: { text } } }));
+  const stripped = buildContentLedger(nodeMapContentEntries({ title: { props: { text: 'Cena' } } }));
+  assert.equal(compareContentLedgers(reference, exact).complete, true);
+  assert.equal(compareContentLedgers(reference, stripped).complete, false);
+  assert.notEqual(reference.items[0].sha256, stripped.items[0].sha256);
+});
+
 test('node-map ledger keeps duplicate rendered repeater occurrences in one node', () => {
   const entries = nodeMapContentEntries({
     tabs: {

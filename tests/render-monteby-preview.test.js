@@ -68,6 +68,23 @@ test('textarea diagnostic keeps the public frontend minimum independently of sin
   assert.match(html, /<textarea[^>]*rows="4"[^>]*height:50px;/);
 });
 
+test('diagnostic content preserves NBSP at text and form-label boundaries', () => {
+  const html = renderPreview({
+    ROOT: { type: { resolvedName: 'RootCanvas' }, props: {}, nodes: ['heading', 'text', 'form'] },
+    heading: { type: { resolvedName: 'Heading' }, props: { text: '\u00a0Nagłówek\u00a0' }, nodes: [] },
+    text: { type: { resolvedName: 'Text' }, props: { text: '\u00a0Opis\u00a0' }, nodes: [] },
+    form: {
+      type: { resolvedName: 'FormBlock' }, nodes: [], props: {
+        submitLabel: '\u00a0Wyślij\u00a0',
+        fields: [{ type: 'text', name: 'name', label: '\u00a0Imię\u00a0', placeholder: '\u00a0Podaj imię\u00a0' }],
+      },
+    },
+  }, 'monteby-preview-boundary-nbsp-');
+  for (const content of ['Nagłówek', 'Opis', 'Wyślij', 'Imię', 'Podaj imię']) {
+    assert.ok(html.includes(`\u00a0${content}\u00a0`), `${content} retains both hard spaces`);
+  }
+});
+
 test('button preview does not invent a browser border from a colour-only binding', () => {
   const cases = [
     ['plain', {}, '0px'],

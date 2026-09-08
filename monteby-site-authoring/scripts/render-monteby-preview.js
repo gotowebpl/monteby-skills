@@ -1712,7 +1712,7 @@ function safeTextValue(value, fallback = '') {
   if (typeof value !== 'string' || CONTROL_CHARACTER_PATTERN.test(value)) {
     return fallback;
   }
-  return value.trim();
+  return value.replace(/^ +| +$/gu, '');
 }
 
 function safeMaterialIcon(value) {

@@ -51,7 +51,7 @@ function normalizeContentText(value) {
   return decodeEntities(String(value).replace(/<[^>]+>/gu, ' '))
     .normalize('NFC')
     .replace(/[\t\n\f\r ]+/gu, ' ')
-    .trim();
+    .replace(/^ +| +$/gu, '');
 }
 
 function textSha256(text) {
