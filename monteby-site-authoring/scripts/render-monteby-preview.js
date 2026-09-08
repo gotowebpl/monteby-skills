@@ -480,7 +480,7 @@ function googleFontLinks(nodeMap, allowedFontWeights = null, publishedCatalog = 
     links.push(`<link rel="stylesheet" href="${escapeAttr(`https://fonts.googleapis.com/css2?${familyQuery}&display=swap`)}">`);
   }
   if (usesMaterialSymbols) {
-    links.push(`<link rel="stylesheet" href="${escapeAttr('https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200')}">`);
+    links.push(`<link rel="stylesheet" href="${escapeAttr('https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@24,500,0,0&display=block')}">`);
   }
   return links.join('');
 }

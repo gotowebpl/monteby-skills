@@ -92,6 +92,12 @@ test('native IconBlock preview preserves measured glyphs, sizing, colours and ac
   }
   const html = renderPreview(nodes, 'monteby-preview-native-icons-');
   assert.match(html, /font-variation-settings:"FILL" 0,"wght" 500,"GRAD" 0,"opsz" 24/);
+  const iconStylesheets = Array.from(html.matchAll(/<link rel="stylesheet" href="([^"]+)"/g))
+    .map((match) => new URL(match[1].replaceAll('&amp;', '&')))
+    .filter((url) => url.searchParams.get('family')?.startsWith('Material Symbols Rounded:'));
+  assert.equal(iconStylesheets.length, 1);
+  assert.equal(iconStylesheets[0].searchParams.get('family'), 'Material Symbols Rounded:opsz,wght,FILL,GRAD@24,500,0,0');
+  assert.equal(iconStylesheets[0].searchParams.get('display'), 'block');
   assert.match(html, /class="material-symbols-rounded" aria-hidden="true" style="font-size:32px;line-height:1;color:#365985;flex-shrink:0">tune<\/span>/);
   assert.match(html, /class="material-symbols-rounded" role="img" aria-label="Checked &amp; approved" style="font-size:48px;line-height:1;color:#3b82f6;flex-shrink:0">check_circle<\/span>/);
   assert.match(html, /aria-hidden="true" style="font-size:8px;[^>]*>schedule<\/span>/);
@@ -957,7 +963,7 @@ test('preview renderer renders StatsGrid authoring props and responsive columns'
     },
   }, 'monteby-preview-stats-grid-');
 
-  assert.match(html, /family=Material\+Symbols\+Rounded:opsz,wght,FILL,GRAD@20\.\.48,100\.\.700,0\.\.1,-50\.\.200/);
+  assert.match(html, /family=Material\+Symbols\+Rounded:opsz,wght,FILL,GRAD@24,500,0,0&amp;display=block/);
   assert.match(html, /<dl class="gotoweb-grid-template-columns--responsive" style="display:grid;grid-template-columns:repeat\(3, minmax\(0, 1fr\)\);--gotoweb-grid-template-columns-base:repeat\(3, minmax\(0, 1fr\)\);--gotoweb-grid-template-columns-tablet:repeat\(2, minmax\(0, 1fr\)\);--gotoweb-grid-template-columns-mobile:repeat\(1, minmax\(0, 1fr\)\)/);
   assert.match(html, /background:#c8ddbd;border:1px solid #c8ddbd;border-radius:14px;overflow:hidden/);
   assert.match(html, /<div style="background:#f7fff0;padding:18px;display:flex;flex-direction:column;gap:4px">/);
