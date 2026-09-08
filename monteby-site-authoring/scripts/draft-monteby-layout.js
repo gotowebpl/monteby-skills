@@ -1728,9 +1728,13 @@ function summarizeReferenceForms(interactions, layoutGroups, textBoxes, band) {
     if (group.submits.length !== 1) {
       throw new Error(`Generic measured reference contract gaps:\n- [generic_semantic_form_submit_unsupported] Form ${formKey} exposes ${group.submits.length} submit controls; FormBlock requires exactly one deterministic submit.`);
     }
-    const formIds = unique(group.fields.concat(group.submits)
+    const capturedFormIds = group.fields.concat(group.submits)
       .map((control) => String(control?.formId || '').trim())
-      .filter(Boolean));
+      .filter(Boolean);
+    if (capturedFormIds.some((formId) => !/^[A-Za-z][A-Za-z0-9_-]{0,63}$/u.test(formId))) {
+      throw new Error(`Generic measured reference contract gaps:\n- [generic_semantic_form_id_invalid] DOM form ${formKey} carries an unsafe stable form ID.`);
+    }
+    const formIds = unique(capturedFormIds);
     if (formIds.length > 1) {
       throw new Error(`Generic measured reference contract gaps:\n- [generic_semantic_form_ownership_mismatch] DOM form ${formKey} carries conflicting stable form IDs: ${formIds.join(', ')}.`);
     }
@@ -1857,15 +1861,9 @@ function summarizeReferenceForm(fields, submit, layoutGroups, textBoxes, band, f
       ...(formColumns === 2 ? { columnSpan: spansRow || type === 'checkbox' ? 2 : 1 } : {}),
     };
   });
-  const capturedFormIds = candidate.fields.concat(candidate.submit)
-    .map((control) => String(control?.formId || '').trim());
-  const formId = capturedFormIds.length > 0
-    && capturedFormIds.every((candidateFormId) => (
-      candidateFormId === capturedFormIds[0]
-      && /^[A-Za-z][A-Za-z0-9_-]{0,63}$/u.test(candidateFormId)
-    ))
-    ? capturedFormIds[0]
-    : '';
+  const formId = candidate.fields.concat(candidate.submit)
+    .map((control) => String(control?.formId || '').trim())
+    .find(Boolean) || '';
 
   return {
     hostGroupKey: candidate.group.key,
@@ -2677,6 +2675,8 @@ function draftLayout(contractIndex, brief, contractPayload = {}) {
     genericMeasuredSurfaceNodes: new Map(),
     genericMeasuredOrderEntries: new Map(),
     genericMeasuredLoweredMediaKeys: new Set(),
+    reservedFormIds: new Set(),
+    authoredFormIds: new Set(),
     mappedIconKeys: new Set(),
     replacementProfile: draftStrategy.allowFamilyProfile
       ? replacementProfileForBrief(brief)
@@ -2696,6 +2696,22 @@ function draftLayout(contractIndex, brief, contractPayload = {}) {
   let genericPlan = null;
   if (genericMeasuredReference) {
     genericPlan = buildGenericMeasuredSectionPlan(brief);
+    const pendingMeasurements = genericPlan.bands
+      .map((band) => band.desktop)
+      .filter(Boolean);
+    while (pendingMeasurements.length > 0) {
+      const measurement = pendingMeasurements.pop();
+      const formId = measurement?.semanticWidget === 'FormBlock'
+        ? String(measurement.props?.formId || '').trim()
+        : '';
+      if (formId) {
+        context.reservedFormIds.add(formId);
+      }
+      pendingMeasurements.push(
+        ...(Array.isArray(measurement?.groups) ? measurement.groups : []),
+        ...(Array.isArray(measurement?.children) ? measurement.children : [])
+      );
+    }
     assertGenericMeasuredContract(context, genericPlan, section, container);
     addGenericMeasuredSections(context, genericPlan, section, container);
     addGenericMeasuredIcons(context, genericPlan);
@@ -5977,11 +5993,23 @@ function addGenericMeasuredGroups(context, parentId, desktopParent, tabletParent
         contentIndex,
         index
       );
-      const rawFormId = plan.preserveSourceText
+      const capturedFormId = plan.preserveSourceText
         ? String(desktop.props?.formId || '').trim()
-        : `form-${contentIndex + 1}-${index + 1}`;
+        : '';
+      const generatedFormId = `form-${contentIndex + 1}-${index + 1}`;
+      let rawFormId = capturedFormId || generatedFormId;
       if (!/^[A-Za-z][A-Za-z0-9_-]{0,63}$/u.test(rawFormId)) {
         throw new Error('Generic measured reference contract gaps:\n- [generic_semantic_form_id_invalid] Captured FormBlock formId is not a safe stable identifier.');
+      }
+      if (capturedFormId && context.authoredFormIds.has(rawFormId)) {
+        throw new Error(`Generic measured reference contract gaps:\n- [generic_semantic_form_ownership_mismatch] Captured FormBlock formId ${rawFormId} is shared by more than one DOM form.`);
+      }
+      for (
+        let suffix = 2;
+        !capturedFormId && (context.reservedFormIds.has(rawFormId) || context.authoredFormIds.has(rawFormId));
+        suffix += 1
+      ) {
+        rawFormId = `${generatedFormId}-${suffix}`;
       }
       const measuredFormProps = { ...(desktop.props || {}) };
       delete measuredFormProps.fields;
@@ -5992,6 +6020,7 @@ function addGenericMeasuredGroups(context, parentId, desktopParent, tabletParent
         ...(formAuthoringProps.has('formId') ? { formId: rawFormId } : {}),
         ...(submitLabel ? { submitLabel } : {}),
       });
+      context.authoredFormIds.add(rawFormId);
       registerGenericMeasuredDescendantSurfaces(
         context,
         desktop,

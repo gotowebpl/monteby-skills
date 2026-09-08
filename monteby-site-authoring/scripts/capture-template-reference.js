@@ -2615,6 +2615,13 @@ function captureRenderedLayout(
     const height = Math.max(0, Math.min(rect.bottom, viewport.height) - Math.max(rect.top, 0));
     return round(width * height);
   };
+  const readAttribute = (element, name) => (
+    typeof element.getAttribute === 'function' ? String(element.getAttribute(name) || '').trim() : ''
+  );
+  const boundedAttribute = (element, name, maximumLength = 500) => {
+    const value = readAttribute(element, name);
+    return value.length <= maximumLength ? value : '';
+  };
   const semanticGroupTags = new Set(landmarkSelector.split(','));
   const excludedGroupTags = new Set([
     'html', 'body', 'script', 'style', 'template', 'noscript', 'img', 'picture', 'video',
@@ -2624,11 +2631,74 @@ function captureRenderedLayout(
   const textContainerTags = new Set([
     'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'span', 'label', 'small', 'strong', 'em', 'b', 'i', 'li',
   ]);
+  const structuredLinkTextTags = new Set([
+    'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'blockquote', 'li',
+  ]);
+  const structuredLinkMediaTags = new Set(['img', 'picture', 'video', 'canvas', 'svg']);
+  const structuredLinkedElements = new Set(allDocumentElements.filter((element) => {
+    if (elementTag(element) !== 'a') {
+      return false;
+    }
+    for (let ancestor = element.parentElement; ancestor; ancestor = ancestor.parentElement) {
+      if (elementTag(ancestor) === 'a') {
+        return false;
+      }
+    }
+
+    let textSurfaceCount = 0;
+    let visualSurfaceCount = 0;
+    const pending = [...elementChildren(element)];
+    while (pending.length > 0 && textSurfaceCount < 2 && !(textSurfaceCount >= 1 && visualSurfaceCount >= 1)) {
+      const descendant = pending.shift();
+      const tag = elementTag(descendant);
+      if (!tag || tag === 'a') {
+        continue;
+      }
+      let semanticallyHidden = false;
+      for (let current = descendant; current && current !== element; current = current.parentElement) {
+        if (readAttribute(current, 'aria-hidden').toLowerCase() === 'true') {
+          semanticallyHidden = true;
+          break;
+        }
+      }
+      const rect = readRect(descendant);
+      const style = window.getComputedStyle(descendant);
+      if (semanticallyHidden || !intersectsDocumentCanvas(rect) || !isVisible(descendant, rect, style)) {
+        continue;
+      }
+      if (isIconTreeElement(descendant) || structuredLinkMediaTags.has(tag)) {
+        visualSurfaceCount += 1;
+        continue;
+      }
+      if (structuredLinkTextTags.has(tag) && normalizeText(
+        typeof descendant.innerText === 'string' ? descendant.innerText : descendant.textContent
+      )) {
+        textSurfaceCount += 1;
+      }
+      pending.push(...elementChildren(descendant));
+    }
+    return textSurfaceCount >= 2 || (textSurfaceCount >= 1 && visualSurfaceCount >= 1);
+  }));
+  const neutralPageWrapperElements = new Set(allDocumentElements.filter((element) => {
+    if (element.parentElement !== document.body || elementChildren(element).length === 0) {
+      return false;
+    }
+    const rect = readRect(element);
+    const style = window.getComputedStyle(element);
+    const position = String(style.position || '').trim().toLowerCase();
+    return rect.top <= 1
+      && rect.width >= viewport.width * 0.9
+      && rect.height >= viewport.scrollHeight * 0.85
+      && !['absolute', 'fixed'].includes(position)
+      && !hasVisibleSurface(style, rect);
+  }));
   const compositeDisplays = new Set(['flex', 'inline-flex', 'grid', 'inline-grid']);
   const allLayoutGroupCandidates = allDocumentElements
     .map((element) => {
       const tag = elementTag(element);
-      if (!tag || excludedGroupTags.has(tag) || isIconTreeElement(element)) {
+      const structuredLinkedGroup = tag === 'a' && structuredLinkedElements.has(element);
+      if (!tag || neutralPageWrapperElements.has(element)
+        || (excludedGroupTags.has(tag) && !structuredLinkedGroup) || isIconTreeElement(element)) {
         return null;
       }
 
@@ -2662,7 +2732,13 @@ function captureRenderedLayout(
         && children.length > 0
         && !textContainerTags.has(tag)
         && hasVisibleSurface(style, rect);
-      if (!semantic && !layoutContainer && !nonLeafLayoutChild && !paintedEmptyLayoutChild && !selfPositionedSurface) {
+      const rootFlowChild = !neutralPageWrapperElements.has(element)
+        && (parent === document.body || neutralPageWrapperElements.has(parent))
+        && elementFlowParticipation(element) === 'normal'
+        && children.length > 0
+        && !textContainerTags.has(tag);
+      if (!semantic && !layoutContainer && !nonLeafLayoutChild && !paintedEmptyLayoutChild
+        && !selfPositionedSurface && !rootFlowChild && !structuredLinkedGroup) {
         return null;
       }
 
@@ -2860,8 +2936,12 @@ function captureRenderedLayout(
     })
     .filter(Boolean)
     .filter(({ element }) => {
+      if (elementTag(element) === 'a' && structuredLinkedElements.has(element)) {
+        return false;
+      }
       for (let ancestor = element.parentElement; ancestor; ancestor = ancestor.parentElement) {
-        if (['a', 'button'].includes(elementTag(ancestor))) {
+        const ancestorTag = elementTag(ancestor);
+        if (ancestorTag === 'button' || (ancestorTag === 'a' && !structuredLinkedElements.has(ancestor))) {
           return false;
         }
       }
@@ -2949,7 +3029,8 @@ function captureRenderedLayout(
     .filter((element) => !directTextExcludedTags.has(elementTag(element)) && !isIconTreeElement(element))
     .filter((element) => {
       for (let ancestor = element.parentElement; ancestor; ancestor = ancestor.parentElement) {
-        if (['a', 'button'].includes(elementTag(ancestor))) {
+        const ancestorTag = elementTag(ancestor);
+        if (ancestorTag === 'button' || (ancestorTag === 'a' && !structuredLinkedElements.has(ancestor))) {
           return false;
         }
       }
@@ -3124,9 +3205,6 @@ function captureRenderedLayout(
     .filter(Boolean);
   const landmarks = allLandmarks.slice(0, evidenceLimits.landmarks);
 
-  const readAttribute = (element, name) => (
-    typeof element.getAttribute === 'function' ? String(element.getAttribute(name) || '').trim() : ''
-  );
   const readAriaState = (element, name) => {
     const value = readAttribute(element, name).toLowerCase();
     if (value === 'true') {
@@ -3136,10 +3214,6 @@ function captureRenderedLayout(
       return false;
     }
     return value === 'mixed' ? 'mixed' : null;
-  };
-  const boundedAttribute = (element, name, maximumLength = 500) => {
-    const value = readAttribute(element, name);
-    return value.length <= maximumLength ? value : '';
   };
   const associatedLabel = (element) => {
     const labels = Array.from(element?.labels || []);

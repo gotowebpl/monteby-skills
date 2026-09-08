@@ -28,6 +28,7 @@ const {
 const {
   buildControlIndex,
   normalizeControlValue,
+  publishedControlReferences,
 } = require('./control-contract');
 
 function parseArgs(argv) {
@@ -177,9 +178,6 @@ function main() {
   const controls = buildControlIndex(contract);
   const rootComponents = new Set(contract.authoring?.topLevelRootComponents || ['Section']);
   const designProfile = buildResolvedDesignProfile(contract);
-  const publishedReferences = new Set(
-    Object.values(designProfile.tokens).map((token) => token.reference).filter(Boolean)
-  );
 
   const errors = [];
   const repairs = [];
@@ -227,7 +225,9 @@ function main() {
         continue;
       }
       const control = controls.get(`${name}.${prop}`);
-      const { value: normalized, note } = normalizeValue(control, value, publishedReferences);
+      const { value: normalized, note } = normalizeValue(
+        control || {}, value, publishedControlReferences(contract, name, prop, control),
+      );
       if (note) {
         repairs.push({ node: nodeId, prop, message: note, dropped: normalized === null });
       }

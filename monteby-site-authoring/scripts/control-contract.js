@@ -122,6 +122,50 @@ function snap(value, step) {
   return Number((Math.round(value / step) * step).toFixed(6));
 }
 
+function publishedControlReferences(contract, component, prop, control = {}) {
+  const references = new Set();
+  const tokens = isRecord(contract?.designTokens?.tokens) ? contract.designTokens.tokens : {};
+  const binding = contract?.designTokens?.bindings?.[component]?.[prop];
+  const boundReference = typeof binding === 'string' ? tokens[binding]?.reference : undefined;
+  const color = ['color', 'border-color'].includes(control?.type) || /color$/i.test(prop);
+  const font = control?.type === 'font-picker' || /fontfamily$/i.test(prop);
+  for (const token of Object.values(tokens)) {
+    const reference = token?.reference;
+    if (typeof reference !== 'string' || !/^var\(--monteby-token-[a-z0-9_-]+\)$/i.test(reference)) continue;
+    if (reference === boundReference || (color && /^var\(--monteby-token-colors-[a-z0-9_-]+\)$/i.test(reference))) {
+      references.add(reference);
+    }
+  }
+  const globalStyles = contract?.globalStyles || {};
+  if (color) {
+    for (const id of Object.keys(globalStyles.colors || {})) {
+      if (!/^[a-z0-9_-]+$/i.test(id)) continue;
+      references.add(`var(--gcb-color-${id})`);
+      references.add(`var(--mb-${id})`);
+    }
+  }
+  if (font) {
+    for (const id of Object.keys(globalStyles.typography?.fonts || {})) {
+      if (/^[a-z0-9_-]+$/i.test(id)) references.add(`var(--gcb-font-${id})`);
+    }
+  }
+  const typographyFields = {
+    fontsize: 'font-size', fontweight: 'font-weight', lineheight: 'line-height',
+    letterspacing: 'letter-spacing', texttransform: 'text-transform',
+  };
+  const typographyField = font ? 'font-family' : Object.entries(typographyFields)
+    .find(([suffix]) => prop.toLowerCase().endsWith(suffix))?.[1];
+  if (typographyField && !color) {
+    for (const id of Object.keys(globalStyles.typography?.presets || {})) {
+      if (/^[a-z0-9_-]+$/i.test(id)) references.add(`var(--gcb-typo-${id}-${typographyField})`);
+    }
+  }
+  if (component === 'Section' && prop === 'innerMaxWidth' && contract?.designTokens?.layout?.contentWidth) {
+    references.add('var(--monteby-token-layout-content-width)');
+  }
+  return references;
+}
+
 function normalizeControlValue(control, value, publishedReferences = new Set()) {
   if (!isRecord(control)) return { accepted: true, value };
   const label = JSON.stringify(value);
@@ -196,5 +240,6 @@ module.exports = {
   collectControlMetadata,
   controlProps,
   normalizeControlValue,
+  publishedControlReferences,
   optionValues,
 };

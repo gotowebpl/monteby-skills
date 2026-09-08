@@ -2248,6 +2248,156 @@ test('capture preserves anchor ownership, bounded direct text, and native form s
   ]);
 });
 
+test('capture preserves ordinary root bands and decomposes only compound linked cards', () => {
+  const noticeText = textElement('p', 'Wzorzec testowy bez danych klienta.', rect(24, 20, 272, 22), [], {});
+  const noticeFrame = layoutElement('div', rect(16, 8, 288, 45), [noticeText]);
+  const notice = layoutElement('div', rect(0, 0, 320, 61), [noticeFrame], {
+    backgroundColor: 'rgb(246, 240, 224)',
+    paddingBottom: '8px',
+    paddingTop: '8px',
+  });
+  const heroHeading = textElement('h1', 'Neutralny wzorzec', rect(24, 100, 272, 50), [], {});
+  const hero = layoutElement('section', rect(0, 61, 320, 180), [heroHeading]);
+
+  const cardIcon = layoutElement('svg', rect(32, 300, 24, 24));
+  const cardHeading = textElement('h3', 'Dopasuj parametry', rect(32, 336, 220, 28), [], {});
+  const cardBody = textElement('p', 'Oddzielna treść karty.', rect(32, 376, 240, 42), [], {});
+  const cardContent = layoutElement('div', rect(24, 288, 272, 148), [cardIcon, cardHeading, cardBody]);
+  const card = layoutElement('a', rect(16, 280, 288, 164), [cardContent], {
+    backgroundColor: 'rgb(248, 248, 248)',
+    borderRadius: '12px',
+  });
+  card.innerText = 'tune Dopasuj parametry Oddzielna treść karty.';
+  card.textContent = card.innerText;
+  card.textNodes = [];
+  card.getAttribute = (name) => name === 'href' ? '/konfigurator' : null;
+  card.hasAttribute = (name) => name === 'href';
+
+  const simpleIcon = layoutElement('svg', rect(196, 466, 18, 18));
+  const simpleLabel = textElement('span', 'Czytaj dalej', rect(88, 464, 98, 22), [], {});
+  const simpleLink = layoutElement('a', rect(76, 452, 150, 44), [simpleIcon, simpleLabel], {
+    display: 'flex',
+  });
+  simpleLink.innerText = 'Czytaj dalej';
+  simpleLink.textContent = 'Czytaj dalej';
+  simpleLink.textNodes = [{ nodeValue: 'Czytaj dalej', rangeRects: [] }];
+  simpleLink.getAttribute = (name) => name === 'href' ? '/wiecej' : null;
+  simpleLink.hasAttribute = (name) => name === 'href';
+
+  const cardsFrame = layoutElement('div', rect(16, 260, 288, 260), [card, simpleLink], {
+    display: 'grid',
+    gap: '8px',
+  });
+  const cardsBand = layoutElement('div', rect(0, 241, 320, 299), [cardsFrame], {
+    paddingBottom: '20px',
+    paddingLeft: '16px',
+    paddingRight: '16px',
+    paddingTop: '20px',
+  });
+  const app = layoutElement('div', rect(0, 0, 320, 540), [notice, hero, cardsBand], {
+    display: 'flex',
+    flexDirection: 'column',
+  });
+
+  const { layout } = captureWithMockDom([
+    noticeText,
+    heroHeading,
+    card,
+    cardHeading,
+    cardBody,
+    simpleLink,
+    simpleLabel,
+  ], [cardIcon, simpleIcon], {}, {
+    bodyChildren: [app],
+    landmarkElements: [hero],
+    interactionElements: [card, simpleLink],
+    scrollHeight: 540,
+  });
+
+  const groupByKey = new Map(layout.layoutGroups.map((group) => [group.key, group]));
+  assert.equal(groupByKey.has('0'), false);
+  assert.equal(groupByKey.get('0.0').parentKey, '');
+  assert.equal(groupByKey.get('0.2').parentKey, '');
+  assert.equal(groupByKey.get('0.2.0').parentKey, '0.2');
+  assert.deepEqual(layout.layoutGroups.filter((group) => group.tag === 'a').map((group) => ({
+    key: group.key,
+    href: group.href,
+  })), [{ key: '0.2.0.0', href: '/konfigurator' }]);
+  assert.equal(layout.textBoxes.some((box) => box.tag === 'a' && box.text.includes('Dopasuj parametry')), false);
+  assert.deepEqual(layout.textBoxes.filter((box) => ['Dopasuj parametry', 'Oddzielna treść karty.'].includes(box.text)).map((box) => ({
+    tag: box.tag,
+    parentGroupKey: box.parentGroupKey,
+  })), [
+    { tag: 'h3', parentGroupKey: '0.2.0.0' },
+    { tag: 'p', parentGroupKey: '0.2.0.0' },
+  ]);
+  assert.deepEqual(layout.textBoxes.filter((box) => box.text === 'Czytaj dalej').map((box) => ({
+    tag: box.tag,
+    href: box.href,
+  })), [{ tag: 'a', href: '/wiecej' }]);
+  assert.equal(layout.iconSurfaces.some((icon) => icon.structureKey === '0.2.0.0.0.0'), true);
+  assert.equal(layout.evidenceCompleteness.categories.layoutGroups.truncated, 0);
+  assert.equal(layout.evidenceCompleteness.categories.textBoxes.truncated, 0);
+});
+
+test('capture keeps a full-page semantic landmark while exposing its ordinary child bands', () => {
+  const noticeText = textElement('p', 'Wiadomość przed treścią', rect(20, 20, 280, 24), [], {});
+  const notice = layoutElement('div', rect(0, 0, 320, 64), [noticeText], {
+    backgroundColor: 'rgb(246, 240, 224)',
+  });
+  const bodyText = textElement('p', 'Treść strony', rect(20, 100, 280, 40), [], {});
+  const bodyBand = layoutElement('div', rect(0, 64, 320, 436), [bodyText]);
+  const main = layoutElement('main', rect(0, 0, 320, 500), [notice, bodyBand], {
+    display: 'grid',
+  });
+
+  const { layout } = captureWithMockDom([noticeText, bodyText], [], {}, {
+    bodyChildren: [main],
+    landmarkElements: [main],
+    scrollHeight: 500,
+  });
+
+  assert.equal(layout.layoutGroups.some((group) => group.key === '0'), false);
+  assert.deepEqual(layout.layoutGroups.filter((group) => !group.parentKey).map((group) => group.key), ['0.0', '0.1']);
+  assert.deepEqual(layout.landmarks.map((landmark) => ({
+    tag: landmark.tag,
+    rect: landmark.rect,
+  })), [{ tag: 'main', rect: rect(0, 0, 320, 500) }]);
+});
+
+test('capture does not promote a simple link because hidden descendants resemble card content', () => {
+  const label = textElement('span', 'Przejdź dalej', rect(24, 20, 112, 24), [], {});
+  const hiddenHeading = textElement('h3', 'Ukryty nagłówek', rect(24, 20, 160, 28), [], {});
+  const hiddenBody = textElement('p', 'Ukryty opis', rect(24, 52, 160, 32), [], {});
+  const displayHidden = layoutElement('div', rect(20, 16, 180, 80), [hiddenHeading], {
+    display: 'none',
+    position: 'absolute',
+  });
+  const ariaHidden = layoutElement('div', rect(20, 16, 180, 80), [hiddenBody], {
+    position: 'absolute',
+  });
+  ariaHidden.getAttribute = (name) => name === 'aria-hidden' ? 'true' : null;
+  const link = layoutElement('a', rect(16, 12, 180, 44), [label, displayHidden, ariaHidden], {
+    display: 'flex',
+  });
+  link.innerText = 'Przejdź dalej';
+  link.textContent = link.innerText;
+  link.textNodes = [];
+  link.getAttribute = (name) => name === 'href' ? '/dalej' : null;
+  const main = layoutElement('main', rect(0, 0, 320, 180), [link]);
+
+  const { layout } = captureWithMockDom([link, label, hiddenHeading, hiddenBody], [], {}, {
+    bodyChildren: [main],
+    landmarkElements: [main],
+    scrollHeight: 180,
+  });
+
+  assert.equal(layout.layoutGroups.some((group) => group.tag === 'a'), false);
+  assert.deepEqual(layout.textBoxes.map((box) => ({ tag: box.tag, text: box.text, href: box.href })), [
+    { tag: 'a', text: 'Przejdź dalej', href: '/dalej' },
+  ]);
+});
+
 test('direct text keeps long source copy and discloses missing Range geometry', () => {
   const longText = `Pełna treść ${'długiego akapitu '.repeat(40)}`.trim();
   const measured = layoutElement('div', rect(20, 20, 280, 120), []);

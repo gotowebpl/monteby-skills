@@ -3699,6 +3699,89 @@ test('generic form drafting partitions exact form owners, groups radios, and blo
   assert.equal(radioForm.props.fields[0].label, 'Plan');
   assert.equal(radioForm.props.fields[0].options, 'Basic|basic\nPro|pro');
 
+  const idlessLayout = structuredClone(referenceLayout);
+  idlessLayout.interactions = idlessLayout.interactions.map((interaction) => {
+    const { formId: _formId, ...withoutFormId } = interaction;
+    return withoutFormId;
+  });
+  fs.writeFileSync(referenceLayoutPath, JSON.stringify(idlessLayout));
+  const idlessLayoutPath = path.join(directory, 'idless-layout.json');
+  const idlessResult = spawnSync(process.execPath, [
+    draftScript, '--contract', contractPath, '--brief-json', briefPath,
+    '--reference-manifest', manifestPath, '--out', idlessLayoutPath, '--json',
+  ], { encoding: 'utf8' });
+  assert.equal(idlessResult.status, 0, idlessResult.stderr || idlessResult.stdout);
+  const idlessForms = Object.values(JSON.parse(fs.readFileSync(idlessLayoutPath, 'utf8')))
+    .filter((node) => node?.type?.resolvedName === 'FormBlock');
+  assert.deepEqual(idlessForms.map((form) => form.props.formId), ['form-1-1', 'form-1-2']);
+  assert.deepEqual(idlessForms.map((form) => form.props.fields), forms.map((form) => form.props.fields));
+  assert.deepEqual(idlessForms.map((form) => form.props.submitLabel), forms.map((form) => form.props.submitLabel));
+
+  const generatedBeforeExplicitLayout = structuredClone(referenceLayout);
+  generatedBeforeExplicitLayout.interactions = generatedBeforeExplicitLayout.interactions.map((interaction) => {
+    if (interaction.formKey === '0.1') {
+      return { ...interaction, formId: 'form-1-1' };
+    }
+    const { formId: _formId, ...withoutFormId } = interaction;
+    return withoutFormId;
+  });
+  fs.writeFileSync(referenceLayoutPath, JSON.stringify(generatedBeforeExplicitLayout));
+  const generatedBeforeExplicitPath = path.join(directory, 'generated-before-explicit-layout.json');
+  const generatedBeforeExplicitResult = spawnSync(process.execPath, [
+    draftScript, '--contract', contractPath, '--brief-json', briefPath,
+    '--reference-manifest', manifestPath, '--out', generatedBeforeExplicitPath, '--json',
+  ], { encoding: 'utf8' });
+  assert.equal(generatedBeforeExplicitResult.status, 0, generatedBeforeExplicitResult.stderr || generatedBeforeExplicitResult.stdout);
+  const generatedBeforeExplicitForms = Object.values(JSON.parse(fs.readFileSync(generatedBeforeExplicitPath, 'utf8')))
+    .filter((node) => node?.type?.resolvedName === 'FormBlock');
+  assert.deepEqual(generatedBeforeExplicitForms.map((form) => form.props.formId), ['form-1-1-2', 'form-1-1']);
+
+  const explicitBeforeGeneratedLayout = structuredClone(referenceLayout);
+  explicitBeforeGeneratedLayout.interactions = explicitBeforeGeneratedLayout.interactions.map((interaction) => {
+    if (interaction.formKey === '0.0') {
+      return { ...interaction, formId: 'form-1-2' };
+    }
+    const { formId: _formId, ...withoutFormId } = interaction;
+    return withoutFormId;
+  });
+  fs.writeFileSync(referenceLayoutPath, JSON.stringify(explicitBeforeGeneratedLayout));
+  const explicitBeforeGeneratedPath = path.join(directory, 'explicit-before-generated-layout.json');
+  const explicitBeforeGeneratedResult = spawnSync(process.execPath, [
+    draftScript, '--contract', contractPath, '--brief-json', briefPath,
+    '--reference-manifest', manifestPath, '--out', explicitBeforeGeneratedPath, '--json',
+  ], { encoding: 'utf8' });
+  assert.equal(explicitBeforeGeneratedResult.status, 0, explicitBeforeGeneratedResult.stderr || explicitBeforeGeneratedResult.stdout);
+  const explicitBeforeGeneratedForms = Object.values(JSON.parse(fs.readFileSync(explicitBeforeGeneratedPath, 'utf8')))
+    .filter((node) => node?.type?.resolvedName === 'FormBlock');
+  assert.deepEqual(explicitBeforeGeneratedForms.map((form) => form.props.formId), ['form-1-2', 'form-1-2-2']);
+
+  const unsafeIdLayout = structuredClone(referenceLayout);
+  unsafeIdLayout.interactions = unsafeIdLayout.interactions.map((interaction) => (
+    interaction.formKey === '0.0'
+      ? { ...interaction, formId: 'unsafe form id' }
+      : interaction
+  ));
+  fs.writeFileSync(referenceLayoutPath, JSON.stringify(unsafeIdLayout));
+  const unsafeIdResult = spawnSync(process.execPath, [
+    draftScript, '--contract', contractPath, '--brief-json', briefPath,
+    '--reference-manifest', manifestPath, '--out', path.join(directory, 'unsafe-id-layout.json'), '--json',
+  ], { encoding: 'utf8' });
+  assert.equal(unsafeIdResult.status, 1, unsafeIdResult.stdout);
+  assert.match(unsafeIdResult.stderr, /generic_semantic_form_id_invalid/);
+
+  const duplicateIdLayout = structuredClone(referenceLayout);
+  duplicateIdLayout.interactions = duplicateIdLayout.interactions.map((interaction) => ({
+    ...interaction,
+    formId: 'shared-form',
+  }));
+  fs.writeFileSync(referenceLayoutPath, JSON.stringify(duplicateIdLayout));
+  const duplicateIdResult = spawnSync(process.execPath, [
+    draftScript, '--contract', contractPath, '--brief-json', briefPath,
+    '--reference-manifest', manifestPath, '--out', path.join(directory, 'duplicate-id-layout.json'), '--json',
+  ], { encoding: 'utf8' });
+  assert.equal(duplicateIdResult.status, 1, duplicateIdResult.stdout);
+  assert.match(duplicateIdResult.stderr, /generic_semantic_form_ownership_mismatch/);
+
   const checkboxLayout = structuredClone(referenceLayout);
   checkboxLayout.interactions = checkboxLayout.interactions.map((interaction) => (
     interaction.formKey === '0.1' && interaction.type === 'radio'
@@ -7826,15 +7909,13 @@ test('generic measured drafting authors every captured SVG through a bound nativ
   assert.deepEqual(plan.unmappedInlineSvg, []);
 });
 
-test('generic measured drafting promotes a significant ordinary root div to an authored band', () => {
+test('generic measured drafting preserves ordinary root bands and compound links across three viewports', () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'monteby-draft-root-div-'));
   const contractPath = path.join(directory, 'contract.json');
   const briefPath = path.join(directory, 'visual-brief.json');
   const manifestPath = path.join(directory, 'reference-manifest.json');
   const layoutPath = path.join(directory, 'layout-draft.json');
   const planPath = path.join(directory, 'layout-plan.json');
-  const referenceLayoutPath = path.join(directory, 'reference-layout.json');
-  const rootRect = measuredRect(0, 64, 1440, 420);
   const contractValue = contract();
   const container = contractValue.components.find((component) => component.name === 'Container');
   container.props.push('tag', 'href');
@@ -7844,22 +7925,47 @@ test('generic measured drafting promotes a significant ordinary root div to an a
     media: { surfaces: [], requiredRoles: [] },
     authoringRequirements: { referenceClassification: { kind: 'generic-measured-reference', family: '', familyMechanics: false } },
   }));
-  fs.writeFileSync(referenceLayoutPath, JSON.stringify({
-    viewport: { width: 1440, height: 900, scrollHeight: 640 },
-    landmarks: [],
-    layoutGroups: [
-      { key: '0', parentKey: '', tag: 'div', rect: rootRect, flowParticipation: 'normal', display: 'flex' },
-      { key: '0.0', parentKey: '0', tag: 'a', href: '/oferta', rect: measuredRect(72, 220, 420, 150), flowParticipation: 'normal', display: 'flex', backgroundColor: 'rgb(245, 245, 245)' },
-    ],
-    textBoxes: [
-      { structureKey: '0.1', parentGroupKey: '0', tag: 'h2', text: 'Zwykła sekcja bez znacznika section', rect: measuredRect(72, 120, 600, 60), fontSize: '42px', fontWeight: '700' },
-      { structureKey: '0.0.0', parentGroupKey: '0.0', tag: 'p', text: 'Cała karta jest odnośnikiem', rect: measuredRect(96, 260, 360, 40), fontSize: '18px', fontWeight: '400' },
-    ],
-    mediaBoxes: [], meaningfulMediaBoxes: [], summary: {},
-  }));
+  const viewportMeasurements = [
+    { label: 'desktop', width: 1440, height: 900, heights: [61, 180, 299], inset: 72 },
+    { label: 'tablet', width: 834, height: 1112, heights: [61, 210, 340], inset: 48 },
+    { label: 'mobile', width: 390, height: 844, heights: [72, 260, 440], inset: 20 },
+  ].map(({ label, width, height, heights, inset }) => {
+    const heroTop = heights[0];
+    const cardsTop = heroTop + heights[1];
+    return [label, {
+      viewport: { width, height, scrollHeight: heights.reduce((sum, value) => sum + value, 0) },
+      landmarks: [
+        { key: '0.1', tag: 'section', rect: measuredRect(0, heroTop, width, heights[1]), flowParticipation: 'normal' },
+      ],
+      layoutGroups: [
+        { key: '0.0', parentKey: '', tag: 'div', rect: measuredRect(0, 0, width, heights[0]), flowParticipation: 'normal', backgroundColor: 'rgb(246, 240, 224)', paintedBackground: true },
+        { key: '0.1', parentKey: '', tag: 'section', rect: measuredRect(0, heroTop, width, heights[1]), flowParticipation: 'normal' },
+        { key: '0.2', parentKey: '', tag: 'div', rect: measuredRect(0, cardsTop, width, heights[2]), flowParticipation: 'normal', paddingLeft: `${inset}px`, paddingRight: `${inset}px` },
+        { key: '0.2.0', parentKey: '0.2', tag: 'div', rect: measuredRect(inset, cardsTop + 20, width - (inset * 2), heights[2] - 40), flowParticipation: 'normal', display: 'grid' },
+        { key: '0.2.0.0', parentKey: '0.2.0', tag: 'a', href: '/oferta', rect: measuredRect(inset, cardsTop + 20, Math.min(420, width - (inset * 2)), Math.min(180, heights[2] - 40)), flowParticipation: 'normal', backgroundColor: 'rgb(245, 245, 245)', paintedBackground: true },
+      ],
+      textBoxes: [
+        { structureKey: '0.0.0.0', parentGroupKey: '0.0', tag: 'p', text: 'Wzorzec testowy bez danych klienta.', rect: measuredRect(inset, 18, width - (inset * 2), 24), fontSize: '14px', fontWeight: '400' },
+        { structureKey: '0.1.0', parentGroupKey: '0.1', tag: 'h1', text: 'Neutralny wzorzec', rect: measuredRect(inset, heroTop + 42, width - (inset * 2), 56), fontSize: '48px', fontWeight: '700' },
+        { structureKey: '0.2.0.0.0', parentGroupKey: '0.2.0.0', tag: 'h3', text: 'Dopasuj parametry', rect: measuredRect(inset + 24, cardsTop + 52, 300, 32), fontSize: '24px', fontWeight: '700' },
+        { structureKey: '0.2.0.0.1', parentGroupKey: '0.2.0.0', tag: 'p', text: 'Oddzielna treść karty.', rect: measuredRect(inset + 24, cardsTop + 100, 320, 44), fontSize: '18px', fontWeight: '400' },
+      ],
+      directTextEntries: [], mediaBoxes: [], meaningfulMediaBoxes: [], iconSurfaces: [], interactions: [], summary: {},
+    }];
+  });
+  for (const [label, referenceLayout] of viewportMeasurements) {
+    fs.writeFileSync(
+      path.join(directory, label === 'desktop' ? 'reference-layout.json' : `reference-layout-${label}.json`),
+      JSON.stringify(referenceLayout),
+    );
+  }
   fs.writeFileSync(manifestPath, JSON.stringify({
     sourceUrl: 'file:///tmp/ordinary-root-div.html', mediaSurfaces: [], requiredMediaRoles: [],
-    layouts: [{ label: 'desktop', file: 'reference-layout.json', status: 'ok' }],
+    layouts: viewportMeasurements.map(([label]) => ({
+      label,
+      file: label === 'desktop' ? 'reference-layout.json' : `reference-layout-${label}.json`,
+      status: 'ok',
+    })),
   }));
 
   const result = spawnSync(process.execPath, [
@@ -7868,13 +7974,32 @@ test('generic measured drafting promotes a significant ordinary root div to an a
   ], { encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr || result.stdout);
   const plan = JSON.parse(fs.readFileSync(planPath, 'utf8'));
-  assert.equal(plan.bands.length, 1);
-  assert.equal(plan.bands[0].sourceKey, '0');
+  assert.deepEqual(plan.bands.map((band) => band.sourceKey), ['0.0', '0.1', '0.2']);
   assert.deepEqual(plan.uncoveredRootGroups, []);
   const layout = JSON.parse(fs.readFileSync(layoutPath, 'utf8'));
-  assert.equal(Object.values(layout).some((node) => node?.props?.text === 'Zwykła sekcja bez znacznika section'), true);
+  assert.deepEqual(layout.ROOT.nodes.map((nodeId) => ({
+    minHeight: layout[nodeId].props.minHeight,
+    minHeightTablet: layout[nodeId].props.minHeightTablet,
+    minHeightMobile: layout[nodeId].props.minHeightMobile,
+  })), [
+    { minHeight: '61px', minHeightTablet: '61px', minHeightMobile: '72px' },
+    { minHeight: '180px', minHeightTablet: '210px', minHeightMobile: '260px' },
+    { minHeight: '299px', minHeightTablet: '340px', minHeightMobile: '440px' },
+  ]);
+  assert.equal(Object.values(layout).some((node) => node?.props?.text === 'Wzorzec testowy bez danych klienta.'), true);
   const linkedCard = Object.values(layout).find((node) => node?.type?.resolvedName === 'Container' && node?.props?.href === '/oferta');
   assert.equal(linkedCard.props.tag, 'a');
+  const linkedDescendants = [];
+  const pendingLinkedNodes = [...linkedCard.nodes];
+  while (pendingLinkedNodes.length > 0) {
+    const node = layout[pendingLinkedNodes.shift()];
+    linkedDescendants.push([node.type.resolvedName, node.props.text || '']);
+    pendingLinkedNodes.push(...node.nodes);
+  }
+  assert.deepEqual(linkedDescendants.filter(([, text]) => text), [
+    ['Heading', 'Dopasuj parametry'],
+    ['Text', 'Oddzielna treść karty.'],
+  ]);
 });
 
 test('draft layout accepts 40 generic bands and rejects 65 beyond the bounded limit', () => {

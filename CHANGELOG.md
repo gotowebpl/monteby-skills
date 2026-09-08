@@ -19,6 +19,10 @@
   The native Windows and Git Bash workflow remains manual and awaits execution.
 - Accept the expanded native site-identity document while logo operations still
   write only Monteby Branding and verify that native identity remains unchanged.
+- Preserve owned form content when the source form has no HTML `id` by assigning
+  a deterministic unique FormBlock identifier; unsafe or shared source IDs still stop drafting.
+- Preserve ordinary top-level notice and content bands through neutral page wrappers,
+  and decompose compound linked cards without turning simple links into nested containers.
 
 ## 0.4.1 - 2026-09-07
 

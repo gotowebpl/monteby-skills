@@ -3,6 +3,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { publishedControlReferences, normalizeControlValue } = require('./control-contract');
 
 const BLOCKED_PROPS = new Set([
   'classname',
@@ -171,6 +172,9 @@ function buildContractIndex(contractPayload) {
       hasPropAllowlist: true,
       propOptions: controlMetadata.propOptions,
       propRules: controlMetadata.propRules,
+      propReferences: new Map(allowedProps.map((prop) => [
+        prop, publishedControlReferences(contractPayload, name, prop, controlMetadata.propRules.get(prop)),
+      ])),
       repeaterItemProps: controlMetadata.repeaterItemProps,
     });
   }
@@ -498,6 +502,15 @@ function auditProps(report, nodeId, type, props, contract) {
     }
     if (contract && contract.hasPropAllowlist && !contract.allowedProps.includes(prop)) {
       error(report, 'unknown_prop', `${nodeId} (${type}) uses prop "${prop}" outside the live contract.`);
+    }
+    if (contract && typeof value === 'string' && /^var\s*\(/iu.test(value.trim())) {
+      const normalized = normalizeControlValue(
+        contract.propRules.get(prop) || {}, value, contract.propReferences.get(prop),
+      );
+      if (!normalized.accepted) {
+        error(report, 'invalid_prop_value', `${nodeId} (${type}) uses CSS reference "${value}" not published for prop "${prop}".`);
+      }
+      continue;
     }
     if (contract && contract.propOptions && contract.propOptions.has(prop) && isScalar(value) && value !== '') {
       const allowedValues = contract.propOptions.get(prop);
