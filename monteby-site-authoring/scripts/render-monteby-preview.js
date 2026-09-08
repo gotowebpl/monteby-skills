@@ -1606,14 +1606,17 @@ function responsiveCustomProperties(props) {
     );
   }
 
-  for (const [value, cssName] of [
-    [gridPlacement(props.gridColumnStartTablet, props.gridColumnSpanTablet), '--monteby-grid-column-tablet'],
-    [gridPlacement(props.gridColumnStartMobile, props.gridColumnSpanMobile), '--monteby-grid-column-mobile'],
-    [gridPlacement(props.gridRowStartTablet, props.gridRowSpanTablet), '--monteby-grid-row-tablet'],
-    [gridPlacement(props.gridRowStartMobile, props.gridRowSpanMobile), '--monteby-grid-row-mobile'],
-  ]) {
-    if (value) {
-      rules.push(styleDeclaration(cssName, value));
+  for (const [axis, cssAxis] of [['Column', 'column'], ['Row', 'row']]) {
+    let start = cssGridLineValue(props[`grid${axis}Start`]);
+    let span = cssGridSpanValue(props[`grid${axis}Span`]);
+    for (const viewport of ['Tablet', 'Mobile']) {
+      const viewportStart = cssGridLineValue(props[`grid${axis}Start${viewport}`]);
+      const viewportSpan = cssGridSpanValue(props[`grid${axis}Span${viewport}`]);
+      start = viewportStart || start;
+      span = viewportSpan || span;
+      if (viewportStart || viewportSpan) {
+        rules.push(styleDeclaration(`--monteby-grid-${cssAxis}-${viewport.toLowerCase()}`, gridPlacement(start, span)));
+      }
     }
   }
   return rules;

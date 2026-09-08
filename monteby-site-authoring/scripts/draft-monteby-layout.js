@@ -3325,6 +3325,14 @@ function resolveGenericMeasuredHardConstraints(context, genericPlan) {
               : 'legacy-capture-constraint-evidence-unavailable';
         classification = 'legacy-unclassified';
       } else if (baseName.startsWith('grid')) {
+        const inheritedStart = viewport === 'mobile'
+          ? node.props[`${baseName}Tablet`] ?? node.props[baseName]
+          : viewport === 'tablet' ? node.props[baseName] : undefined;
+        const resetsInheritedPlacement = parent?.props?.layoutDisplay === 'grid'
+          && ['number', 'string'].includes(typeof inheritedStart)
+          && Number.isInteger(Number(inheritedStart))
+          && Number(inheritedStart) > 0
+          && Number(inheritedStart) !== Number(value);
         classification = overlappingGridLayer ? 'intentional-overlap' : 'structural';
         if (overlappingGridLayer) {
           decision = 'authored';
@@ -3332,6 +3340,9 @@ function resolveGenericMeasuredHardConstraints(context, genericPlan) {
         } else if (multiColumnGrid) {
           decision = 'authored';
           reason = 'multi-column-grid-placement';
+        } else if (resetsInheritedPlacement) {
+          decision = 'authored';
+          reason = 'responsive-grid-placement-reset';
         } else {
           reason = 'single-column-flow-placement';
         }

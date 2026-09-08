@@ -36,6 +36,47 @@ function renderPreview(layout, prefix, contract = null) {
   return fs.readFileSync(previewPath, 'utf8');
 }
 
+test('responsive grid placement inherits starts and spans independently without resetting omitted starts', () => {
+  const cases = [
+    {
+      props: { gridColumnStart: 2, gridColumnSpan: 4, gridColumnSpanTablet: 6, gridColumnSpanMobile: 1, gridRowStart: 3, gridRowSpan: 2, gridRowSpanMobile: 1 },
+      expected: ['--monteby-grid-column-tablet:2 / span 6', '--monteby-grid-column-mobile:2 / span 1', '--monteby-grid-row-mobile:3 / span 1'],
+    },
+    {
+      props: { gridColumnStart: 2, gridColumnSpan: 4, gridColumnStartTablet: 1, gridColumnSpanMobile: 3, gridRowStart: 3, gridRowSpan: 2, gridRowStartTablet: 4, gridRowSpanMobile: 1 },
+      expected: ['--monteby-grid-column-tablet:1 / span 4', '--monteby-grid-column-mobile:1 / span 3', '--monteby-grid-row-tablet:4 / span 2', '--monteby-grid-row-mobile:4 / span 1'],
+    },
+    {
+      props: { gridColumnStart: 2, gridColumnSpan: 4, gridColumnSpanTablet: 6, gridColumnStartMobile: 1, gridRowStart: 3, gridRowSpan: 2, gridRowSpanTablet: 5, gridRowStartMobile: 8 },
+      expected: ['--monteby-grid-column-mobile:1 / span 6', '--monteby-grid-row-mobile:8 / span 5'],
+    },
+    {
+      props: { gridColumnSpan: 4, gridColumnSpanTablet: 6, gridColumnSpanMobile: 1, gridRowSpan: 3, gridRowSpanTablet: 5, gridRowSpanMobile: 1 },
+      expected: ['--monteby-grid-column-tablet:span 6', '--monteby-grid-column-mobile:span 1', '--monteby-grid-row-tablet:span 5', '--monteby-grid-row-mobile:span 1'],
+    },
+  ];
+  for (const { props, expected } of cases) {
+    const html = renderPreview({
+      ROOT: { type: { resolvedName: 'RootCanvas' }, props: {}, nodes: ['item'] },
+      item: { type: { resolvedName: 'Container' }, props, nodes: [], parent: 'ROOT' },
+    }, 'monteby-preview-grid-inheritance-');
+    for (const declaration of expected) assert.ok(html.includes(declaration), declaration);
+  }
+
+  const legacy = {
+    ROOT: { type: { resolvedName: 'RootCanvas' }, props: {}, nodes: ['item'] },
+    item: { type: { resolvedName: 'Container' }, props: { gridColumnStart: 2, gridColumnSpan: 4, gridRowStart: 3, gridRowSpan: 2 }, nodes: [], parent: 'ROOT' },
+  };
+  const before = renderPreview(legacy, 'monteby-preview-grid-legacy-');
+  for (const axis of ['Column', 'Row']) {
+    for (const part of ['Start', 'Span']) {
+      legacy.item.props[`grid${axis}${part}Tablet`] = '';
+      legacy.item.props[`grid${axis}${part}Mobile`] = 'invalid;position:fixed';
+    }
+  }
+  assert.equal(renderPreview(legacy, 'monteby-preview-grid-empty-'), before);
+});
+
 test('native IconBlock preview preserves measured glyphs, sizing, colours and accessible names', () => {
   const cases = [
     ['decorative', { icon: 'tune', size: 32, color: '#365985', iconRole: 'decorative' }],

@@ -3083,7 +3083,8 @@ test('generic measured drafting keeps solid and image band paint inside measured
   assert.doesNotMatch(JSON.stringify(layout), /source\.example\.test|className|rawHtml/iu);
 });
 
-test('generic measured drafting preserves explicit rows when a card spans two grid tracks', () => {
+for (const collapseAt of ['mobile', 'tablet']) {
+test(`generic measured drafting preserves explicit rows when a card spans two grid tracks and collapses at ${collapseAt}`, () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'monteby-draft-spanning-grid-'));
   const contractPath = path.join(directory, 'contract.json');
   const briefPath = path.join(directory, 'visual-brief.json');
@@ -3092,12 +3093,12 @@ test('generic measured drafting preserves explicit rows when a card spans two gr
   const planPath = path.join(directory, 'layout-plan.json');
   const viewports = [
     ['desktop', 1440, 900, 110, 306.8],
-    ['tablet', 834, 1112, 20, 387],
+    ['tablet', 834, 1112, 20, collapseAt === 'tablet' ? 794 : 387],
     ['mobile', 390, 844, 20, 350],
   ];
 
   for (const [label, width, height, inset, cardWidth] of viewports) {
-    const mobile = label === 'mobile';
+    const mobile = label === 'mobile' || (label === 'tablet' && collapseAt === 'tablet');
     const gap = 20;
     const groupTop = 120;
     const cardHeights = mobile ? [250, 434, 250] : [250, 520, 250];
@@ -3228,7 +3229,7 @@ test('generic measured drafting preserves explicit rows when a card spans two gr
   assert.notEqual(bottomCard, undefined);
   const cardGrid = layout[topCard.parent];
   assert.equal(cardGrid.props.gridTemplateColumns, 'two');
-  assert.equal(cardGrid.props.gridTemplateColumnsTablet, 'two');
+  assert.equal(cardGrid.props.gridTemplateColumnsTablet, collapseAt === 'tablet' ? 'one' : 'two');
   assert.equal(cardGrid.props.gridTemplateColumnsMobile, 'one');
   assert.deepEqual(
     [
@@ -3250,11 +3251,11 @@ test('generic measured drafting preserves explicit rows when a card spans two gr
       spanningCard.props.gridColumnSpanTablet,
       bottomCard.props.gridColumnSpanTablet,
     ],
-    [1, 2, 1, 1, 1, 1]
+    collapseAt === 'tablet' ? [undefined, 1, undefined, 1, 1, 1] : [1, 2, 1, 1, 1, 1]
   );
   assert.deepEqual(
     [topCard.props.gridColumnStartMobile, spanningCard.props.gridColumnStartMobile, bottomCard.props.gridColumnStartMobile],
-    [undefined, undefined, undefined]
+    collapseAt === 'tablet' ? [undefined, undefined, undefined] : [undefined, 1, undefined]
   );
   assert.deepEqual(
     [topCard.props.gridRowStart, topCard.props.gridRowSpan],
@@ -3270,19 +3271,19 @@ test('generic measured drafting preserves explicit rows when a card spans two gr
   );
   assert.deepEqual(
     [topCard.props.gridRowStartTablet, topCard.props.gridRowSpanTablet],
-    [1, 1]
+    collapseAt === 'tablet' ? [undefined, 1] : [1, 1]
   );
   assert.deepEqual(
     [spanningCard.props.gridRowStartTablet, spanningCard.props.gridRowSpanTablet],
-    [1, 2]
+    collapseAt === 'tablet' ? [2, 1] : [1, 2]
   );
   assert.deepEqual(
     [bottomCard.props.gridRowStartTablet, bottomCard.props.gridRowSpanTablet],
-    [2, 1]
+    collapseAt === 'tablet' ? [3, 1] : [2, 1]
   );
   assert.deepEqual(
     [topCard.props.gridRowStartMobile, spanningCard.props.gridRowStartMobile, bottomCard.props.gridRowStartMobile],
-    [undefined, undefined, undefined]
+    collapseAt === 'tablet' ? [undefined, undefined, undefined] : [undefined, 2, 3]
   );
   assert.deepEqual(
     [topCard.props.gridRowSpanMobile, spanningCard.props.gridRowSpanMobile, bottomCard.props.gridRowSpanMobile],
@@ -3297,11 +3298,19 @@ test('generic measured drafting preserves explicit rows when a card spans two gr
   )), true);
   assert.equal(plan.constraintDecisions.some((decision) => (
     decision.sourceKey === '0.0.1'
+    && decision.name === `gridRowStart${collapseAt === 'tablet' ? 'Tablet' : 'Mobile'}`
+    && decision.decision === 'authored'
+    && decision.authoredValue === 2
+    && decision.reason === 'responsive-grid-placement-reset'
+  )), true);
+  assert.equal(plan.constraintDecisions.some((decision) => (
+    decision.sourceKey === '0.0.0'
     && decision.name === 'gridRowStartMobile'
     && decision.decision === 'omitted'
     && decision.reason === 'single-column-flow-placement'
   )), true);
 });
+}
 
 test('generic measured drafting keeps keyed bands aligned when a middle band is hidden on mobile', () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'monteby-draft-keyed-responsive-bands-'));
