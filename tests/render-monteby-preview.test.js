@@ -85,6 +85,66 @@ test('diagnostic content preserves NBSP at text and form-label boundaries', () =
   }
 });
 
+test('form preview separates textarea dimensions and submit geometry without changing empty defaults', () => {
+  const layout = {
+    ROOT: { type: { resolvedName: 'RootCanvas' }, props: {}, nodes: ['form'] },
+    form: { type: { resolvedName: 'FormBlock' }, nodes: [], props: {
+      inputHeight: '52px', submitLabel: 'Continue',
+      fields: [{ type: 'email', name: 'email' }, { type: 'textarea', name: 'message' }],
+    } },
+  };
+  const legacy = renderPreview(layout, 'monteby-form-legacy-');
+  const empty = structuredClone(layout);
+  Object.assign(empty.form.props, { textareaHeight: '', textareaMinHeight: '', buttonWidth: '', buttonJustifySelf: '' });
+  assert.equal(renderPreview(empty, 'monteby-form-empty-'), legacy);
+  const explicit = structuredClone(layout);
+  Object.assign(explicit.form.props, { textareaHeight: '112px', textareaMinHeight: '112px', buttonWidth: '180px', buttonJustifySelf: 'start' });
+  const html = renderPreview(explicit, 'monteby-form-dimensions-');
+  assert.match(html, /<input[^>]*height:52px;/);
+  assert.match(html, /<textarea[^>]*height:112px;/);
+  assert.match(html, /<textarea[^>]*min-height:112px(?:;|\")/);
+  assert.match(html, /<button[^>]*width:180px(?:;|\")/);
+  assert.match(html, /<button[^>]*justify-self:start(?:;|\")/);
+  for (const alignment of ['center', 'end', 'stretch']) {
+    Object.assign(explicit.form.props, { buttonJustifySelf: alignment });
+    assert.match(renderPreview(explicit, 'monteby-form-alignment-'), new RegExp(`<button[^>]*justify-self:${alignment}(?:;|\")`));
+  }
+  const unsafe = structuredClone(layout);
+  Object.assign(unsafe.form.props, { textareaHeight: '112px;position:fixed', textareaMinHeight: 'url(https://evil.test)', buttonWidth: 'expression(alert(1))', buttonJustifySelf: 'left;position:fixed' });
+  assert.equal(renderPreview(unsafe, 'monteby-form-unsafe-'), legacy);
+  Object.assign(unsafe.form.props, { textareaHeight: '-112px', textareaMinHeight: '50%', buttonWidth: '-180px', buttonJustifySelf: 'left' });
+  assert.equal(renderPreview(unsafe, 'monteby-form-out-of-contract-'), legacy);
+  Object.assign(explicit.form.props, { textareaHeight: 112, textareaMinHeight: 0, buttonWidth: '50%', buttonJustifySelf: 'start' });
+  const numeric = renderPreview(explicit, 'monteby-form-numeric-dimensions-');
+  assert.match(numeric, /<textarea[^>]*height:112px;/);
+  assert.match(numeric, /<textarea[^>]*min-height:0(?:;|\")/);
+  assert.match(numeric, /<button[^>]*width:50%(?:;|\")/);
+});
+
+test('form preview preserves exact field radii and legacy global bindings', () => {
+  for (const [value, expected] of [
+    ['6px', '6px'],
+    ['0.375rem', '0.375rem'],
+    ['rounded-xl', '0.75rem'],
+    ['var(--monteby-token-forms-radius)', 'var(--monteby-token-forms-radius)'],
+    ['6px;position:fixed', '12px'],
+  ]) {
+    const html = renderPreview({
+      ROOT: { type: { resolvedName: 'RootCanvas' }, props: {}, nodes: ['form'] },
+      form: { type: { resolvedName: 'FormBlock' }, nodes: [], props: {
+        inputBorderRadius: value,
+        fields: [{ type: 'email', name: 'email' }, { type: 'textarea', name: 'message' }],
+      } },
+    }, 'monteby-form-exact-radius-');
+    for (const tag of ['input', 'textarea']) {
+      const control = html.match(new RegExp(`<${tag}[^>]*name="(?:email|message)"[^>]*>`))?.[0];
+      assert.ok(control, `${tag} was rendered`);
+      assert.ok(control.includes(`border-radius:${expected};`), `${tag} retains ${expected}`);
+      assert.ok(!control.includes('position:fixed'));
+    }
+  }
+});
+
 test('button preview does not invent a browser border from a colour-only binding', () => {
   const cases = [
     ['plain', {}, '0px'],
