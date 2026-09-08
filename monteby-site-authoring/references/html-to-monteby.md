@@ -128,10 +128,13 @@ discriminator the document validates cleanly and paints nothing.
 | Entire linked card or box | `Container.tag: "a"` together with `Container.href` or `Container.dynamicHref`; a link prop on the default `div` is invalid and must never be authored alone |
 | Multi-step form with conditional fields | FormBlock v2: `fields[].fieldId`, `steps[]` with `stepId`/`fieldIds`, `progress`, `visibleWhen` on fields, result/redirect props, `attributionMode`, and `collectionNoticeMode`/`collectionNotice` for the information shown at data collection |
 
-The product-gap rule remains for behavior the contract still cannot express,
-for example conic gradients, `url()` image layers inside a gradient stack,
-`var()`/`calc()` color or geometry, more than five stops in one layer, and
-multi-layer shadows. Those stay `blocked_product_gap`, never raw CSS.
+The product-gap rule remains for behavior the exact live contract cannot express,
+such as an unsupported gradient type, image layer, or stop count. Published,
+type-compatible token references and structured shadow layers are supported
+when the component's live controls expose them. Use `boxShadowLayers` for up to
+four layers only when that bound is published; do not copy a raw `box-shadow`
+string. Unpublished `var(...)`, `calc()`, and arbitrary CSS remain forbidden.
+An unsupported measured effect stays `blocked_product_gap`, never raw CSS.
 
 ## Control-value rules
 
@@ -145,12 +148,15 @@ have different schemas on different widgets.
 | `number` | Send a finite JSON number within min/max | `"1"` is a string, not `1` |
 | `select` / `segment` | Use only a listed option | CSS `none` may be invalid when the control uses an empty token |
 | token control | Use the listed token, not raw CSS | A CSS width string may be rejected even if it looks equivalent |
-| `custom` / `spacing` / `color` / `font-picker` / `media` | Kształt wartości nieopisany; **nikt tego nie waliduje** — ani Kit, ani `normalize-layout.js`, ani `/validate` | „0 błędów" nie obejmuje tych propów; nie autoryzuj zbiorczego `Container.padding`, składaj odstęp z czterech krawędzi |
+| `custom` / `spacing` / `color` / `font-picker` / `media` | Resolve the published shape, bounds, units, patterns and reference kinds through the shared control metadata; use host choices where required | Validation coverage depends on the control and tool; local success is not proof that a font exists, a media reference is usable, or the live server accepts the value |
 | one-value gap | Author one value | `26px 44px` is not a legal single gap |
 | repeater | Use only exposed item keys and cardinality | Invented nested keys can render server-side but break the editor |
 
-The live contract remains authoritative. A normalizer may snap values, but a value
-it drops is evidence of a mismatch or product gap, not permission to hide the loss.
+The live contract remains authoritative. Local validation never replaces live
+`/validate` or canonical render verification. A normalizer may snap values, but a
+value it drops is evidence of a mismatch or product gap, not permission to hide
+the loss. A control named `font-picker` alone does not guarantee full validation
+against a font catalog.
 
 ## Renderer traps
 
@@ -198,11 +204,13 @@ poniżej progu clamp nie jest nakładany.
 
 ### Interlinia dziedziczona z motywu
 
-`Heading` i `Text` bez własnego `lineHeight` dziedziczą interlinię z `body`
-motywu (typowo 1.5–1.6), a nie wartość typograficzną nagłówka. Mechanizm jest
-ten sam co przy marginesach tekstu. Ustaw `lineHeight` na każdym węźle
-tekstowym, nawet gdy brief go nie podaje — inaczej bliźniacze strony jednego
-serwisu rozjadą się wizualnie.
+Najpierw rozwiąż globalną typografię przez istniejący `resolvedDesignProfile`
+i opublikowany `typographyPreset`. `Heading` i `Text` bez lokalnego
+`lineHeight` zachowują interlinię presetu, a bez presetu mogą dziedziczyć ją
+z motywu. Zapisz lokalny `lineHeight` tylko wtedy, gdy wynika z dokładnego
+pomiaru albo zatwierdzonego override; nie wymyślaj wartości, gdy brief milczy.
+Sprawdź wynik w publicznym PHP: lokalna wartość ma pierwszeństwo przed
+presetem i nie może nieświadomie odłączyć elementu od globalnej typografii.
 
 ### Wysokość obrazu na wąskich ekranach
 
@@ -230,9 +238,11 @@ Map a gradient only when the complete rendered evidence reduces to typed
 controls: two-stop evidence to the legacy `gradient*` props, multi-stop and
 positioned/elliptical evidence to `backgroundLayers` (see the 1.2.0 composition
 table above). Map a shadow only when all required structured fields and
-renderable colors exist. Layers or functions the contract still cannot express
-(conic, `url()` inside a stack, `var()`/`calc()`, more than five stops,
-multi-shadows) are product gaps or safe visual fallbacks, never raw CSS props.
+renderable colors exist, using the published `boxShadowLayers` repeater for
+multiple layers. Resolve colors through the live contract's published,
+type-compatible references; a supported token is not a product gap. Layers,
+functions, or counts the exact contract cannot express remain product gaps,
+never raw CSS props or an undeclared visual fallback.
 
 ## Responsive inheritance
 
@@ -311,19 +321,18 @@ the project scope.
 
 ## Ruch: przejścia, stany, wejścia
 
-Ruch jest częścią pomiaru, nie dodatkiem po fakcie. `extract-reference-spec.mjs`
-czyta go ze źródła i zapisuje w dwóch miejscach:
+Ruch jest częścią pomiaru, nie dodatkiem po fakcie. Używaj bieżącego
+generycznego capture i raportu możliwości; historyczne ekstraktory nie są
+alternatywną ścieżką authoringu. Sprawdź propsy i kontrolki Motion dla
+konkretnego komponentu w live contract, w tym dozwolone cele animacji,
+wejścia dzieci, easing, opóźnienia i progi obserwacji.
 
-- `node.motion` — `transition` i `animation` z policzonego stylu, użyte
-  `@keyframes` oraz reguły stanów (`:hover`, `:focus-visible`, `:active`), które
-  pasują do tego węzła, wraz z deklaracjami;
-- `spec.motion` — liczba reguł stanów, nazwy klatek, `scrollBehavior` oraz
-  `reducedMotionHonored`.
-
-`spec-to-layout.mjs` przenosi to do `report.motion` i **nie wstawia niczego do
-node mapy**: kontrakt nie wystawia kontrolek ruchu. Każda pozycja z
-`report.motion.entries` musi trafić do `residual-plan.json` na tych samych
-zasadach co inne residua. Cicho pominięty hover jest defektem odwzorowania.
+Brak mapowania efektu w drafterze nie dowodzi braku funkcji w Builderze.
+Rozróżnij lukę narzędzia od braku kontrolki produktu i popraw właściwego
+właściciela. Nie przenoś obsługiwanego ruchu do child theme, Custom CSS/JS
+ani technicznych klas. Efektu spoza live contract nie dopisuj jako surowego
+CSS lub skryptu; zgłoś konkretny blocker. Cicho pominięty hover jest defektem
+odwzorowania.
 
 ### Czytanie stanów z arkuszy — trzy pułapki
 
@@ -339,29 +348,19 @@ zasadach co inne residua. Cicho pominięty hover jest defektem odwzorowania.
 
 ### Wejścia przy przewijaniu
 
-Kontrakt nie zna wejść, więc żyją w motywie potomnym — arkusz plus mały skrypt.
-Cztery reguły, każda wynikająca z zachowania przeglądarki, nie z gustu:
+Używaj istniejącego runtime Motion i wyłącznie opublikowanych kontrolek.
+Zweryfikuj publiczny render, nie samą obecność propsów:
 
-- **Stan początkowy bez tranzycji.** Skrypt oznacza elementy dopiero po
-  wyrenderowaniu strony. Jeśli reguła stanu początkowego ma `transition`, gotowa
-  treść zanika na oczach użytkownika. Ukrycie musi być natychmiastowe.
-- **Wejście animacją, nie tranzycją.** `transition` jest jedną właściwością:
-  reguła wejścia deklarująca `transition: opacity …` odbiera ją stanom po
-  najechaniu na tym samym elemencie i hover staje się skokowy. `@keyframes`
-  z `animation-fill-mode: both` nie koliduje z niczym.
-- **Zegar, nie klatka animacji.** `requestAnimationFrame`, `IntersectionObserver`
-  i czas animacji CSS **stoją w karcie, której przeglądarka nie renderuje**
-  (karta w tle, panel podglądu, zrzut z niewidocznego okna). Mechanizm oparty
-  wyłącznie na nich zostawia ukrytą treść. Licz widoczność z geometrii przy
-  zdarzeniu przewijania, odmierzaj `setTimeout`, a całość włączaj dopiero gdy
-  `document.visibilityState === 'visible'`.
-- **Bez skryptu strona jest w pełni widoczna.** Stan początkowy wiąż z klasą,
-  którą nadaje dopiero skrypt, i dołóż bezpiecznik odsłaniający treść, gdyby
-  mechanizm nie zadziałał. Ukryta treść jest zawsze gorsza niż brak ruchu.
+- cel „treść” nie może poruszać tła sekcji;
+- kaskada obejmuje kwalifikujące się dzieci bieżącej grupy i pomija poddrzewa
+  z własną animacją; nowe karty paginacji nie animują ponownie starych;
+- wejście nie usuwa niezależnego stanu hover lub `focus-within`;
+- wyłączenie JavaScriptu i reduced-motion pozostawiają treść dostępną;
+- powrót z nieaktywnej karty nie pozostawia elementów trwale ukrytych;
+- długi ruch ma dostępne sterowanie pauzą zgodnie z kontrolkami produktu.
 
-Do tego `@media (prefers-reduced-motion: reduce)` wyłączające wejścia. Jeśli
-makieta je ma, `spec.motion.reducedMotionHonored` jest `true` i brak tej reguły
-w odwzorowaniu jest regresją.
+Błąd tych zachowań należy do runtime Builder/Core. Nie zastępuj go własną
+pętlą przewijania, timerem ani skryptem w motywie potomnym.
 
 ### Zakres z briefu
 

@@ -388,6 +388,9 @@ test('fast-path guidance uses measured runner, generic drafter, and plan artifac
   assert.match(runbook, /runner internally invokes `draft-monteby-layout\.js --plan-out`/);
   assert.match(runbook, /Do not\s+rerun `draft-monteby-layout\.js` after a passing runner/);
   assert.doesNotMatch(runbook, /node "\$SKILL\/scripts\/draft-monteby-layout\.js"/);
+  assert.match(runbook, /apply-layout-repair-queue\.js/);
+  assert.match(runbook, /unrelated subtrees remain\s+unchanged/);
+  assert.doesNotMatch(runbook, /AUTHOR is a bounded manual edit|It is not an automatic mutator/);
   assert.match(runbook, /--expected-layout-sha256/);
   assert.match(runbook, /--save-report/);
   assert.match(runbook, /--report-out/);
@@ -486,13 +489,11 @@ test('compiler routes measured motion to the residual plan', () => {
   assert.match(source, /Tylko ruch bez typed props trafia do residual-plan\.json/);
 
   const guidance = fs.readFileSync(path.join(REFERENCES, 'html-to-monteby.md'), 'utf8');
-  assert.match(guidance, /report\.motion\.entries/);
-  // pułapki mechanizmu wejść, każda potwierdzona zachowaniem przeglądarki
-  assert.match(guidance, /Stan początkowy bez tranzycji/);
-  assert.match(guidance, /Wejście animacją, nie tranzycją/);
-  assert.match(guidance, /Zegar, nie klatka animacji/);
-  assert.match(guidance, /document\.visibilityState === 'visible'/);
-  assert.match(guidance, /Bez skryptu strona jest w pełni widoczna/);
+  assert.match(guidance, /kontrolki Motion/);
+  assert.match(guidance, /istniejącego runtime Motion/);
+  assert.match(guidance, /JavaScriptu i reduced-motion pozostawiają treść dostępną/);
+  assert.match(guidance, /nie usuwa niezależnego stanu hover lub `focus-within`/);
+  assert.doesNotMatch(guidance, /kontrakt nie wystawia kontrolek ruchu|Kontrakt nie zna wejść/);
 });
 
 test('compiler lowers a safe hover lift only after the numeric control survives normalization', () => {
@@ -639,5 +640,9 @@ test('brief mode is routed, scoped and documented', () => {
   assert.match(html, /Interlinia dziedziczona z motywu/);
   assert.match(html, /height: auto` dla obrazów poniżej 768px/);
   assert.match(html, /Siatka hairline z nieparzystą liczbą kafli/);
-  assert.match(html, /nikt tego nie waliduje/);
+  assert.match(html, /Local validation never replaces live\s+`\/validate`/);
+  assert.match(html, /type-compatible token references/);
+  assert.match(html, /`boxShadowLayers`/);
+  assert.match(html, /`resolvedDesignProfile`[\s\S]*`typographyPreset`/);
+  assert.doesNotMatch(html, /nikt tego nie waliduje|Ustaw `lineHeight` na każdym węźle/);
 });
