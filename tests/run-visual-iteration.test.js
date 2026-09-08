@@ -103,6 +103,7 @@ test('layout plan gate rejects truncation and missing section mappings', () => {
       type: { resolvedName: 'Section' },
       parent: 'ROOT',
       nodes: [],
+      props: {},
     },
   };
   fs.writeFileSync(sourceLayout, `${JSON.stringify(sourceNodeMap)}\n`);
@@ -113,6 +114,7 @@ test('layout plan gate rejects truncation and missing section mappings', () => {
     sourceLayoutSha256: nodeMapSha256(sourceNodeMap),
     sourceLayoutDigestFormat: 'sha256:json-stringify-node-map',
     mode: 'generic-measured-reference',
+    constraintDecisions: [],
     rootSectionIds: ['section-1'],
     bands: [{
       generatedSectionId: '',
@@ -144,6 +146,166 @@ test('layout plan gate rejects truncation and missing section mappings', () => {
     validateLayoutPlan(plan).map((blocker) => blocker.code),
     ['layout_plan_incomplete', 'layout_plan_band_mapping_incomplete']
   );
+});
+
+test('generic measured plan gate requires current constraint evidence before execution', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'monteby-plan-constraints-'));
+  const planFile = path.join(directory, 'layout-plan.json');
+  const sourceLayout = path.join(directory, 'layout-draft.json');
+  const sourceNodeMap = {
+    ROOT: { nodes: ['section-1'] },
+    'section-1': {
+      type: { resolvedName: 'Section' },
+      parent: 'ROOT',
+      nodes: [],
+      props: {},
+    },
+  };
+  const plan = {
+    schemaVersion: 1,
+    artifact: 'monteby-layout-plan',
+    sourceLayout,
+    sourceLayoutSha256: nodeMapSha256(sourceNodeMap),
+    sourceLayoutDigestFormat: 'sha256:json-stringify-node-map',
+    mode: 'generic-measured-reference',
+    rootSectionIds: ['section-1'],
+    bands: [{
+      generatedSectionId: 'section-1',
+      surfaceMappings: [],
+      surfaceParity: {
+        captured: { text: 0, media: 0, group: 0, child: 0 },
+        authored: { text: 0, media: 0, group: 0, child: 0 },
+        omitted: { text: [], media: [], group: [], child: [] },
+        complete: true,
+      },
+    }],
+    completion: {
+      plannedBands: 1,
+      emittedSections: 1,
+      allBandsMapped: true,
+      allSurfacesMapped: true,
+      capturedSurfaces: { text: 0, media: 0, group: 0, child: 0 },
+      authoredSurfaces: { text: 0, media: 0, group: 0, child: 0 },
+      truncated: false,
+      omittedBands: [],
+      omittedMedia: [],
+      omittedText: [],
+      omittedGroups: [],
+      omittedChildren: [],
+    },
+  };
+  fs.writeFileSync(sourceLayout, `${JSON.stringify(sourceNodeMap)}\n`);
+
+  plan.constraintDecisions = [];
+  fs.writeFileSync(planFile, `${JSON.stringify(plan)}\n`);
+  assert.deepEqual(validateLayoutPlan(planFile), []);
+
+  sourceNodeMap['section-1'].props.minHeight = '100px';
+  plan.sourceLayoutSha256 = nodeMapSha256(sourceNodeMap);
+  fs.writeFileSync(sourceLayout, `${JSON.stringify(sourceNodeMap)}\n`);
+  fs.writeFileSync(planFile, `${JSON.stringify(plan)}\n`);
+  assert.deepEqual(validateLayoutPlan(planFile).map((blocker) => blocker.code), [
+    'layout_plan_constraint_evidence_incomplete',
+  ]);
+
+  plan.constraintDecisions.push({
+    nodeId: 'section-1',
+    sourceKey: 'band.1',
+    name: 'minHeight',
+    value: '500px',
+    decision: 'authored',
+    classification: 'explicit-source-constraint',
+    evidence: { declaredValue: '100px' },
+  });
+  fs.writeFileSync(planFile, `${JSON.stringify(plan)}\n`);
+  assert.deepEqual(validateLayoutPlan(planFile), []);
+
+  sourceNodeMap['section-1'].props.minHeight = '0px';
+  plan.sourceLayoutSha256 = nodeMapSha256(sourceNodeMap);
+  plan.constraintDecisions[0] = {
+    nodeId: 'section-1',
+    sourceKey: 'band.1',
+    name: 'minHeight',
+    value: '200px',
+    authoredValue: '0px',
+    decision: 'authored',
+    classification: 'structural',
+    evidence: { declaredValue: null },
+  };
+  fs.writeFileSync(sourceLayout, `${JSON.stringify(sourceNodeMap)}\n`);
+  fs.writeFileSync(planFile, `${JSON.stringify(plan)}\n`);
+  assert.deepEqual(validateLayoutPlan(planFile), []);
+
+  sourceNodeMap['section-1'].props.minHeight = '100px';
+  plan.sourceLayoutSha256 = nodeMapSha256(sourceNodeMap);
+  plan.constraintDecisions[0] = {
+    nodeId: 'section-1',
+    sourceKey: 'band.1',
+    name: 'minHeight',
+    value: '500px',
+    authoredValue: '100px',
+    decision: 'authored',
+    classification: 'explicit-source-constraint',
+    evidence: { declaredValue: '100px' },
+  };
+  fs.writeFileSync(sourceLayout, `${JSON.stringify(sourceNodeMap)}\n`);
+
+  sourceNodeMap['section-1'].props.maxWidth = '720px';
+  plan.sourceLayoutSha256 = nodeMapSha256(sourceNodeMap);
+  fs.writeFileSync(sourceLayout, `${JSON.stringify(sourceNodeMap)}\n`);
+  fs.writeFileSync(planFile, `${JSON.stringify(plan)}\n`);
+  assert.deepEqual(validateLayoutPlan(planFile).map((blocker) => blocker.code), [
+    'layout_plan_constraint_evidence_incomplete',
+  ]);
+
+  plan.constraintDecisions.push({
+    nodeId: 'section-1',
+    sourceKey: 'band.1',
+    name: 'maxWidth',
+    value: '720px',
+    decision: 'authored',
+    classification: 'structural',
+    evidence: { declaredValue: null },
+  });
+  fs.writeFileSync(planFile, `${JSON.stringify(plan)}\n`);
+  assert.deepEqual(validateLayoutPlan(planFile), []);
+
+  plan.constraintDecisions[0].classification = 'legacy-unclassified';
+  fs.writeFileSync(planFile, `${JSON.stringify(plan)}\n`);
+  assert.deepEqual(validateLayoutPlan(planFile).map((blocker) => blocker.code), [
+    'layout_plan_constraint_evidence_incomplete',
+  ]);
+
+  delete plan.constraintDecisions;
+  fs.writeFileSync(planFile, `${JSON.stringify(plan)}\n`);
+  assert.deepEqual(validateLayoutPlan(planFile).map((blocker) => blocker.code), [
+    'layout_plan_constraint_evidence_incomplete',
+  ]);
+});
+
+test('legacy constraint evidence next action starts a fresh capture without stale bindings', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'monteby-plan-recapture-'));
+  const referenceHtml = path.join(directory, 'reference.html');
+  const report = initialReport(parseArgs([
+    '--contract', path.join(directory, 'contract.json'),
+    '--out-dir', directory,
+    '--reference-html-file', referenceHtml,
+    '--icon-mapping', path.join(directory, 'legacy-icon-mapping.json'),
+  ]));
+  report.status = 'draft_failed';
+  report.blockers = [{
+    code: 'layout_plan_constraint_evidence_incomplete',
+    message: 'Fresh constraint evidence is required.',
+  }];
+
+  const action = nextActionFor(report);
+  assert.equal(action.id, 'recapture_constraint_evidence');
+  assert.equal(path.basename(action.tool), 'run-visual-iteration.js');
+  assert.equal(argumentValue(action.args, '--reference-html-file'), referenceHtml);
+  assert.equal(action.args.includes('--resume-capture'), false);
+  assert.equal(action.args.includes('--icon-mapping'), false);
+  assert.deepEqual(action.requires, []);
+  assert.match(action.instruction, /fresh reference capture with constraintEvidence v1/);
 });
 
 test('candidate binding hashes the actual candidate and rejects changed root order or missing mapped nodes', () => {
@@ -702,6 +864,7 @@ childProcess.spawnSync = function runVisualIterationHarness(command, args, optio
       sourceLayoutSha256: createHash('sha256').update(JSON.stringify(sourceLayout)).digest('hex'),
       sourceLayoutDigestFormat: 'sha256:json-stringify-node-map',
       mode: 'generic-measured-reference',
+      constraintDecisions: [],
       rootSectionIds: [],
       bands: [],
       completion: {

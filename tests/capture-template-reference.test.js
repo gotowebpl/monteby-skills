@@ -1210,6 +1210,9 @@ test('rendered text boxes retain control-backed computed style evidence without 
     paddingRight: '14px',
     paddingBottom: '8px',
     paddingLeft: '16px',
+    minHeight: '44px',
+    minWidth: '0px',
+    maxWidth: '320px',
     marginTop: '12px',
     marginRight: '18px',
     marginBottom: '20px',
@@ -1240,6 +1243,7 @@ test('rendered text boxes retain control-backed computed style evidence without 
     margins: [textBox.marginTop, textBox.marginRight, textBox.marginBottom, textBox.marginLeft],
     display: textBox.display,
     gaps: [textBox.gap, textBox.rowGap, textBox.columnGap],
+    constraintEvidence: textBox.constraintEvidence,
   }, {
     lineHeight: '24px',
     letterSpacing: '1.5px',
@@ -1253,7 +1257,9 @@ test('rendered text boxes retain control-backed computed style evidence without 
     margins: ['12px', '18px', '20px', '-4px'],
     display: 'inline-flex',
     gaps: ['10px', '6px', '10px'],
+    constraintEvidence: { minHeight: '44px', maxWidth: '320px' },
   });
+  assert.equal(layout.constraintEvidenceVersion, 1);
   assert.doesNotMatch(JSON.stringify(textBox), /captured-source-class|captured-source\.example|SOURCE CSS|SOURCE MARKUP/);
 });
 
@@ -1370,7 +1376,7 @@ test('content ledger capture retains a paragraph longer than 180 characters', ()
 });
 
 test('rendered text capture preserves an authored non-breaking space', () => {
-  const text = 'Oferta i\u00a0wdrożenie';
+  const text = '\u00a0Oferta i\u00a0wdrożenie\u00a0';
   const element = textElement(
     'p',
     text,
@@ -1382,6 +1388,15 @@ test('rendered text capture preserves an authored non-breaking space', () => {
 
   assert.equal(layout.contentTextEntries[0].text, text);
   assert.equal(layout.textBoxes[0].text, text);
+
+  const brief = buildReferenceBrief(
+    { url: 'https://example.test/reference/', outDir: '/tmp/reference' },
+    `<main><h1>${text}</h1></main>`,
+    [],
+    [],
+    { status: 'skipped', file: '' },
+  );
+  assert.equal(brief.text.h1[0], text);
 });
 
 test('reference manifest ledger includes direct text without duplicating a full semantic element', () => {
@@ -1988,6 +2003,36 @@ test('rendered layout captures safe nested groups for generated nav, grid, ledge
   });
 });
 
+test('capture retains a plain content frame when an explicit max-width owns its responsive constraint', () => {
+  const headingText = 'Elastyczna treść';
+  const heading = textElement(
+    'h1',
+    headingText,
+    rect(80, 60, 420, 64),
+    Array.from(headingText, (_, index) => rect(80 + index * 12, 60, 12, 64)),
+  );
+  const stack = layoutElement('div', rect(80, 48, 720, 180), [heading], {
+    display: 'flex', flexDirection: 'column', maxWidth: '720px',
+  });
+  const frame = layoutElement('div', rect(40, 32, 1120, 220), [stack], {
+    display: 'block', maxWidth: '1120px',
+  });
+  const section = layoutElement('section', rect(0, 0, 1200, 284), [frame]);
+
+  const { layout } = captureWithMockDom([heading], [], {}, {
+    bodyChildren: [section],
+    landmarkElements: [section],
+    viewportWidth: 1200,
+    scrollHeight: 284,
+  });
+  const frameGroup = layout.layoutGroups.find((group) => group.rect.width === 1120);
+  const stackGroup = layout.layoutGroups.find((group) => group.rect.width === 720);
+
+  assert.equal(layout.constraintEvidenceVersion, 1);
+  assert.deepEqual(frameGroup.constraintEvidence, { maxWidth: '1120px' });
+  assert.deepEqual(stackGroup.constraintEvidence, { maxWidth: '720px' });
+});
+
 test('layout group DOM paths stay stable when a viewport hides a structural sibling', () => {
   const visibleFixture = structuralLayoutFixture();
   const hiddenFixture = structuralLayoutFixture({ hideLinks: true });
@@ -2165,7 +2210,7 @@ test('capture preserves anchor ownership, bounded direct text, and native form s
   anchor.getAttribute = (name) => name === 'href' ? '/homes?status=available#list' : null;
   anchor.hasAttribute = (name) => name === 'href';
 
-  const label = { innerText: 'Preferred budget' };
+  const label = textElement('label', 'Preferred budget', rect(20, 66, 180, 24), [], {});
   const amount = controlElement('input', rect(20, 90, 180, 44), { type: 'number', required: '' }, {
     id: 'budget-field',
     name: 'budget',
@@ -2266,6 +2311,7 @@ test('capture preserves ordinary root bands and decomposes only compound linked 
   const card = layoutElement('a', rect(16, 280, 288, 164), [cardContent], {
     backgroundColor: 'rgb(248, 248, 248)',
     borderRadius: '12px',
+    textDecorationLine: 'none',
   });
   card.innerText = 'tune Dopasuj parametry Oddzielna treść karty.';
   card.textContent = card.innerText;
@@ -2323,6 +2369,7 @@ test('capture preserves ordinary root bands and decomposes only compound linked 
     key: group.key,
     href: group.href,
   })), [{ key: '0.2.0.0', href: '/konfigurator' }]);
+  assert.equal(groupByKey.get('0.2.0.0').textDecoration, 'none');
   assert.equal(layout.textBoxes.some((box) => box.tag === 'a' && box.text.includes('Dopasuj parametry')), false);
   assert.deepEqual(layout.textBoxes.filter((box) => ['Dopasuj parametry', 'Oddzielna treść karty.'].includes(box.text)).map((box) => ({
     tag: box.tag,

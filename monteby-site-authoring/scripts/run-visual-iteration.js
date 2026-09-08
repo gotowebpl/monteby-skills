@@ -1333,6 +1333,53 @@ function validateLayoutPlan(file) {
 
   if (plan.mode === 'generic-measured-reference') {
     const bands = Array.isArray(plan.bands) ? plan.bands : [];
+    const constraintDecisions = Array.isArray(plan.constraintDecisions)
+      ? plan.constraintDecisions
+      : null;
+    const sourceConstraints = sourceNodeMap
+      ? Object.entries(sourceNodeMap).flatMap(([nodeId, node]) => (
+        Object.entries(node?.props || {})
+          .filter(([name, value]) => (
+            /^(?:minHeight|maxWidth|minWidth|marginLeft|grid(?:Column|Row)Start)(?:Tablet|Mobile)?$/u.test(name)
+            && ['string', 'number'].includes(typeof value)
+          ))
+          .map(([name, value]) => ({ nodeId, name, value }))
+      ))
+      : [];
+    const uncoveredSourceConstraint = sourceConstraints.some(({ nodeId, name, value }) => (
+      !constraintDecisions?.some((decision) => {
+        if (
+          decision?.nodeId !== nodeId
+          || decision?.name !== name
+          || decision?.decision !== 'authored'
+          || decision?.classification === 'legacy-unclassified'
+        ) {
+          return false;
+        }
+        const authoredValue = decision?.authoredValue;
+        const declaredValue = decision?.evidence?.declaredValue;
+        const decisionValue = authoredValue === null || authoredValue === undefined || authoredValue === ''
+          ? declaredValue === null || declaredValue === undefined || declaredValue === ''
+            ? decision?.value
+            : declaredValue
+          : authoredValue;
+        return String(decisionValue) === String(value);
+      })
+    ));
+    if (
+      constraintDecisions === null
+      || uncoveredSourceConstraint
+      || constraintDecisions.some((decision) => (
+        decision?.decision === 'authored'
+        && decision?.classification === 'legacy-unclassified'
+      ))
+    ) {
+      blockers.push({
+        source: 'draft',
+        code: 'layout_plan_constraint_evidence_incomplete',
+        message: 'Generic measured plans require complete constraintDecisions from a fresh constraintEvidence v1 capture; authored legacy-unclassified constraints cannot advance.',
+      });
+    }
     if (
       bands.length !== Number(plan.completion.plannedBands)
       || plan.completion.allBandsMapped !== true
@@ -1705,6 +1752,7 @@ function iterationArgsFor(report, candidateLayout = '', overrides = {}) {
   const iconMapping = typeof overrides.iconMapping === 'string'
     ? overrides.iconMapping
     : options.iconMapping;
+  const resumeCapture = overrides.resumeCapture !== false && report.files.captureCheckpoint;
   const args = [
     '--label', report.label,
     '--contract', report.files.sourceContract,
@@ -1738,8 +1786,8 @@ function iterationArgsFor(report, candidateLayout = '', overrides = {}) {
   if (iconMapping) {
     args.push('--icon-mapping', iconMapping);
   }
-  if (report.files.captureCheckpoint) {
-    args.push('--resume-capture', report.files.captureCheckpoint);
+  if (resumeCapture) {
+    args.push('--resume-capture', resumeCapture);
   }
   if (allowStructuralVerdict) {
     args.push('--allow-structural-verdict');
@@ -1824,6 +1872,22 @@ function nextActionFor(report) {
   }
 
   const blockers = Array.isArray(report.blockers) ? report.blockers : [];
+  if (
+    report.status === 'draft_failed'
+    && blockers.length > 0
+    && blockers.every((blocker) => blocker?.code === 'layout_plan_constraint_evidence_incomplete')
+  ) {
+    return {
+      id: 'recapture_constraint_evidence',
+      tool: scriptPath('run-visual-iteration.js'),
+      args: iterationArgsFor(report, '', {
+        iconMapping: '',
+        resumeCapture: false,
+      }),
+      requires: [],
+      instruction: 'Start a fresh reference capture with constraintEvidence v1. Do not reuse the legacy capture checkpoint or its icon mapping.',
+    };
+  }
   const iconMappingBlocker = (blocker) => [
     'missing_native_icon_mapping',
     'invalid_native_icon_mapping',

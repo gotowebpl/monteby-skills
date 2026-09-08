@@ -1550,7 +1550,7 @@ function classifyMediaUrl(url) {
 function normalizeText(value) {
   return decodeEntities(stripTags(value))
     .replace(/[\t\n\f\r ]+/g, ' ')
-    .trim();
+    .replace(/^[\t\n\f\r ]+|[\t\n\f\r ]+$/g, '');
 }
 
 function stripTags(value) {
@@ -2158,10 +2158,20 @@ function captureRenderedLayout(
       return true;
     }
   };
-  const normalizeText = (value) => String(value || '').replace(/[\t\n\f\r ]+/g, ' ').trim();
+  const normalizeText = (value) => String(value || '')
+    .replace(/[\t\n\f\r ]+/g, ' ')
+    .replace(/^[\t\n\f\r ]+|[\t\n\f\r ]+$/g, '');
   const controlBackedStyleEvidence = (style) => {
     const display = style.display;
     const supportsLayoutGap = /(?:flex|grid)/u.test(display);
+    const minHeight = safeMetric(style.minHeight);
+    const minWidth = safeMetric(style.minWidth);
+    const maxWidth = safeMetric(style.maxWidth);
+    const constraintEvidence = {
+      ...(minHeight && !['0', '0px'].includes(minHeight) ? { minHeight } : {}),
+      ...(minWidth && !['0', '0px'].includes(minWidth) ? { minWidth } : {}),
+      ...(maxWidth ? { maxWidth } : {}),
+    };
 
     return {
       lineHeight: style.lineHeight,
@@ -2183,6 +2193,7 @@ function captureRenderedLayout(
       paddingBottom: style.paddingBottom,
       paddingLeft: style.paddingLeft,
       display,
+      ...(Object.keys(constraintEvidence).length > 0 ? { constraintEvidence } : {}),
       ...(supportsLayoutGap ? {
         gap: style.gap,
         rowGap: style.rowGap,
@@ -2325,8 +2336,11 @@ function captureRenderedLayout(
     const gradientEvidence = parseGradientEvidence(style.backgroundImage);
     const visualTilt = safeVisualTilt(style.transform);
     const layoutSize = visualTilt ? unrotatedLayoutSize(rect, visualTilt) : null;
+    const constraintEvidence = controlBackedStyleEvidence(style).constraintEvidence || {};
+    const textDecoration = safeEnum(style.textDecorationLine, ['none', 'underline', 'line-through', 'overline']);
 
     return {
+      ...(textDecoration ? { textDecoration } : {}),
       ...(display ? { display } : {}),
       ...(flexDirection ? { flexDirection } : {}),
       ...(flexWrap ? { flexWrap } : {}),
@@ -2356,6 +2370,7 @@ function captureRenderedLayout(
       ...(sticky ? { sticky: true } : {}),
       ...(stickyTop ? { stickyTop } : {}),
       ...(visualTilt ? { visualTilt, ...(layoutSize || {}) } : {}),
+      ...(Object.keys(constraintEvidence).length > 0 ? { constraintEvidence } : {}),
     };
   };
   const hasVisibleColor = (value) => {
@@ -2732,13 +2747,16 @@ function captureRenderedLayout(
         && children.length > 0
         && !textContainerTags.has(tag)
         && hasVisibleSurface(style, rect);
+      const declaredLayoutConstraint = children.length > 0
+        && !textContainerTags.has(tag)
+        && Object.keys(controlBackedStyleEvidence(style).constraintEvidence || {}).length > 0;
       const rootFlowChild = !neutralPageWrapperElements.has(element)
         && (parent === document.body || neutralPageWrapperElements.has(parent))
         && elementFlowParticipation(element) === 'normal'
         && children.length > 0
         && !textContainerTags.has(tag);
       if (!semantic && !layoutContainer && !nonLeafLayoutChild && !paintedEmptyLayoutChild
-        && !selfPositionedSurface && !rootFlowChild && !structuredLinkedGroup) {
+        && !selfPositionedSurface && !rootFlowChild && !structuredLinkedGroup && !declaredLayoutConstraint) {
         return null;
       }
 
@@ -3220,7 +3238,17 @@ function captureRenderedLayout(
     const closestLabel = typeof element?.closest === 'function' ? element.closest('label') : null;
     const label = labels[0] || closestLabel;
     const text = normalizeText(label?.innerText || label?.textContent || '');
-    return text.length <= 500 ? text : '';
+    if (!label || !text || text.length > 500) return null;
+    const style = window.getComputedStyle(label);
+    const wrapsField = typeof label.contains === 'function' && label.contains(element);
+    const columnLayout = style.display === 'grid' || (style.display === 'flex' && style.flexDirection === 'column');
+    const fieldGap = wrapsField && columnLayout ? safeMetric(style.rowGap || style.gap) : '';
+    return {
+      label: text,
+      labelRect: readRect(label),
+      labelStyle: { fontSize: style.fontSize, fontWeight: style.fontWeight, lineHeight: style.lineHeight, color: style.color },
+      ...(fieldGap ? { fieldGap } : {}),
+    };
   };
   const associatedGroupLabel = (element) => {
     const fieldset = typeof element?.closest === 'function' ? element.closest('fieldset') : null;
@@ -3334,6 +3362,7 @@ function captureRenderedLayout(
           disabled: option?.disabled === true,
         }))
         : [];
+      const fieldLabel = ['input', 'select', 'textarea'].includes(tag) ? associatedLabel(element) : null;
 
       return {
         order,
@@ -3343,9 +3372,7 @@ function captureRenderedLayout(
         ...(tag === 'a' && safeHref(element) ? { href: safeHref(element) } : {}),
         ...(fieldName ? { name: fieldName } : {}),
         ...(fieldId ? { fieldId } : {}),
-        ...(['input', 'select', 'textarea'].includes(tag) && associatedLabel(element)
-          ? { label: associatedLabel(element) }
-          : {}),
+        ...(fieldLabel || {}),
         ...(['radio', 'checkbox'].includes(type) && associatedGroupLabel(element)
           ? { groupLabel: associatedGroupLabel(element) }
           : {}),
@@ -3376,6 +3403,12 @@ function captureRenderedLayout(
         fontSize: style.fontSize,
         fontWeight: style.fontWeight,
         fontFamily: style.fontFamily,
+        ...(['input', 'select', 'textarea', 'button'].includes(tag) ? {
+          height: safeMetric(style.height),
+          minHeight: safeMetric(style.minHeight),
+          alignSelf: style.alignSelf,
+          justifySelf: style.justifySelf,
+        } : {}),
         ...controlBackedStyleEvidence(style),
         state: {
           expanded: readAriaState(element, 'aria-expanded'),
@@ -3513,6 +3546,7 @@ function captureRenderedLayout(
 
   return {
     capturedAt: new Date().toISOString(),
+    constraintEvidenceVersion: 1,
     url: window.location.href,
     title: document.title,
     viewport,

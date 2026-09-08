@@ -24,7 +24,7 @@ const {
   firstTokenReference,
 } = require('./resolved-design-profile');
 const { validateIconMapping } = require('./icon-mapping');
-const { collectControlMetadata } = require('./control-contract');
+const { collectControlMetadata, normalizeControlValue } = require('./control-contract');
 const { GENERIC_MEASURED_REFERENCE, selectDraftStrategy } = require('./draft-strategy');
 
 const DEFAULT_REPLACEMENT_PROFILE = {
@@ -662,6 +662,7 @@ function summarizeReferenceLayout(layout) {
   const captureGaps = summarizeReferenceCaptureGaps(layout, bands, viewportWidth);
 
   return {
+    constraintEvidenceVersion: Number(layout?.constraintEvidenceVersion || 0) === 1 ? 1 : 0,
     viewport: layout?.viewport || null,
     documentStyle: layout?.documentStyle && typeof layout.documentStyle === 'object'
       ? layout.documentStyle
@@ -1019,6 +1020,9 @@ function summarizeReferenceLandmark(landmark, viewportWidth, pageHeight) {
     paddingRight: String(landmark.paddingRight || ''),
     paddingBottom: String(landmark.paddingBottom || ''),
     paddingLeft: String(landmark.paddingLeft || ''),
+    ...(landmark.constraintEvidence && typeof landmark.constraintEvidence === 'object'
+      ? { constraintEvidence: { ...landmark.constraintEvidence } }
+      : {}),
     paintedBackground: landmark.paintedBackground === true,
     flowParticipation: landmark.flowParticipation === 'overlay' ? 'overlay' : 'normal',
   };
@@ -1379,6 +1383,9 @@ function summarizeReferenceBandContent(band, index, viewportWidth, textBoxes, me
     paddingRight: band.paddingRight,
     paddingBottom: band.paddingBottom,
     paddingLeft: band.paddingLeft,
+    ...(band.constraintEvidence && typeof band.constraintEvidence === 'object'
+      ? { constraintEvidence: { ...band.constraintEvidence } }
+      : {}),
     contentBounds,
     contentInset: contentBounds ? Math.max(0, Math.round(contentBounds.left - band.rect.left)) : Math.round(viewportWidth * 0.05),
     contentWidth: contentBounds ? Math.round(contentBounds.width) : Math.round(Math.min(viewportWidth * 0.9, 1280)),
@@ -1665,8 +1672,8 @@ function groupReferenceFormFields(fields, formKey) {
     const bottom = Math.max(...rects.map((rect) => rect.bottom));
     const first = radios[0];
     const options = radios.map((radio) => ({
-      label: String(radio?.label || '').trim(),
-      value: String(radio?.value || '').trim(),
+      label: normalizeAuthoredText(radio?.label),
+      value: normalizeAuthoredText(radio?.value),
     }));
     if (options.some((option) => !option.label || !option.value)
       || new Set(options.map((option) => option.value)).size !== options.length) {
@@ -1676,7 +1683,7 @@ function groupReferenceFormFields(fields, formKey) {
       ...first,
       type: 'radio',
       name,
-      label: radios.map((radio) => String(radio?.groupLabel || '').trim()).find(Boolean) || '',
+      label: radios.map((radio) => normalizeAuthoredText(radio?.groupLabel)).find(Boolean) || '',
       fieldId: '',
       required: radios.some((radio) => radio?.required === true),
       rect: { left, right, top, bottom, x: left, y: top, width: right - left, height: bottom - top },
@@ -1774,7 +1781,8 @@ function summarizeReferenceForm(fields, submit, layoutGroups, textBoxes, band, f
     const containedFields = groupedFields.filter((field) => referenceRectContains(group.rect, field.rect));
     return containedFields.length >= 2 ? { group, submit, fields: containedFields } : null;
   }).filter(Boolean).sort((left, right) => (
-    right.fields.length - left.fields.length
+    Number(right.group.key === formKey) - Number(left.group.key === formKey)
+    || right.fields.length - left.fields.length
     || referenceBoxArea(left.group) - referenceBoxArea(right.group)
   ));
   const candidate = candidates[0];
@@ -1793,7 +1801,10 @@ function summarizeReferenceForm(fields, submit, layoutGroups, textBoxes, band, f
   )));
   const formColumns = hasTwoColumnRow ? 2 : 1;
   const fieldBounds = referenceContentBounds(orderedFields, candidate.group.rect);
-  const firstControl = nonCheckboxFields[0] || orderedFields[0];
+  const firstControl = nonCheckboxFields.find((field) => String(field.tag || '').toLowerCase() !== 'textarea') || nonCheckboxFields[0] || orderedFields[0];
+  const textarea = nonCheckboxFields.find((field) => String(field.tag || '').toLowerCase() === 'textarea');
+  const labelStyle = firstControl.labelStyle || {};
+  const fieldFontWeights = { 100: 'font-thin', 200: 'font-extralight', 300: 'font-light', 400: 'font-normal', 500: 'font-medium', 600: 'font-semibold', 700: 'font-bold', 800: 'font-extrabold', 900: 'font-black' };
   const directChildren = groups.filter((group) => String(group.parentKey || '') === candidate.group.key);
   const contentLeft = directChildren.length > 0
     ? Math.min(...directChildren.map((group) => group.rect.left))
@@ -1801,7 +1812,8 @@ function summarizeReferenceForm(fields, submit, layoutGroups, textBoxes, band, f
   const contentTop = directChildren.length > 0
     ? Math.min(...directChildren.map((group) => group.rect.top))
     : fieldBounds?.top;
-  const sourceGap = directChildren.map((group) => genericCssMetric(group.gap || group.rowGap)).find(Boolean);
+  const sourceGap = genericCssMetric(candidate.group.rowGap) || genericCssMetric(candidate.group.gap)
+    || directChildren.map((group) => genericCssMetric(group.rowGap) || genericCssMetric(group.gap)).find(Boolean);
   const buttonBox = textBoxes.find((box) => String(box?.structureKey || '') === String(candidate.submit.structureKey || ''))
     || candidate.submit;
   const numericMetric = (value, fallback) => {
@@ -1816,16 +1828,6 @@ function summarizeReferenceForm(fields, submit, layoutGroups, textBoxes, band, f
     if (width <= 4) return 'border-4';
     return 'border-8';
   };
-  const radiusToken = (value) => {
-    const radius = numericMetric(value, 0);
-    if (radius <= 0) return '';
-    if (radius <= 2) return 'rounded-sm';
-    if (radius <= 4) return 'rounded';
-    if (radius <= 8) return 'rounded-lg';
-    if (radius <= 12) return 'rounded-xl';
-    if (radius <= 20) return 'rounded-2xl';
-    return 'rounded-full';
-  };
   const authoredFields = orderedFields.map((field) => {
     const type = String(field.tag || '').toLowerCase() === 'textarea'
       ? 'textarea'
@@ -1835,8 +1837,8 @@ function summarizeReferenceForm(fields, submit, layoutGroups, textBoxes, band, f
     const spansRow = formColumns === 2 && fieldBounds && field.rect.width >= fieldBounds.width * 0.7;
     const options = Array.isArray(field.options)
       ? field.options.map((option) => {
-        const label = String(option?.label || '').trim();
-        const value = String(option?.value || '').trim();
+        const label = normalizeAuthoredText(option?.label);
+        const value = normalizeAuthoredText(option?.value);
         return value && value !== label ? `${label}|${value}` : label;
       }).filter(Boolean).join('\n')
       : '';
@@ -1844,8 +1846,8 @@ function summarizeReferenceForm(fields, submit, layoutGroups, textBoxes, band, f
       type,
       ...(String(field.fieldId || '').trim() ? { fieldId: String(field.fieldId).trim() } : {}),
       ...(String(field.name || '').trim() ? { name: String(field.name).trim() } : {}),
-      ...(String(field.label || '').trim() ? { label: String(field.label).trim() } : {}),
-      ...(String(field.placeholder || '').trim() ? { placeholder: String(field.placeholder).trim() } : {}),
+      ...(normalizeAuthoredText(field.label) ? { label: normalizeAuthoredText(field.label) } : {}),
+      ...(normalizeAuthoredText(field.placeholder) ? { placeholder: normalizeAuthoredText(field.placeholder) } : {}),
       ...(Object.prototype.hasOwnProperty.call(field, 'value') ? { value: field.value } : {}),
       ...(Object.prototype.hasOwnProperty.call(field, 'defaultValue') ? { defaultValue: field.defaultValue } : {}),
       ...(String(field.min || '').trim() ? { min: String(field.min).trim() } : {}),
@@ -1876,20 +1878,20 @@ function summarizeReferenceForm(fields, submit, layoutGroups, textBoxes, band, f
       formGap: sourceGap || '18px',
       formMaxWidth: fieldBounds ? `${Math.round(fieldBounds.width * 100) / 100}px` : '100%',
       formAlignItems: 'stretch',
-      formPaddingY: `${Math.max(0, Math.round((contentTop || candidate.group.rect.top) - candidate.group.rect.top))}px`,
-      formPaddingX: `${Math.max(0, Math.round((contentLeft || candidate.group.rect.left) - candidate.group.rect.left))}px`,
+      formPaddingY: genericCssMetric(candidate.group.paddingTop) || `${Math.max(0, Math.round((contentTop ?? candidate.group.rect.top) - candidate.group.rect.top))}px`,
+      formPaddingX: genericCssMetric(candidate.group.paddingLeft) || `${Math.max(0, Math.round((contentLeft ?? candidate.group.rect.left) - candidate.group.rect.left))}px`,
       formBackgroundColor: normalizedAuthorableColor(candidate.group.backgroundColor) || 'transparent',
       formBorderWidth: '0px',
       formBorderColor: normalizedAuthorableColor(candidate.group.borderColor) || '#e5e7eb',
       formBorderRadius: genericCssMetric(candidate.group.borderRadius) || '0px',
-      fieldGap: '6px',
-      labelFontSize: '14px',
-      labelFontWeight: 'font-semibold',
-      labelColor: normalizedAuthorableColor(firstControl.color) || '#111827',
+      fieldGap: genericCssMetric(firstControl.fieldGap) || '6px',
+      labelFontSize: genericCssMetric(labelStyle.fontSize) || '14px',
+      labelFontWeight: fieldFontWeights[genericFontWeight(labelStyle, '600')],
+      labelColor: normalizedAuthorableColor(labelStyle.color) || normalizedAuthorableColor(firstControl.color) || '#111827',
       requiredColor: '#ef4444',
       inputBorderColor: normalizedAuthorableColor(firstControl.borderTopColor) || '#d1d5db',
       inputBorderWidth: borderToken(firstControl.borderTopWidth),
-      inputBorderRadius: radiusToken(firstControl.borderRadius),
+      inputBorderRadius: genericCssMetric(firstControl.borderRadius) || '0px',
       inputPaddingTop: numericMetric(firstControl.paddingTop, 14),
       inputPaddingRight: numericMetric(firstControl.paddingRight, 16),
       inputPaddingBottom: numericMetric(firstControl.paddingBottom, 14),
@@ -1897,13 +1899,22 @@ function summarizeReferenceForm(fields, submit, layoutGroups, textBoxes, band, f
       inputBgColor: normalizedAuthorableColor(firstControl.backgroundColor) || '#ffffff',
       inputColor: normalizedAuthorableColor(firstControl.color) || '#111827',
       inputFontSize: genericCssMetric(firstControl.fontSize) || '16px',
-      inputFontWeight: 'font-normal',
+      inputFontWeight: fieldFontWeights[genericFontWeight(firstControl, '400')],
       inputHeight: `${Math.round(firstControl.rect.height * 100) / 100}px`,
+      ...(textarea ? { textareaHeight: `${Math.round(textarea.rect.height * 100) / 100}px`, textareaMinHeight: genericCssMetric(textarea.minHeight) || genericCssMetric(textarea.constraintEvidence?.minHeight) } : {}),
       inputFocusColor: normalizedAuthorableColor(buttonBox.backgroundColor) || '#2563eb',
       checkboxSize: `${Math.round((orderedFields.find((field) => field.type === 'checkbox')?.rect.height || 16) * 100) / 100}px`,
       checkboxBorderColor: normalizedAuthorableColor(firstControl.borderTopColor) || '#d1d5db',
       checkboxBorderRadius: 'rounded-sm',
       buttonAlignSelf: 'flex-start',
+      buttonWidth: `${Math.round(candidate.submit.rect.width * 100) / 100}px`,
+      ...(fieldBounds ? { buttonJustifySelf: Math.abs(candidate.submit.rect.width - fieldBounds.width) <= 1
+        ? 'stretch'
+        : Math.abs(candidate.submit.rect.left - fieldBounds.left) <= 1
+          ? 'start'
+          : Math.abs(candidate.submit.rect.right - fieldBounds.right) <= 1
+            ? 'end'
+            : Math.abs((candidate.submit.rect.left + candidate.submit.rect.right) - (fieldBounds.left + fieldBounds.right)) <= 2 ? 'center' : undefined } : {}),
       buttonMinHeight: `${Math.round(candidate.submit.rect.height * 100) / 100}px`,
       buttonPaddingY: genericCssMetric(buttonBox.paddingTop) || '12px',
       buttonPaddingX: genericCssMetric(buttonBox.paddingLeft) || '24px',
@@ -2234,6 +2245,7 @@ function summarizeReferenceLayoutGroups(layoutGroups, band, textBoxes, mediaBoxe
         parentKey: String(group.parentKey || ''),
         tag: String(group.tag || 'div').toLowerCase(),
         href: String(group.href || ''),
+        textDecoration: String(group.textDecoration || ''),
         rect,
         backgroundColor: String(group.backgroundColor || ''),
         backgroundType: String(group.backgroundType || ''),
@@ -2277,6 +2289,9 @@ function summarizeReferenceLayoutGroups(layoutGroups, band, textBoxes, mediaBoxe
         paddingRight: String(group.paddingRight || ''),
         paddingBottom: String(group.paddingBottom || ''),
         paddingLeft: String(group.paddingLeft || ''),
+        ...(group.constraintEvidence && typeof group.constraintEvidence === 'object'
+          ? { constraintEvidence: { ...group.constraintEvidence } }
+          : {}),
         paintedBackground: group.paintedBackground === true,
         flowParticipation: group.flowParticipation === 'overlay' ? 'overlay' : 'normal',
         stackingIndex: safeReferenceStackingIndex(group.stackingIndex),
@@ -2756,9 +2771,11 @@ function draftLayout(contractIndex, brief, contractPayload = {}) {
 
   const mechanicalPlan = buildMechanicalLayoutPlan(context, genericPlan);
   if (genericPlan) {
-    if (mechanicalPlan.measuredHardConstraints.length > 0) {
+    const authoredConstraintCount = mechanicalPlan.constraintDecisions.filter(({ decision }) => decision === 'authored').length;
+    const omittedConstraintCount = mechanicalPlan.constraintDecisions.filter(({ decision }) => decision === 'omitted').length;
+    if (authoredConstraintCount > 0) {
       context.warnings.push(
-        `measured_hard_constraints: ${mechanicalPlan.measuredHardConstraints.length} generated node(s) contain measurement-derived sizing, offset, or grid-start constraints; review them before treating the layout as flexible.`
+        `measured_hard_constraints: ${authoredConstraintCount} evidence-backed constraint(s) were authored and ${omittedConstraintCount} content-derived measurement(s) were omitted; review constraintDecisions before treating the layout as flexible.`
       );
     }
     if (mechanicalPlan.unmappedInlineSvg.length > 0) {
@@ -3125,6 +3142,9 @@ function buildMechanicalLayoutPlan(context, genericPlan) {
     rootSectionIds,
     bands,
     measuredHardConstraints,
+    constraintDecisions: measuredHardConstraints.flatMap(({ nodeId, sourceKey, decisions }) => (
+      decisions.map((decision) => ({ nodeId, sourceKey, ...decision }))
+    )),
     unmappedInlineSvg: captureGaps.unmappedInlineSvg.filter((surface) => !context.mappedIconKeys.has(surface.structureKey)),
     uncoveredRootGroups: captureGaps.uncoveredRootGroups,
     completion,
@@ -3158,10 +3178,10 @@ function genericMeasuredHardConstraints(context, genericPlan) {
     const props = Object.entries(node.props || {})
       .filter(([name, value]) => measuredProps.test(name) && ['string', 'number'].includes(typeof value))
       .map(([name, value]) => ({ name, value }));
-    const omitted = Array.isArray(context.constraintDecisions)
-      ? context.constraintDecisions.filter((decision) => decision.nodeId === nodeId && decision.decision === 'omitted')
+    const decisions = Array.isArray(context.constraintDecisions)
+      ? context.constraintDecisions.filter((decision) => decision.nodeId === nodeId)
       : [];
-    if (props.length === 0 && omitted.length === 0) {
+    if (props.length === 0 && decisions.length === 0) {
       return [];
     }
 
@@ -3169,49 +3189,232 @@ function genericMeasuredHardConstraints(context, genericPlan) {
       nodeId,
       sourceKey: String(context.genericMeasuredNodeKeys.get(nodeId) || bandSourceKeys.get(nodeId) || ''),
       props,
-      decisions: props.map(({ name, value }) => ({
-        name, value, decision: 'authored', reason: 'retained-bounded-measurement',
-      })).concat(omitted.map(({ name, value, decision, reason, evidence }) => ({
-        name, value, decision, reason, evidence,
-      }))),
+      decisions: decisions.map(({ name, value, authoredValue, decision, reason, classification, evidence }) => ({
+        name, value, authoredValue, decision, reason, evidence,
+        ...(classification ? { classification } : {}),
+      })),
     }];
   });
 }
 
 function resolveGenericMeasuredHardConstraints(context, genericPlan) {
   context.constraintDecisions = [];
-  const mobileWidth = Number(genericPlan.viewports.find((viewport) => /mobile/u.test(viewport.label))?.width || 0);
-  const rootBandByNode = (nodeId) => {
-    let currentId = nodeId;
-    while (context.nodeMap[currentId]?.parent && context.nodeMap[currentId].parent !== 'ROOT') {
-      currentId = context.nodeMap[currentId].parent;
-    }
-    return genericPlan.bands.find((band) => band.generatedSectionId === currentId) || null;
-  };
+  const viewportWidth = Object.fromEntries(genericPlan.viewports.map((viewport) => [
+    viewport.label,
+    Number(viewport.width || 0),
+  ]));
   for (const [nodeId, node] of Object.entries(context.nodeMap)) {
     if (nodeId === 'ROOT' || !node?.props) continue;
-    const band = rootBandByNode(nodeId);
-    const singleColumnMobile = band ? genericBandColumnCount(band, 'mobile') <= 1 : false;
+    let rootNodeId = nodeId;
+    while (context.nodeMap[rootNodeId]?.parent && context.nodeMap[rootNodeId].parent !== 'ROOT') {
+      rootNodeId = context.nodeMap[rootNodeId].parent;
+    }
+    const band = genericPlan.bands.find((candidate) => candidate.generatedSectionId === rootNodeId) || null;
+    const sourceKey = String(context.genericMeasuredNodeKeys.get(nodeId) || band?.sourceKey || '');
+    const parent = context.nodeMap[node.parent];
+    const multiViewportMediaSurface = band
+      ? genericMeasuredCapturedSurfaceInventory(band).some((surface) => {
+        if (surface.kind !== 'media' || surface.viewports.length < 2) return false;
+        const mappings = context.genericMeasuredSurfaceNodes.get(
+          genericMeasuredSurfaceMapKey(surface.kind, surface.structureKey)
+        );
+        return Array.isArray(mappings) && mappings.some((mapping) => (
+          mapping.generatedNodeId === nodeId
+          && ['container-background', 'group-background'].includes(mapping.strategy)
+        ));
+      })
+      : false;
     for (const [name, value] of Object.entries({ ...node.props })) {
-      let reason = '';
-      if (singleColumnMobile && name === 'marginLeftMobile' && String(value) !== '0px' && String(value) !== 'auto') {
-        reason = 'single-column-mobile-offset';
-      } else if (mobileWidth > 0 && name === 'maxWidthMobile') {
-        const pixels = pxNumber(value);
-        if (pixels !== null && pixels >= mobileWidth - 1) reason = 'non-constraining-mobile-max-width';
-      } else if (mobileWidth > 0 && name === 'minWidthMobile') {
-        const pixels = pxNumber(value);
-        if (pixels !== null && pixels > mobileWidth) reason = 'overflowing-mobile-min-width';
+      const match = /^(minHeight|maxWidth|minWidth|marginLeft|grid(?:Column|Row)Start)(Tablet|Mobile)?$/u.exec(name);
+      if (!match) continue;
+      const baseName = match[1];
+      const viewport = match[2] === 'Tablet' ? 'tablet' : match[2] === 'Mobile' ? 'mobile' : 'desktop';
+      const measurement = band?.viewportMeasurements?.[viewport]
+        || (viewport === 'mobile' ? band?.mobile : viewport === 'tablet' ? band?.tablet : band?.desktop)
+        || null;
+      const sourceMeasurement = sourceKey === String(band?.sourceKey || '')
+        ? measurement
+        : genericMeasuredGroupByKey(measurement, sourceKey)
+          || genericMeasurementMedia(measurement).find((media) => String(media?.structureKey || '') === sourceKey)
+          || null;
+      const declaredValue = String(sourceMeasurement?.constraintEvidence?.[baseName] || '');
+      const previousViewport = viewport === 'mobile' ? 'tablet' : viewport === 'tablet' ? 'desktop' : '';
+      const previousMeasurement = previousViewport
+        ? band?.viewportMeasurements?.[previousViewport]
+          || (previousViewport === 'tablet' ? band?.tablet : band?.desktop)
+        : null;
+      const previousSourceMeasurement = previousViewport
+        ? sourceKey === String(band?.sourceKey || '')
+          ? previousMeasurement
+          : genericMeasuredGroupByKey(previousMeasurement, sourceKey)
+            || genericMeasurementMedia(previousMeasurement).find((media) => String(media?.structureKey || '') === sourceKey)
+            || null
+        : null;
+      const previousDeclaredValue = String(previousSourceMeasurement?.constraintEvidence?.[baseName] || '');
+      const sourceDeclared = declaredValue !== '';
+      const inheritedDeclaration = sourceDeclared && previousDeclaredValue === declaredValue;
+      const currentViewportWidth = viewportWidth[viewport] || 0;
+      const viewportSuffix = viewport === 'desktop' ? '' : capitalize(viewport);
+      const currentGridTemplate = parent?.props?.[`gridTemplateColumns${viewportSuffix}`]
+        || (viewport === 'mobile' ? parent?.props?.gridTemplateColumnsTablet : '')
+        || parent?.props?.gridTemplateColumns;
+      const multiColumnGrid = parent?.props?.layoutDisplay === 'grid'
+        && typeof currentGridTemplate === 'string'
+        && currentGridTemplate !== ''
+        && currentGridTemplate !== 'one';
+      const currentColumnStart = node.props[`gridColumnStart${viewportSuffix}`]
+        ?? (viewport === 'mobile' ? node.props.gridColumnStartTablet : undefined)
+        ?? node.props.gridColumnStart;
+      const currentRowStart = node.props[`gridRowStart${viewportSuffix}`]
+        ?? (viewport === 'mobile' ? node.props.gridRowStartTablet : undefined)
+        ?? node.props.gridRowStart;
+      const overlappingGridLayer = parent?.props?.layoutDisplay === 'grid'
+        && currentColumnStart !== undefined
+        && currentRowStart !== undefined
+        && Object.values(context.nodeMap).some((candidate) => {
+          if (!candidate || candidate === node || candidate.parent !== node.parent) return false;
+          const candidateColumnStart = candidate.props?.[`gridColumnStart${viewportSuffix}`]
+            ?? (viewport === 'mobile' ? candidate.props?.gridColumnStartTablet : undefined)
+            ?? candidate.props?.gridColumnStart;
+          const candidateRowStart = candidate.props?.[`gridRowStart${viewportSuffix}`]
+            ?? (viewport === 'mobile' ? candidate.props?.gridRowStartTablet : undefined)
+            ?? candidate.props?.gridRowStart;
+          return candidateColumnStart === currentColumnStart && candidateRowStart === currentRowStart;
+        });
+      const structuralMedia = typeof node.props.backgroundImage === 'string' && node.props.backgroundImage !== '';
+      const numericValue = pxNumber(value);
+      const previousDeclaredNumber = pxNumber(previousDeclaredValue);
+      let decision = 'omitted';
+      let reason = 'content-derived-measurement';
+      let classification = 'content';
+
+      if (genericPlan.constraintEvidenceVersion !== 1) {
+        const legacySingleColumnMobileOffset = viewport === 'mobile'
+          && baseName === 'marginLeft'
+          && band
+          && genericBandColumnCount(band, 'mobile') <= 1
+          && String(value) !== '0px'
+          && String(value) !== 'auto';
+        const legacyNonConstrainingMaxWidth = viewport === 'mobile'
+          && baseName === 'maxWidth'
+          && currentViewportWidth > 0
+          && numericValue !== null
+          && numericValue >= currentViewportWidth - 1;
+        const legacyOverflowingMinWidth = viewport === 'mobile'
+          && baseName === 'minWidth'
+          && currentViewportWidth > 0
+          && numericValue !== null
+          && numericValue > currentViewportWidth;
+        decision = legacySingleColumnMobileOffset || legacyNonConstrainingMaxWidth || legacyOverflowingMinWidth
+          ? 'omitted'
+          : 'authored';
+        reason = legacySingleColumnMobileOffset
+          ? 'single-column-mobile-offset'
+          : legacyNonConstrainingMaxWidth
+            ? 'non-constraining-mobile-max-width'
+            : legacyOverflowingMinWidth
+              ? 'overflowing-mobile-min-width'
+              : 'legacy-capture-constraint-evidence-unavailable';
+        classification = 'legacy-unclassified';
+      } else if (baseName.startsWith('grid')) {
+        classification = overlappingGridLayer ? 'intentional-overlap' : 'structural';
+        if (overlappingGridLayer) {
+          decision = 'authored';
+          reason = 'overlapping-grid-layer';
+        } else if (multiColumnGrid) {
+          decision = 'authored';
+          reason = 'multi-column-grid-placement';
+        } else {
+          reason = 'single-column-flow-placement';
+        }
+      } else if (baseName === 'marginLeft') {
+        const values = ['desktop', 'tablet', 'mobile'].map((label) => {
+          const suffix = label === 'desktop' ? '' : capitalize(label);
+          return pxNumber(node.props[`marginLeft${suffix}`]);
+        }).filter((candidate) => candidate !== null);
+        const intentionalOverlap = values.filter((candidate) => candidate < 0).length >= 2;
+        classification = intentionalOverlap ? 'intentional-overlap' : 'content';
+        if (intentionalOverlap) {
+          decision = 'authored';
+          reason = 'multi-viewport-negative-overlap';
+        } else {
+          reason = viewport === 'mobile' && band && genericBandColumnCount(band, 'mobile') <= 1
+            ? 'single-column-mobile-offset'
+            : 'content-alignment-measurement';
+        }
+      } else if (sourceDeclared && !inheritedDeclaration) {
+        classification = structuralMedia
+          || sourceKey === String(band?.sourceKey || '')
+          || String(sourceMeasurement?.parentKey || '') === String(band?.sourceKey || '')
+          ? 'structural'
+          : 'content';
+        node.props[name] = declaredValue;
+        decision = 'authored';
+        reason = 'explicit-source-constraint';
+      } else if (inheritedDeclaration) {
+        reason = 'inherited-explicit-source-constraint';
+      } else if (
+        baseName === 'minHeight'
+        && previousDeclaredValue
+      ) {
+        classification = structuralMedia
+          || sourceKey === String(band?.sourceKey || '')
+          || String(sourceMeasurement?.parentKey || '') === String(band?.sourceKey || '')
+          ? 'structural'
+          : 'content';
+        node.props[name] = '0px';
+        decision = 'authored';
+        reason = 'responsive-explicit-source-constraint-reset';
+      } else if (
+        baseName === 'maxWidth'
+        && previousDeclaredValue
+        && previousDeclaredNumber !== null
+      ) {
+        const sourceRect = normalizeReferenceRect(sourceMeasurement?.rect);
+        const sourceParentKey = String(sourceMeasurement?.parentKey || '');
+        const sourceParentMeasurement = sourceParentKey
+          ? genericMeasuredGroupByKey(measurement, sourceParentKey)
+          : measurement;
+        const sourceParentRect = normalizeReferenceRect(sourceParentMeasurement?.rect);
+        const resetsFixedMaximum = sourceRect
+          && sourceParentRect
+          && sourceRect.width <= sourceParentRect.width + 1;
+        if (!resetsFixedMaximum) {
+          throw new Error(`Generic measured reference contract gaps:\n- [generic_responsive_max_width_reset_evidence_missing] ${sourceKey || nodeId} removes an inherited max-width at ${viewport}, but the captured element and parent geometry do not prove a safe 100% reset.`);
+        }
+        node.props[name] = '100%';
+        decision = 'authored';
+        reason = 'responsive-explicit-source-constraint-reset';
+        classification = structuralMedia ? 'structural' : 'content';
+      } else if (structuralMedia && multiViewportMediaSurface && ['minHeight', 'maxWidth'].includes(baseName)) {
+        classification = 'structural';
+        decision = 'authored';
+        reason = 'multi-viewport-media-surface-geometry';
+      } else if (baseName === 'maxWidth' && currentViewportWidth > 0 && numericValue !== null && numericValue >= currentViewportWidth - 1) {
+        reason = 'non-constraining-viewport-width';
+      } else if (baseName === 'minWidth' && currentViewportWidth > 0 && numericValue !== null && numericValue > currentViewportWidth) {
+        reason = 'overflowing-viewport-min-width';
       }
-      if (!reason) continue;
-      delete node.props[name];
+
+      if (decision === 'omitted') {
+        delete node.props[name];
+      }
       context.constraintDecisions.push({
         nodeId,
         name,
         value,
-        decision: 'omitted',
+        authoredValue: decision === 'authored' ? node.props[name] : null,
+        decision,
         reason,
-        evidence: { mobileWidth, columns: singleColumnMobile ? 1 : null },
+        classification,
+        evidence: {
+          viewport,
+          sourceKey,
+          declaredValue: sourceDeclared ? declaredValue : null,
+          inheritedDeclaration,
+          viewportWidth: currentViewportWidth || null,
+          columns: band ? genericBandColumnCount(band, viewport) : null,
+        },
       });
     }
   }
@@ -3424,6 +3627,9 @@ function buildGenericMeasuredSectionPlan(brief) {
       tablet: tabletEntry?.[1]?.navigation || null,
       mobile: mobileEntry?.[1]?.navigation || null,
     },
+    constraintEvidenceVersion: viewportEntries.every(([, viewportGeometry]) => (
+      viewportGeometry?.constraintEvidenceVersion === 1
+    )) ? 1 : 0,
     icons: Array.isArray(canonicalGeometry.icons) ? canonicalGeometry.icons : [],
     iconMapping: Array.isArray(brief.authoringRequirements?.iconMapping)
       ? brief.authoringRequirements.iconMapping
@@ -4407,10 +4613,19 @@ function addGenericMeasuredSections(context, plan, sectionName, containerName) {
       && desktopRect
       && desktopViewportWidth > 0
       && desktopRect.width < desktopViewportWidth * 0.72;
+    const desktopNormalFrameWidths = (Array.isArray(desktop?.groups) ? desktop.groups : [])
+      .filter((group) => group?.flowParticipation !== 'overlay')
+      .map((group) => pxNumber(group?.constraintEvidence?.maxWidth))
+      .filter((width) => width > 0);
     const measuredSectionWidth = pxNumber(
       usesMeasuredBandFrame ? genericMeasuredRectSize(desktop, 'width') : genericBandContentWidth(desktop)
     );
-    const sectionInnerMaxWidth = usesNarrowRootFrame
+    const explicitFrameMaxWidth = desktopNormalFrameWidths.length > 0
+      ? Math.max(...desktopNormalFrameWidths)
+      : null;
+    const sectionInnerMaxWidth = explicitFrameMaxWidth !== null
+      ? `${Math.round(explicitFrameMaxWidth * 100) / 100}px`
+      : usesNarrowRootFrame
       ? `${Math.round(desktopViewportWidth * 100) / 100}px`
       : measuredSectionWidth === null
         ? genericBandContentWidth(desktop)
@@ -5808,9 +6023,16 @@ function addGenericMeasuredGroups(context, parentId, desktopParent, tabletParent
     if (topDividerProps && !dividerComponent) {
       throw new Error('Generic measured reference contract gaps:\n- [generic_border_control_gap] Divider is required to reproduce a measured top-only border without className or raw CSS.');
     }
+    if (desktop.tag === 'a' && desktop.href && desktop.textDecoration
+      && !context.contractIndex.get(containerName)?.authoringProps.includes('textDecoration')) {
+      throw new Error('Generic measured reference contract gaps:\n- [generic_link_decoration_control_gap] Container.textDecoration is required to preserve the measured linked-card decoration.');
+    }
     const group = createCanvasNode(context, containerName, parentId, {
       tag: desktop.tag === 'a' && desktop.href ? 'a' : undefined,
       href: desktop.tag === 'a' && desktop.href ? desktop.href : undefined,
+      textDecoration: desktop.tag === 'a' && desktop.href
+        && ['none', 'underline', 'line-through', 'overline'].includes(desktop.textDecoration)
+        ? desktop.textDecoration : undefined,
       ...(topDividerProps ? {
         layoutDisplay: 'flex',
         flexDirection: 'column',
@@ -6014,6 +6236,21 @@ function addGenericMeasuredGroups(context, parentId, desktopParent, tabletParent
       const measuredFormProps = { ...(desktop.props || {}) };
       delete measuredFormProps.fields;
       delete measuredFormProps.formId;
+      const radiusOptions = formComponent.propOptions?.get('inputBorderRadius');
+      const radiusRule = formComponent.propRules?.get('inputBorderRadius');
+      const exactRadiusTokens = { '0px': '', '2px': 'rounded-sm', '4px': 'rounded', '8px': 'rounded-lg', '12px': 'rounded-xl', '16px': 'rounded-2xl', '9999px': 'rounded-full' };
+      const radiusControl = radiusRule
+        ? { ...radiusRule, options: [...(radiusOptions || [])] }
+        : { type: 'select', options: Object.values(exactRadiusTokens) };
+      const measuredRadius = measuredFormProps.inputBorderRadius;
+      let radiusValue = normalizeControlValue(radiusControl, measuredRadius);
+      if (!radiusValue.accepted && Object.prototype.hasOwnProperty.call(exactRadiusTokens, measuredRadius)) {
+        radiusValue = normalizeControlValue(radiusControl, exactRadiusTokens[measuredRadius]);
+      }
+      if (!radiusValue.accepted) {
+        throw new Error(`Generic measured reference contract gaps:\n- [generic_form_radius_control_gap] FormBlock.inputBorderRadius cannot express the measured ${measuredRadius}; the live control requires an exact token or a safe length.`);
+      }
+      measuredFormProps.inputBorderRadius = radiusValue.value;
       const formNode = createLeafNode(context, formComponent.name, contentParentId, {
         ...measuredFormProps,
         fields,

@@ -220,6 +220,20 @@ test('canonical verification blocks an incomplete source-text ledger', () => {
   assert.equal(fs.existsSync(fixture.spawnLog), false);
 });
 
+test('canonical verification rejects missing constraint evidence before browser work', () => {
+  const fixture = createFixture();
+  const plan = JSON.parse(fs.readFileSync(fixture.files.plan, 'utf8'));
+  delete plan.constraintDecisions;
+  fs.writeFileSync(fixture.files.plan, JSON.stringify(plan));
+
+  const result = runFixture(fixture, false);
+  const report = JSON.parse(result.stdout);
+  assert.equal(result.status, 1);
+  assert.equal(report.status, 'INPUT_BLOCKED');
+  assert.equal(report.blockers.some((blocker) => blocker.code === 'layout_plan_constraint_evidence_incomplete'), true);
+  assert.equal(fs.existsSync(fixture.spawnLog), false);
+});
+
 test('canonical verification rejects an input artifact changed after diagnostic_passed', () => {
   const fixture = createFixture();
   fs.appendFileSync(fixture.files.contract, '\n');
@@ -296,6 +310,7 @@ function createFixture() {
     sourceLayoutSha256: layoutSha256,
     sourceLayoutDigestFormat: 'sha256:json-stringify-node-map',
     mode: 'generic-measured-reference',
+    constraintDecisions: [],
     rootSectionIds: ['section-hero'],
     bands: [{
       order: 0,

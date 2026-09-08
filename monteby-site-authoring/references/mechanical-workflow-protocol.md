@@ -121,7 +121,7 @@ Every artifact is JSON unless its name says otherwise.
 | `benchmark-start-report.json` | `start-visual-benchmark.js` | source classification and complete capture paths |
 | `reference-capture-checkpoint.json` | `run-visual-iteration.js` | exact contract/source/options/full-page scope plus file-byte SHA-256 bindings for the start report, owned HTML, manifests, layouts, and screenshots |
 | `reference-manifest.json` | `capture-template-reference.js` | all canonical viewports and complete layout evidence |
-| `layout-plan.json` | `draft-monteby-layout.js --plan-out` | every measured band and text/media/group/child surface, stable generated IDs, source node-map SHA-256, no truncation |
+| `layout-plan.json` | `draft-monteby-layout.js --plan-out` | every measured band and text/media/group/child surface, stable generated IDs, complete `constraintDecisions` from constraint evidence v1, source node-map SHA-256, no truncation |
 | `layout-draft.json` | `draft-monteby-layout.js` | contract-valid generated node map |
 | `layout.json` | iteration runner | current candidate under repair |
 | `visual-iteration-report.json` | `run-visual-iteration.js` | complete repair queue, exactly one next action, SHA-256 bindings for plan, candidate, both contract files, and both manifests |
@@ -212,7 +212,11 @@ drop sections, media, text, repeated items, or responsive measurements.
 Every captured hard minimum/maximum width or offset needs a recorded decision:
 preserve it, replace it with an equivalent live responsive control, or omit it
 only when measured evidence proves it non-constraining and the 375px stress
-check stays free of overflow. Silent removal is incomplete authoring.
+check stays free of overflow. Silent removal is incomplete authoring. A generic
+plan without `constraintDecisions`, or with an authored decision classified as
+`legacy-unclassified`, cannot advance. Execute its
+`recapture_constraint_evidence` action to create a fresh constraint-evidence-v1
+capture; do not reuse the legacy checkpoint or its bound icon mapping.
 
 The generic path is complete only inside its declared resource envelope: at
 most 64 normal-flow bands, 24 meaningful media surfaces per band, 256 text

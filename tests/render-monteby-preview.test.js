@@ -119,6 +119,9 @@ test('form preview separates textarea dimensions and submit geometry without cha
   assert.match(numeric, /<textarea[^>]*height:112px;/);
   assert.match(numeric, /<textarea[^>]*min-height:0(?:;|\")/);
   assert.match(numeric, /<button[^>]*width:50%(?:;|\")/);
+  explicit.form.props.buttonJustifySelf = '';
+  const widthOnly = renderPreview(explicit, 'monteby-form-width-only-');
+  assert.match(widthOnly, /<button[^>]*width:50%;max-width:100%;justify-self:start;/);
 });
 
 test('form preview preserves exact field radii and legacy global bindings', () => {

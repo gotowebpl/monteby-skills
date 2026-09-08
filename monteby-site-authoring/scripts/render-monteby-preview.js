@@ -1097,13 +1097,16 @@ function renderFormBlock(props) {
   const fields = Array.isArray(props.fields) ? props.fields : [];
   const fieldsHtml = fields.map((field, index) => renderFormField(field, props, columns, index)).join('');
   const icon = safeMaterialIcon(props.submitIcon);
-  const buttonWidth = statsGridLength(props.buttonWidth, '');
-  const buttonJustifySelf = ['start', 'center', 'end', 'stretch'].includes(props.buttonJustifySelf) ? props.buttonJustifySelf : '';
+  const buttonWidthCandidate = statsGridLength(props.buttonWidth, '');
+  const buttonWidth = /^(?:0|\d+(?:\.\d+)?(?:px|rem|em|%))$/u.test(buttonWidthCandidate) ? buttonWidthCandidate : '';
+  const buttonJustifySelf = ['start', 'center', 'end', 'stretch'].includes(props.buttonJustifySelf)
+    ? props.buttonJustifySelf : buttonWidth ? 'start' : '';
   const submitStyles = [
     'display:inline-flex', 'align-items:center', 'justify-content:center', 'gap:8px',
     styleDeclaration('grid-column', columns === 2 ? 'span 2' : ''),
     styleDeclaration('align-self', ['auto', 'stretch', 'flex-start', 'center', 'flex-end'].includes(props.buttonAlignSelf) ? props.buttonAlignSelf : 'flex-start'),
-    styleDeclaration('width', /^(?:0|\d+(?:\.\d+)?(?:px|rem|em|%))$/u.test(buttonWidth) ? buttonWidth : ''),
+    styleDeclaration('width', buttonWidth),
+    styleDeclaration('max-width', buttonWidth || buttonJustifySelf ? '100%' : ''),
     styleDeclaration('justify-self', buttonJustifySelf),
     styleDeclaration('margin-inline-start', buttonJustifySelf ? (['center', 'end'].includes(buttonJustifySelf) ? 'auto' : '0') : ''),
     styleDeclaration('margin-inline-end', buttonJustifySelf ? (['start', 'center'].includes(buttonJustifySelf) ? 'auto' : '0') : ''),

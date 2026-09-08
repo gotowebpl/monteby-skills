@@ -270,6 +270,7 @@ if (layoutOut) {
     || process.env.MONTEBY_REFERENCE_SCREENSHOT_FULL_PAGE === '1'
     || process.env.MONTEBY_TARGET_SCREENSHOT_FULL_PAGE === '1';
   fs.writeFileSync(layoutOut, JSON.stringify({
+    constraintEvidenceVersion: 1,
     capturedAt: '2026-07-09T00:00:00.000Z',
     url: 'file:///tmp/iteration.html',
     title: 'Iteration',

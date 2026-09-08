@@ -2751,7 +2751,7 @@ test('draft layout preserves seven ordered generic measured bands with responsiv
   assert.equal(report.stats.measuredDesktopDepth, desktopHeights.reduce((sum, height) => sum + height, 0));
   assert.deepEqual(report.stats.measuredViewportLabels, ['desktop', 'tablet', 'mobile']);
   assert.match(report.warnings.join(' '), /geometry scaffold only/i);
-  assert.match(report.warnings.join(' '), /measured_hard_constraints/);
+  assert.match(report.warnings.join(' '), /measured_hard_constraints: \d+ evidence-backed constraint\(s\) were authored and \d+ content-derived measurement\(s\) were omitted/);
   assert.match(report.warnings.join(' '), /unmapped_inline_svg/);
   assert.match(report.warnings.join(' '), /uncovered_root_groups/);
   assert.equal(plan.measuredHardConstraints.length > 0, true);
@@ -2762,7 +2762,7 @@ test('draft layout preserves seven ordered generic measured bands with responsiv
         decision.name === prop.name
         && decision.value === prop.value
         && decision.decision === 'authored'
-        && decision.reason === 'retained-bounded-measurement'
+        && decision.reason === 'legacy-capture-constraint-evidence-unavailable'
       )), true, `${constraint.nodeId}.${prop.name} requires an explicit authored decision`);
     }
   }
@@ -3089,6 +3089,7 @@ test('generic measured drafting preserves explicit rows when a card spans two gr
   const briefPath = path.join(directory, 'visual-brief.json');
   const manifestPath = path.join(directory, 'reference-manifest.json');
   const layoutPath = path.join(directory, 'layout.json');
+  const planPath = path.join(directory, 'layout-plan.json');
   const viewports = [
     ['desktop', 1440, 900, 110, 306.8],
     ['tablet', 834, 1112, 20, 387],
@@ -3129,6 +3130,7 @@ test('generic measured drafting preserves explicit rows when a card spans two gr
     const file = label === 'desktop' ? 'reference-layout.json' : `reference-layout-${label}.json`;
 
     fs.writeFileSync(path.join(directory, file), JSON.stringify({
+      constraintEvidenceVersion: 1,
       label,
       viewport: { width, height, scrollWidth: width, scrollHeight: groupTop + groupHeight + 120 },
       documentStyle: { backgroundColor: 'rgb(247, 247, 244)', color: 'rgb(6, 7, 8)' },
@@ -3207,6 +3209,7 @@ test('generic measured drafting preserves explicit rows when a card spans two gr
     '--brief-json', briefPath,
     '--reference-manifest', manifestPath,
     '--out', layoutPath,
+    '--plan-out', planPath,
     '--preserve-source-text',
     '--json',
   ], { encoding: 'utf8' });
@@ -3251,7 +3254,7 @@ test('generic measured drafting preserves explicit rows when a card spans two gr
   );
   assert.deepEqual(
     [topCard.props.gridColumnStartMobile, spanningCard.props.gridColumnStartMobile, bottomCard.props.gridColumnStartMobile],
-    [1, 1, 1]
+    [undefined, undefined, undefined]
   );
   assert.deepEqual(
     [topCard.props.gridRowStart, topCard.props.gridRowSpan],
@@ -3279,12 +3282,25 @@ test('generic measured drafting preserves explicit rows when a card spans two gr
   );
   assert.deepEqual(
     [topCard.props.gridRowStartMobile, spanningCard.props.gridRowStartMobile, bottomCard.props.gridRowStartMobile],
-    [1, 2, 3]
+    [undefined, undefined, undefined]
   );
   assert.deepEqual(
     [topCard.props.gridRowSpanMobile, spanningCard.props.gridRowSpanMobile, bottomCard.props.gridRowSpanMobile],
     [1, 1, 1]
   );
+  const plan = JSON.parse(fs.readFileSync(planPath, 'utf8'));
+  assert.equal(plan.constraintDecisions.some((decision) => (
+    decision.sourceKey === '0.0.1'
+    && decision.name === 'gridRowStart'
+    && decision.decision === 'authored'
+    && decision.reason === 'multi-column-grid-placement'
+  )), true);
+  assert.equal(plan.constraintDecisions.some((decision) => (
+    decision.sourceKey === '0.0.1'
+    && decision.name === 'gridRowStartMobile'
+    && decision.decision === 'omitted'
+    && decision.reason === 'single-column-flow-placement'
+  )), true);
 });
 
 test('generic measured drafting keeps keyed bands aligned when a middle band is hidden on mobile', () => {
@@ -3634,6 +3650,14 @@ test('generic form drafting partitions exact form owners, groups radios, and blo
   const layoutPath = path.join(directory, 'layout.json');
   const manifestPath = path.join(directory, 'manifest.json');
   const referenceLayoutPath = path.join(directory, 'reference-layout.json');
+  const liveContract = contract();
+  liveContract.components.find((component) => component.name === 'FormBlock').controls.push({
+    type: 'text',
+    props: ['inputBorderRadius'],
+    pattern: '^(?:rounded(?:-(?:sm|lg|xl|2xl|full))?|0|[0-9]+(?:\\.[0-9]+)?(?:px|rem|em))?$',
+    allowEmpty: true,
+    maxLength: 96,
+  });
   const controlStyle = {
     backgroundColor: 'rgb(255, 255, 255)', color: 'rgb(17, 24, 39)', fontSize: '16px',
     fontWeight: '400', borderTopColor: 'rgb(209, 213, 219)', borderTopWidth: '1px',
@@ -3669,7 +3693,7 @@ test('generic form drafting partitions exact form owners, groups radios, and blo
     mediaBoxes: [],
     summary: { firstViewportTextBoxes: 2, firstViewportMediaBoxes: 0, firstViewportMediaCoverage: 0 },
   };
-  fs.writeFileSync(contractPath, JSON.stringify(contract()));
+  fs.writeFileSync(contractPath, JSON.stringify(liveContract));
   fs.writeFileSync(briefPath, JSON.stringify({
     ...visualBrief({ target: { variant: 'split-hero', archetype: '', referenceStyle: '' } }),
     media: { surfaces: [], requiredRoles: [] },
@@ -4538,6 +4562,7 @@ test('generic measured drafting maps a full-band hero background and measured po
   const contractPath = path.join(directory, 'contract.json');
   const briefPath = path.join(directory, 'visual-brief.json');
   const layoutPath = path.join(directory, 'layout-draft.json');
+  const planPath = path.join(directory, 'layout-plan.json');
   const manifestPath = path.join(directory, 'reference-manifest.json');
   const sourceHero = 'https://source.example.test/full-band-photo.jpg';
   const sourcePortrait = 'https://source.example.test/portrait-photo.jpg';
@@ -4547,7 +4572,7 @@ test('generic measured drafting maps a full-band hero background and measured po
       width: 1440,
       height: 1200,
       bandHeight: 1200,
-      portrait: measuredRect(1000, 406, 320, 420),
+      portrait: measuredRect(1000, 406, 320, 500),
       backgroundPosition: ['40%', '35%'],
       portraitPosition: '70% 35%',
     },
@@ -4556,7 +4581,7 @@ test('generic measured drafting maps a full-band hero background and measured po
       width: 834,
       height: 1112,
       bandHeight: 1130,
-      portrait: measuredRect(257, 646, 320, 420),
+      portrait: measuredRect(257, 600, 320, 500),
       backgroundPosition: ['45%', '40%'],
       portraitPosition: '60% 40%',
     },
@@ -4565,7 +4590,7 @@ test('generic measured drafting maps a full-band hero background and measured po
       width: 390,
       height: 844,
       bandHeight: 1216,
-      portrait: measuredRect(51, 768, 288, 384),
+      portrait: measuredRect(51, 768, 288, 200),
       backgroundPosition: ['50%', '45%'],
       portraitPosition: '50% 50%',
     },
@@ -4582,7 +4607,11 @@ test('generic measured drafting maps a full-band hero background and measured po
       bandColors: ['rgb(12, 22, 35)'],
       columns: [2],
     });
+    measuredLayout.constraintEvidenceVersion = 1;
+    measuredLayout.landmarks.at(-1).groupKey = 'hero';
     measuredLayout.textBoxes[0].tag = 'h1';
+    measuredLayout.textBoxes[0].structureKey = 'hero.text.0';
+    measuredLayout.textBoxes[0].parentGroupKey = 'hero';
     measuredLayout.textBoxes[0].color = 'rgb(245, 245, 245)';
     measuredLayout.textBoxes[0].rect = measuredRect(
       viewport.label === 'mobile' ? 32 : 120,
@@ -4606,6 +4635,7 @@ test('generic measured drafting maps a full-band hero background and measured po
       tag: 'img',
       source: sourcePortrait,
       structureKey: 'hero.portrait',
+      parentGroupKey: 'hero.portrait',
       rect: viewport.portrait,
       firstViewportArea: viewport.portrait.top < viewport.height
         ? viewport.portrait.width * Math.min(viewport.portrait.height, viewport.height - viewport.portrait.top)
@@ -4615,7 +4645,17 @@ test('generic measured drafting maps a full-band hero background and measured po
       backgroundPositionX: '0%',
       backgroundPositionY: '0%',
       borderRadius: '18px',
+      ...(viewport.label === 'mobile' ? {} : { constraintEvidence: { minHeight: '100px' } }),
     };
+    measuredLayout.layoutGroups = [{
+      key: 'hero.portrait',
+      parentKey: 'hero',
+      tag: 'div',
+      rect: viewport.portrait,
+      display: 'block',
+      flowParticipation: 'normal',
+      ...(viewport.label === 'mobile' ? {} : { constraintEvidence: { minHeight: '100px' } }),
+    }];
     measuredLayout.mediaBoxes = [background, portrait];
     measuredLayout.meaningfulMediaBoxes = [background, portrait];
     measuredLayout.summary.firstViewportMediaBoxes = 2;
@@ -4669,6 +4709,8 @@ test('generic measured drafting maps a full-band hero background and measured po
     briefPath,
     '--out',
     layoutPath,
+    '--plan-out',
+    planPath,
     '--reference-manifest',
     manifestPath,
     '--json',
@@ -4677,10 +4719,12 @@ test('generic measured drafting maps a full-band hero background and measured po
   assert.equal(result.status, 0, result.stderr || result.stdout);
   const report = JSON.parse(result.stdout);
   const layout = JSON.parse(fs.readFileSync(layoutPath, 'utf8'));
+  const plan = JSON.parse(fs.readFileSync(planPath, 'utf8'));
   const section = layout[layout.ROOT.nodes[0]];
   const mediaContainers = Object.values(layout).filter((node) => (
     node?.type?.resolvedName === 'Container' && typeof node.props?.backgroundImage === 'string'
   ));
+  const mediaContainerId = Object.entries(layout).find(([, node]) => node === mediaContainers[0])?.[0];
 
   assert.equal(report.ok, true);
   assert.equal(report.audit.stats.satisfiedMediaRoles, 2);
@@ -4694,16 +4738,19 @@ test('generic measured drafting maps a full-band hero background and measured po
   assert.equal(section.props.backgroundPositionYTablet, '40%');
   assert.equal(section.props.backgroundPositionXMobile, '50%');
   assert.equal(section.props.backgroundPositionYMobile, '45%');
+  assert.equal(section.props.minHeight, undefined);
+  assert.equal(section.props.minHeightTablet, undefined);
+  assert.equal(section.props.minHeightMobile, undefined);
   assert.equal(mediaContainers.length, 1);
   assert.match(mediaContainers[0].props.backgroundImage, /generic-band-1-media-1/);
-  assert.equal(mediaContainers[0].props.width, '100%');
+  assert.equal(mediaContainers[0].props.width, '320px');
   assert.equal(mediaContainers[0].props.maxWidth, '320px');
   assert.equal(mediaContainers[0].props.maxWidthTablet, '320px');
   assert.equal(mediaContainers[0].props.maxWidthMobile, '288px');
-  assert.equal(mediaContainers[0].props.minHeight, '420px');
-  assert.equal(mediaContainers[0].props.minHeightTablet, '420px');
-  assert.equal(mediaContainers[0].props.minHeightMobile, '384px');
-  assert.equal(mediaContainers[0].props.flexShrink, 0);
+  assert.equal(mediaContainers[0].props.minHeight, '100px');
+  assert.equal(mediaContainers[0].props.minHeightTablet, undefined);
+  assert.equal(mediaContainers[0].props.minHeightMobile, '0px');
+  assert.equal(mediaContainers[0].props.flexShrink, undefined);
   assert.equal(mediaContainers[0].props.backgroundPositionX, '70%');
   assert.equal(mediaContainers[0].props.backgroundPositionY, '35%');
   assert.equal(mediaContainers[0].props.backgroundPositionXTablet, '60%');
@@ -4711,11 +4758,25 @@ test('generic measured drafting maps a full-band hero background and measured po
   assert.equal(mediaContainers[0].props.backgroundPositionXMobile, '50%');
   assert.equal(mediaContainers[0].props.backgroundPositionYMobile, '50%');
   assert.equal(mediaContainers[0].props.borderRadius, '18px');
-  assert.equal(Number(mediaContainers[0].props.gridColumnStart) >= 1, true);
+  assert.equal(mediaContainers[0].props.gridColumnStart, undefined);
   assert.equal(Number(mediaContainers[0].props.gridColumnSpan) >= 1, true);
   assert.equal(Number.parseFloat(mediaContainers[0].props.width) > 0, true);
   assert.equal(Number.parseFloat(mediaContainers[0].props.maxWidthMobile) > 0, true);
-  assert.equal(Number.parseFloat(mediaContainers[0].props.minHeightMobile) > 0, true);
+  assert.equal(plan.constraintDecisions.some((decision) => (
+    decision.nodeId === mediaContainerId
+    && decision.name === 'minHeight'
+    && decision.value === '500px'
+    && decision.authoredValue === '100px'
+    && decision.reason === 'explicit-source-constraint'
+    && decision.evidence.declaredValue === '100px'
+  )), true);
+  assert.equal(plan.constraintDecisions.some((decision) => (
+    decision.nodeId === mediaContainerId
+    && decision.name === 'minHeightMobile'
+    && decision.value === '200px'
+    && decision.authoredValue === '0px'
+    && decision.reason === 'responsive-explicit-source-constraint-reset'
+  )), true);
   assert.doesNotMatch(JSON.stringify(layout), /source\.example\.test/);
 
   const missingControl = JSON.parse(JSON.stringify(contractValue));
@@ -7918,7 +7979,7 @@ test('generic measured drafting preserves ordinary root bands and compound links
   const planPath = path.join(directory, 'layout-plan.json');
   const contractValue = contract();
   const container = contractValue.components.find((component) => component.name === 'Container');
-  container.props.push('tag', 'href');
+  container.props.push('tag', 'href', 'textDecoration');
   fs.writeFileSync(contractPath, JSON.stringify(contractValue));
   fs.writeFileSync(briefPath, JSON.stringify({
     ...visualBrief({ target: { variant: 'split-hero', archetype: '', referenceStyle: '' } }),
@@ -7942,7 +8003,7 @@ test('generic measured drafting preserves ordinary root bands and compound links
         { key: '0.1', parentKey: '', tag: 'section', rect: measuredRect(0, heroTop, width, heights[1]), flowParticipation: 'normal' },
         { key: '0.2', parentKey: '', tag: 'div', rect: measuredRect(0, cardsTop, width, heights[2]), flowParticipation: 'normal', paddingLeft: `${inset}px`, paddingRight: `${inset}px` },
         { key: '0.2.0', parentKey: '0.2', tag: 'div', rect: measuredRect(inset, cardsTop + 20, width - (inset * 2), heights[2] - 40), flowParticipation: 'normal', display: 'grid' },
-        { key: '0.2.0.0', parentKey: '0.2.0', tag: 'a', href: '/oferta', rect: measuredRect(inset, cardsTop + 20, Math.min(420, width - (inset * 2)), Math.min(180, heights[2] - 40)), flowParticipation: 'normal', backgroundColor: 'rgb(245, 245, 245)', paintedBackground: true },
+        { key: '0.2.0.0', parentKey: '0.2.0', tag: 'a', href: '/oferta', textDecoration: 'none', rect: measuredRect(inset, cardsTop + 20, Math.min(420, width - (inset * 2)), Math.min(180, heights[2] - 40)), flowParticipation: 'normal', backgroundColor: 'rgb(245, 245, 245)', paintedBackground: true },
       ],
       textBoxes: [
         { structureKey: '0.0.0.0', parentGroupKey: '0.0', tag: 'p', text: 'Wzorzec testowy bez danych klienta.', rect: measuredRect(inset, 18, width - (inset * 2), 24), fontSize: '14px', fontWeight: '400' },
@@ -7989,6 +8050,7 @@ test('generic measured drafting preserves ordinary root bands and compound links
   assert.equal(Object.values(layout).some((node) => node?.props?.text === 'Wzorzec testowy bez danych klienta.'), true);
   const linkedCard = Object.values(layout).find((node) => node?.type?.resolvedName === 'Container' && node?.props?.href === '/oferta');
   assert.equal(linkedCard.props.tag, 'a');
+  assert.equal(linkedCard.props.textDecoration, 'none');
   const linkedDescendants = [];
   const pendingLinkedNodes = [...linkedCard.nodes];
   while (pendingLinkedNodes.length > 0) {
@@ -8000,6 +8062,173 @@ test('generic measured drafting preserves ordinary root bands and compound links
     ['Heading', 'Dopasuj parametry'],
     ['Text', 'Oddzielna treść karty.'],
   ]);
+  container.props = container.props.filter((prop) => prop !== 'textDecoration');
+  container.aiProps = container.aiProps?.filter((prop) => prop !== 'textDecoration');
+  fs.writeFileSync(contractPath, JSON.stringify(contractValue));
+  const unavailableDecoration = spawnSync(process.execPath, [
+    draftScript, '--contract', contractPath, '--brief-json', briefPath, '--out', layoutPath,
+    '--plan-out', planPath, '--reference-manifest', manifestPath, '--preserve-source-text', '--json',
+  ], { encoding: 'utf8' });
+  assert.equal(unavailableDecoration.status, 1);
+  assert.match(unavailableDecoration.stderr, /generic_link_decoration_control_gap/);
+});
+
+test('generic measured constraints keep explicit frames while short and long content remain flexible below the captured mobile width', () => {
+  for (const [variant, text, heights, declaredMinHeight] of [
+    ['short', 'Krótka treść.', [180, 190, 220], ''],
+    ['long', 'Długi tekst powinien powiększyć sekcję bez zapisanej wysokości minimalnej. '.repeat(8).trim(), [300, 360, 520], ''],
+    ['declared-min-height', 'Treść wyższa od jawnego minimum. '.repeat(12).trim(), [500, 560, 700], '100px'],
+  ]) {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), `monteby-flexible-constraints-${variant}-`));
+    const contractPath = path.join(directory, 'contract.json');
+    const briefPath = path.join(directory, 'visual-brief.json');
+    const manifestPath = path.join(directory, 'reference-manifest.json');
+    const layoutPath = path.join(directory, 'layout.json');
+    const planPath = path.join(directory, 'layout-plan.json');
+    const viewports = [
+      ['desktop', 1440, 900],
+      ['tablet', 834, 1112],
+      ['mobile', 390, 844],
+    ];
+
+    fs.writeFileSync(contractPath, JSON.stringify(contract()));
+    fs.writeFileSync(briefPath, JSON.stringify({
+      ...visualBrief({ target: { archetype: '', referenceStyle: '' }, text: { h1: [], h2: [], h3: [], ctas: [], stats: [] } }),
+      media: { surfaces: [], requiredRoles: [] },
+      authoringRequirements: {
+        preserveSourceText: true,
+        requiredMediaRoles: [],
+        referenceClassification: { kind: 'generic-measured-reference', family: '', familyMechanics: false },
+      },
+    }));
+
+    for (let index = 0; index < viewports.length; index += 1) {
+      const [label, width, viewportHeight] = viewports[index];
+      const height = heights[index];
+      const frameWidth = Math.min(1120, width);
+      const declaredCopyMaxWidth = variant === 'long' ? '' : '240px';
+      const copyWidth = declaredCopyMaxWidth
+        ? label === 'mobile' ? Math.min(variant === 'short' ? 100 : 343, frameWidth) : 240
+        : Math.min(720, frameWidth);
+      const frameLeft = Math.max(0, (width - frameWidth) / 2);
+      const referenceLayout = {
+        constraintEvidenceVersion: 1,
+        viewport: { width, height: viewportHeight, scrollWidth: width, scrollHeight: height },
+        documentStyle: { backgroundColor: 'rgb(255, 255, 255)', color: 'rgb(20, 30, 40)' },
+        landmarks: [{
+          key: '0', tag: 'section', rect: measuredRect(0, 0, width, height),
+          flowParticipation: 'normal', backgroundColor: 'rgb(245, 246, 247)', paintedBackground: true,
+          ...(declaredMinHeight && label !== 'mobile' ? { constraintEvidence: { minHeight: declaredMinHeight } } : {}),
+        }],
+        layoutGroups: [{
+          key: '0.0', parentKey: '0', tag: 'div', rect: measuredRect(frameLeft, 32, frameWidth, height - 64),
+          flowParticipation: 'normal', constraintEvidence: { maxWidth: '1120px' },
+        }, {
+          key: '0.0.0', parentKey: '0.0', tag: 'div', rect: measuredRect(frameLeft, 32, copyWidth, height - 64),
+          flowParticipation: 'normal', display: 'flex', flexDirection: 'column',
+          ...(declaredCopyMaxWidth
+            ? label !== 'mobile' ? { constraintEvidence: { maxWidth: declaredCopyMaxWidth } } : {}
+            : { constraintEvidence: { maxWidth: '720px' } }),
+        }],
+        textBoxes: [{
+          structureKey: '0.0.0.0', parentGroupKey: '0.0.0', tag: 'p', text,
+          rect: measuredRect(frameLeft, 48, copyWidth, height - 96), fontSize: '18px', lineHeight: '27px',
+          fontWeight: '400', color: 'rgb(20, 30, 40)',
+        }],
+        directTextEntries: [], mediaBoxes: [], meaningfulMediaBoxes: [], iconSurfaces: [], interactions: [], summary: {},
+      };
+      fs.writeFileSync(
+        path.join(directory, label === 'desktop' ? 'reference-layout.json' : `reference-layout-${label}.json`),
+        JSON.stringify(referenceLayout),
+      );
+    }
+    fs.writeFileSync(manifestPath, JSON.stringify({
+      sourceUrl: `file:///tmp/flexible-${variant}.html`, mediaSurfaces: [], requiredMediaRoles: [],
+      layouts: viewports.map(([label]) => ({
+        label,
+        file: label === 'desktop' ? 'reference-layout.json' : `reference-layout-${label}.json`,
+        status: 'ok',
+      })),
+    }));
+
+    const result = spawnSync(process.execPath, [
+      draftScript, '--contract', contractPath, '--brief-json', briefPath,
+      '--reference-manifest', manifestPath, '--out', layoutPath, '--plan-out', planPath,
+      '--preserve-source-text', '--json',
+    ], { encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const layout = JSON.parse(fs.readFileSync(layoutPath, 'utf8'));
+    const plan = JSON.parse(fs.readFileSync(planPath, 'utf8'));
+    const section = layout[layout.ROOT.nodes[0]];
+    const explicitCopyConstraint = plan.measuredHardConstraints.find((constraint) => constraint.sourceKey === '0.0.0');
+    const declaredCopyMaxWidth = variant === 'long' ? '' : '240px';
+
+    assert.equal(section.props.innerMaxWidth, '1120px');
+    assert.equal(section.props.minHeight, declaredMinHeight || undefined);
+    assert.equal(section.props.minHeightTablet, undefined);
+    assert.equal(section.props.minHeightMobile, declaredMinHeight ? '0px' : undefined);
+    assert.equal(explicitCopyConstraint.props.some(({ name, value }) => (
+      name === 'maxWidth' && value === (declaredCopyMaxWidth || '720px')
+    )), true);
+    assert.equal(explicitCopyConstraint.props.some(({ name, value }) => (
+      name === 'maxWidthTablet' || (name === 'maxWidthMobile' && value !== '100%')
+    )), false);
+    assert.equal(explicitCopyConstraint.props.some(({ name, value }) => name === 'maxWidthMobile' && value === '100%'), Boolean(declaredCopyMaxWidth));
+    assert.equal(plan.constraintDecisions.some((decision) => (
+      decision.nodeId === layout.ROOT.nodes[0]
+      && decision.name === 'minHeightMobile'
+      && decision.evidence.viewportWidth === 390
+      && (declaredMinHeight
+        ? decision.decision === 'authored'
+          && decision.reason === 'responsive-explicit-source-constraint-reset'
+          && decision.value === '700px'
+          && decision.authoredValue === '0px'
+        : decision.decision === 'omitted' && decision.classification === 'content')
+    )), true);
+    if (declaredMinHeight) {
+      assert.equal(plan.constraintDecisions.some((decision) => (
+        decision.nodeId === layout.ROOT.nodes[0]
+        && decision.name === 'minHeight'
+        && decision.value === '500px'
+        && decision.decision === 'authored'
+        && decision.reason === 'explicit-source-constraint'
+        && decision.authoredValue === declaredMinHeight
+        && decision.evidence.declaredValue === declaredMinHeight
+      )), true);
+    }
+    if (declaredCopyMaxWidth) {
+      assert.equal(plan.constraintDecisions.some((decision) => (
+        decision.sourceKey === '0.0.0'
+        && decision.name === 'maxWidthMobile'
+        && decision.value === (variant === 'short' ? '100px' : '343px')
+        && decision.authoredValue === '100%'
+        && decision.reason === 'responsive-explicit-source-constraint-reset'
+      )), true);
+    }
+    assert.equal(plan.constraintDecisions.some((decision) => (
+      decision.sourceKey === '0.0.0'
+      && decision.name === 'maxWidth'
+      && decision.decision === 'authored'
+      && decision.reason === 'explicit-source-constraint'
+    )), true);
+
+    if (variant === 'short') {
+      const mobileLayoutPath = path.join(directory, 'reference-layout-mobile.json');
+      const mobileLayout = JSON.parse(fs.readFileSync(mobileLayoutPath, 'utf8'));
+      mobileLayout.layoutGroups[1].parentKey = 'missing-parent';
+      fs.writeFileSync(mobileLayoutPath, JSON.stringify(mobileLayout));
+      const missingParentResult = spawnSync(process.execPath, [
+        draftScript, '--contract', contractPath, '--brief-json', briefPath,
+        '--reference-manifest', manifestPath, '--out', path.join(directory, 'missing-parent-layout.json'),
+        '--preserve-source-text', '--json',
+      ], { encoding: 'utf8' });
+      assert.equal(missingParentResult.status, 1);
+      assert.match(
+        `${missingParentResult.stdout}\n${missingParentResult.stderr}`,
+        /\[generic_responsive_max_width_reset_evidence_missing\]/u,
+      );
+    }
+  }
 });
 
 test('draft layout accepts 40 generic bands and rejects 65 beyond the bounded limit', () => {

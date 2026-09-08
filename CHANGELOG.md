@@ -31,6 +31,10 @@
   losing a hard space can no longer produce an exact-content verdict.
 - Match independent textarea sizing and submit-button alignment in diagnostic
   previews while preserving omitted defaults, exact field radii and global bindings.
+- Capture form labels, spacing, control sizes and linked-card decoration through
+  published controls instead of approximating the source with preset defaults.
+- Reject incomplete measured-constraint evidence and stale capture checkpoints;
+  preserve explicit responsive constraints without freezing text-derived heights.
 
 ## 0.4.1 - 2026-09-07
 
