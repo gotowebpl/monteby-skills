@@ -1903,6 +1903,7 @@ function summarizeReferenceForm(fields, submit, layoutGroups, textBoxes, band, f
       inputFontSize: genericCssMetric(firstControl.fontSize) || '16px',
       inputFontFamily: genericMeasuredFontFamily(firstControl),
       inputFontWeight: fieldFontWeights[genericFontWeight(firstControl, '400')],
+      inputLineHeight: genericCssMetric(firstControl.lineHeight),
       inputHeight: `${Math.round(firstControl.rect.height * 100) / 100}px`,
       ...(textarea ? { textareaHeight: `${Math.round(textarea.rect.height * 100) / 100}px`, textareaMinHeight: genericCssMetric(textarea.minHeight) || genericCssMetric(textarea.constraintEvidence?.minHeight) } : {}),
       inputFocusColor: normalizedAuthorableColor(buttonBox.backgroundColor) || '#2563eb',
@@ -6294,7 +6295,7 @@ function addGenericMeasuredGroups(context, parentId, desktopParent, tabletParent
       const measuredFormProps = { ...(desktop.props || {}) };
       delete measuredFormProps.fields;
       delete measuredFormProps.formId;
-      for (const prop of ['labelFontFamily', 'inputFontFamily', 'labelLineHeight', 'buttonFontFamily', 'buttonLineHeight']) {
+      for (const prop of ['labelFontFamily', 'inputFontFamily', 'labelLineHeight', 'inputLineHeight', 'buttonFontFamily', 'buttonLineHeight']) {
         const value = measuredFormProps[prop];
         if (value === undefined || value === '') continue;
         const rule = formComponent.propRules?.get(prop);
@@ -7168,6 +7169,10 @@ function addGenericMeasuredTextItems(context, parentId, desktopMeasurement, tabl
 function addGenericMeasuredTextNode(context, parentId, desktop, tablet, mobile, plan, fallbackTextColor, contentIndex, textIndex, marginProps) {
   const tag = String(desktop?.tag || '').toLowerCase();
   const text = genericMeasuredAuthoringText(desktop, plan, contentIndex, textIndex);
+  const typographyComponent = findComponent(
+    context.contractIndex,
+    tag === 'a' || tag === 'button' ? ['ButtonBlock', 'Button'] : /^h[1-4]$/.test(tag) ? ['Heading'] : ['Text']
+  );
   const props = {
     fontSize: genericFontSize(desktop, /^h[1-4]$/.test(tag) ? 36 : 16),
     fontSizeTablet: plan.hasTablet ? genericFontSize(tablet || desktop, /^h[1-4]$/.test(tag) ? 32 : 16) : undefined,
@@ -7177,7 +7182,7 @@ function addGenericMeasuredTextNode(context, parentId, desktop, tablet, mobile, 
     lineHeightMobile: plan.hasMobile ? genericMeasuredLineHeight(mobile || tablet || desktop, /^h[1-4]$/.test(tag) ? '1.15' : '1.6') : undefined,
     fontWeight: genericFontWeight(desktop, /^h[1-4]$/.test(tag) ? '700' : '400'),
     fontFamily: genericMeasuredFontFamily(desktop, context.warnings),
-    ...genericMeasuredLetterSpacing(desktop, tablet, mobile),
+    ...genericMeasuredLetterSpacing(desktop, tablet, mobile, typographyComponent?.propRules?.get('letterSpacing')),
     textAlign: genericMeasuredTextAlign(desktop?.textAlign),
     textAlignTablet: plan.hasTablet ? genericMeasuredTextAlign(tablet?.textAlign) : undefined,
     textAlignMobile: plan.hasMobile ? genericMeasuredTextAlign(mobile?.textAlign) : undefined,
@@ -7749,7 +7754,7 @@ function genericMeasuredLineHeight(box, fallback) {
   return Number.isFinite(measured) && measured > 0 ? `${Math.round(measured * 1000) / 1000}px` : fallback;
 }
 
-function genericMeasuredLetterSpacing(desktop, tablet, mobile) {
+function genericMeasuredLetterSpacing(desktop, tablet, mobile, controlRule = null) {
   const boxes = [desktop, tablet, mobile];
   const values = boxes.map((box) => {
     const value = String(box?.letterSpacing || '').trim().toLowerCase();
@@ -7772,7 +7777,20 @@ function genericMeasuredLetterSpacing(desktop, tablet, mobile) {
       && Math.abs((pixels / size) - ratio) <= 0.0005;
   });
   if (ratioIsStable) {
-    return { letterSpacing: `${Math.round(ratio * 10000) / 10000}em` };
+    const ratioValue = `${Math.round(ratio * 10000) / 10000}em`;
+    const normalized = controlRule ? normalizeControlValue(controlRule, ratioValue) : { accepted: true, value: ratioValue };
+    const normalizedRatio = normalized.accepted && typeof normalized.value === 'string' && normalized.value.endsWith('em')
+      ? Number.parseFloat(normalized.value)
+      : NaN;
+    const preservesMeasurements = Number.isFinite(normalizedRatio) && boxes.every((box, index) => {
+      if (!box) return true;
+      const size = Number.parseFloat(String(box?.fontSize || ''));
+      const pixels = Number.parseFloat(values[index]);
+      return Number.isFinite(size) && Number.isFinite(pixels) && Math.abs((normalizedRatio * size) - pixels) <= 0.000001;
+    });
+    if (!controlRule || preservesMeasurements) {
+      return { letterSpacing: normalized.value };
+    }
   }
 
   const tabletValue = values[1];

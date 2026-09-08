@@ -9,8 +9,8 @@ const test = require('node:test');
 
 const script = path.resolve(__dirname, '../monteby-site-authoring/scripts/draft-monteby-layout.js');
 const sandbox = { require: createRequire(script), module: { exports: {} }, console, process, __dirname: path.dirname(script), Buffer, Map, Set };
-vm.runInNewContext(fs.readFileSync(script, 'utf8').replace(/\nmain\(\);\s*$/u, '\nmodule.exports = { summarizeReferenceForm, groupReferenceFormFields, buildContractIndex, filterAllowedProps, addGenericMeasuredGroups };'), sandbox, { filename: script });
-const { summarizeReferenceForm, groupReferenceFormFields, buildContractIndex, filterAllowedProps, addGenericMeasuredGroups } = sandbox.module.exports;
+vm.runInNewContext(fs.readFileSync(script, 'utf8').replace(/\nmain\(\);\s*$/u, '\nmodule.exports = { summarizeReferenceForm, groupReferenceFormFields, buildContractIndex, filterAllowedProps, addGenericMeasuredGroups, genericMeasuredLetterSpacing };'), sandbox, { filename: script });
+const { summarizeReferenceForm, groupReferenceFormFields, buildContractIndex, filterAllowedProps, addGenericMeasuredGroups, genericMeasuredLetterSpacing } = sandbox.module.exports;
 const previewScript = path.resolve(__dirname, '../monteby-site-authoring/scripts/render-monteby-preview.js');
 const previewSandbox = { ...sandbox, require: createRequire(previewScript), module: { exports: {} }, __dirname: path.dirname(previewScript) };
 vm.runInNewContext(`${fs.readFileSync(previewScript, 'utf8')}\nmodule.exports.renderDocument = renderDocument;`, previewSandbox, { filename: previewScript });
@@ -42,6 +42,7 @@ if (process.env.MONTEBY_MEASURED_FORM_BROWSER_QA === '1') {
           assert.equal(fields[0].labelStyle.fontWeight, '400');
           assert.equal(fields[0].labelStyle.fontFamily, 'Arial, sans-serif');
           assert.equal(fields[0].labelStyle.primaryFontEvidence, 'system-family');
+          assert.equal(fields[0].lineHeight, '24px');
           assert.ok(fields[0].labelRect.height > fields[0].rect.height);
           assert.equal(summary.props.formPaddingY, '0px');
           assert.equal(summary.props.formPaddingX, '0px');
@@ -51,6 +52,7 @@ if (process.env.MONTEBY_MEASURED_FORM_BROWSER_QA === '1') {
           assert.equal(summary.props.labelFontWeight, 'font-normal');
           assert.equal(summary.props.labelFontFamily, '_system_Arial');
           assert.equal(summary.props.inputFontFamily, '_system_Arial');
+          assert.equal(summary.props.inputLineHeight, '24px');
           assert.equal(summary.props.labelLineHeight, '24px');
           if (/^Arial(?:,|$)/u.test(submit.fontFamily)) assert.equal(summary.props.buttonFontFamily, '_system_Arial');
           assert.equal(summary.props.buttonLineHeight, '20px');
@@ -67,28 +69,30 @@ if (process.env.MONTEBY_MEASURED_FORM_BROWSER_QA === '1') {
           assert.equal(await page.locator('label').first().evaluate((label) => getComputedStyle(label).lineHeight), '24px');
           assert.match(await page.locator('label').first().evaluate((label) => getComputedStyle(label).fontFamily), /^Arial/u);
           assert.match(await page.locator('input').first().evaluate((input) => getComputedStyle(input).fontFamily), /^Arial/u);
+          assert.equal(await page.locator('input').first().evaluate((input) => getComputedStyle(input).lineHeight), '24px');
           if (summary.props.buttonFontFamily === '_system_Arial') assert.match(await page.locator('button').evaluate((button) => getComputedStyle(button).fontFamily), /^Arial/u);
           assert.equal(await page.locator('button').evaluate((button) => getComputedStyle(button).lineHeight), '20px');
           const candidateHeight = await page.locator('form').evaluate((form) => form.getBoundingClientRect().height);
           assert.ok(Math.abs(candidateHeight - referenceHeight) < 0.1, `Three measured label rows restore the exact height: ${candidateHeight} vs ${referenceHeight}; ${JSON.stringify(await page.locator('input, textarea, button').evaluateAll((elements) => elements.map((element) => ({ tag: element.tagName, height: element.getBoundingClientRect().height, width: element.getBoundingClientRect().width, text: element.textContent, font: getComputedStyle(element).font }))))}`);
           const inheritedProps = { ...nodeMap.form.props };
-          for (const prop of ['labelLineHeight', 'buttonLineHeight', 'buttonFontFamily']) delete inheritedProps[prop];
+          for (const prop of ['labelLineHeight', 'inputLineHeight', 'buttonLineHeight', 'buttonFontFamily']) delete inheritedProps[prop];
           nodeMap.form.props = inheritedProps;
           const inheritedDocument = previewSandbox.module.exports.renderDocument(nodeMap, 'Inherited form');
           await page.setContent(inheritedDocument.html);
-          const inheritedLeading = await page.locator('label, button').evaluateAll((elements) => elements.map((element) => getComputedStyle(element).lineHeight));
-          nodeMap.form.props = { ...inheritedProps, labelLineHeight: '', buttonLineHeight: '', buttonFontFamily: '' };
+          const inheritedLeading = await page.locator('label, input, textarea, button').evaluateAll((elements) => elements.map((element) => getComputedStyle(element).lineHeight));
+          nodeMap.form.props = { ...inheritedProps, labelLineHeight: '', inputLineHeight: '', buttonLineHeight: '', buttonFontFamily: '' };
           const emptyDocument = previewSandbox.module.exports.renderDocument(nodeMap, 'Inherited form');
           assert.equal(emptyDocument.html, inheritedDocument.html);
           await page.setContent(emptyDocument.html);
-          assert.deepEqual(await page.locator('label, button').evaluateAll((elements) => elements.map((element) => getComputedStyle(element).lineHeight)), inheritedLeading);
+          assert.deepEqual(await page.locator('label, input, textarea, button').evaluateAll((elements) => elements.map((element) => getComputedStyle(element).lineHeight)), inheritedLeading);
           const contract = {
             designTokens: { version: 1, tokens: { 'typography.line_height': { value: '24px', cssVariable: '--monteby-token-typography-line-height', reference: 'var(--monteby-token-typography-line-height)' } } },
             globalStyles: { typography: { presets: { button: { lineHeight: '20px' } } } },
           };
-          nodeMap.form.props = { ...summary.props, submitLabel: summary.submitBox.text, labelLineHeight: 'var(--monteby-token-typography-line-height)', buttonLineHeight: 'var(--gcb-typo-button-line-height)' };
+          nodeMap.form.props = { ...summary.props, submitLabel: summary.submitBox.text, labelLineHeight: 'var(--monteby-token-typography-line-height)', inputLineHeight: 'var(--monteby-token-typography-line-height)', buttonLineHeight: 'var(--gcb-typo-button-line-height)' };
           await page.setContent(previewSandbox.module.exports.renderDocument(nodeMap, 'Published form typography', contract).html);
           assert.equal(await page.locator('label').first().evaluate((label) => getComputedStyle(label).lineHeight), '24px');
+          assert.equal(await page.locator('input').first().evaluate((input) => getComputedStyle(input).lineHeight), '24px');
           assert.equal(await page.locator('button').evaluate((button) => getComputedStyle(button).lineHeight), '20px');
           assert.ok(Math.abs(await page.locator('form').evaluate((form) => form.getBoundingClientRect().height) - referenceHeight) < 0.1);
         } finally {
@@ -102,7 +106,7 @@ if (process.env.MONTEBY_MEASURED_FORM_BROWSER_QA === '1') {
 test('measured forms use actual form padding, field wrappers and label typography', () => {
   const rect = (left, top, width, height) => ({ left, top, right: left + width, bottom: top + height, width, height });
   const labelStyle = { fontSize: '16px', fontWeight: '400', fontFamily: 'Arial, sans-serif', primaryFontEvidence: 'system-family', lineHeight: '24px', color: 'rgb(35, 49, 63)' };
-  const field = (tag, name, top, height) => ({ tag, type: 'text', name, label: `\u00a0${name}\u00a0`, placeholder: '\u00a0Keep boundary\u00a0', formKey: '0.1', rect: rect(100, top, 400, height), labelStyle, fieldGap: '8px', fontSize: '16px', fontWeight: '400', borderRadius: '6px', borderTopWidth: '1px', paddingTop: '12px', paddingBottom: '12px', paddingLeft: '16px', paddingRight: '16px', minHeight: tag === 'textarea' ? '112px' : '0px', structureKey: `0.1.${top}.0` });
+  const field = (tag, name, top, height) => ({ tag, type: 'text', name, label: `\u00a0${name}\u00a0`, placeholder: '\u00a0Keep boundary\u00a0', formKey: '0.1', rect: rect(100, top, 400, height), labelStyle, fieldGap: '8px', fontSize: '16px', fontWeight: '400', lineHeight: '24px', borderRadius: '6px', borderTopWidth: '1px', paddingTop: '12px', paddingBottom: '12px', paddingLeft: '16px', paddingRight: '16px', minHeight: tag === 'textarea' ? '112px' : '0px', structureKey: `0.1.${top}.0` });
   const fields = [field('input', 'Name', 132, 50), field('input', 'Email', 234, 50), field('textarea', 'Message', 336, 112)];
   for (const item of fields) Object.assign(item, { fontFamily: 'Georgia, serif', primaryFontEvidence: 'system-family' });
   const form = { key: '0.1', parentKey: '0', tag: 'form', rect: rect(100, 100, 400, 416), display: 'flex', flexDirection: 'column', gap: '20px', rowGap: '20px', paddingTop: '0px', paddingLeft: '0px', paddingBottom: '0px', paddingRight: '0px' };
@@ -118,6 +122,7 @@ test('measured forms use actual form padding, field wrappers and label typograph
   assert.equal(summary.props.labelFontWeight, 'font-normal');
   assert.equal(summary.props.labelFontFamily, '_system_Arial');
   assert.equal(summary.props.inputFontFamily, '_system_Georgia');
+  assert.equal(summary.props.inputLineHeight, '24px');
   assert.equal(summary.props.labelLineHeight, '24px');
   assert.equal(summary.props.buttonFontFamily, undefined);
   assert.equal(summary.props.inputFontWeight, 'font-normal');
@@ -131,12 +136,13 @@ test('measured forms use actual form padding, field wrappers and label typograph
   assert.equal(summary.props.fields[0].placeholder, '\u00a0Keep boundary\u00a0');
 
   const originalProps = ['fields', 'formGap', 'formPaddingY', 'labelFontWeight'];
-  const currentProps = [...originalProps, 'textareaHeight', 'textareaMinHeight', 'buttonWidth', 'buttonJustifySelf'];
+  const currentProps = [...originalProps, 'inputLineHeight', 'textareaHeight', 'textareaMinHeight', 'buttonWidth', 'buttonJustifySelf'];
   for (const props of [originalProps, currentProps]) {
     const contractIndex = buildContractIndex({ components: [{ name: 'FormBlock', props, aiProps: props, controls: [{ type: 'select', props: ['labelFontWeight'], options: ['font-normal', 'font-semibold'] }] }] });
     const authored = filterAllowedProps({ contractIndex, strictAuthoringContract: true }, 'FormBlock', summary.props);
     assert.equal(authored.labelFontWeight, 'font-normal');
     assert.equal(authored.buttonWidth, props.includes('buttonWidth') ? '162px' : undefined);
+    assert.equal(authored.inputLineHeight, props.includes('inputLineHeight') ? '24px' : undefined);
     assert.equal(authored.textareaHeight, props.includes('textareaHeight') ? '112px' : undefined);
   }
 });
@@ -148,18 +154,40 @@ test('radio labels and option labels preserve authored boundary NBSP', () => {
   assert.equal(result[0].options[0].label, '\u00a0Choice 1\u00a0');
 });
 
-test('form preview preserves legacy inherited leading and only accepts safe label line heights', () => {
+test('form preview preserves legacy inherited leading and only accepts safe published line heights', () => {
   const props = { fields: [{ type: 'text', name: 'name', label: 'Nazwa / Name' }] };
   const map = { ROOT: { nodes: ['form'] }, form: { type: { resolvedName: 'FormBlock' }, props, nodes: [] } };
   const legacy = previewSandbox.module.exports.renderDocument(map, 'Form').fragment;
-  for (const value of ['', '-1px', '100vh', 'auto', 'var(--unknown)', '24px;color:red', true]) {
-    map.form.props = { ...props, labelLineHeight: value, buttonLineHeight: value };
+  for (const value of ['', '-1px', '100vh', 'auto', 'var(--unknown)', '24px;color:red', true, [1.5], { value: 1.5 }, Number.NaN, Number.POSITIVE_INFINITY]) {
+    map.form.props = { ...props, labelLineHeight: value, inputLineHeight: value, buttonLineHeight: value };
     assert.equal(previewSandbox.module.exports.renderDocument(map, 'Form').fragment, legacy);
   }
   for (const value of ['24px', '1.5', 1.5, '1.5rem', '0', 'var(--monteby-token-typography-line-height)']) {
-    map.form.props = { ...props, labelLineHeight: value, buttonLineHeight: value };
+    map.form.props = { ...props, labelLineHeight: value, inputLineHeight: value, buttonLineHeight: value };
     assert.ok(previewSandbox.module.exports.renderDocument(map, 'Form').fragment.includes(`line-height:${value}`));
   }
+});
+
+test('measured tracking converts only ratios representable by the published control precision', () => {
+  const control = { type: 'css-value', units: ['em', 'px'], min: -1, max: 1, step: 0.001 };
+  const inexact = genericMeasuredLetterSpacing(
+    { fontSize: '14px', letterSpacing: '1px' },
+    { fontSize: '11.2px', letterSpacing: '0.8px' },
+    { fontSize: '10.5px', letterSpacing: '0.75px' },
+    control
+  );
+  assert.deepEqual(JSON.parse(JSON.stringify(inexact)), { letterSpacing: '1px', letterSpacingTablet: '0.8px', letterSpacingMobile: '0.75px' });
+  assert.deepEqual(JSON.parse(JSON.stringify(genericMeasuredLetterSpacing(
+    { fontSize: '18px', letterSpacing: '0.72px' },
+    { fontSize: '16px', letterSpacing: '0.64px' },
+    { fontSize: '14px', letterSpacing: '0.56px' },
+    control
+  ))), { letterSpacing: '0.04em' });
+  assert.deepEqual(JSON.parse(JSON.stringify(genericMeasuredLetterSpacing(
+    { fontSize: '14px', letterSpacing: '1px' },
+    { fontSize: '11.2px', letterSpacing: '0.8px' },
+    { fontSize: '10.5px', letterSpacing: '0.75px' }
+  ))), { letterSpacing: '0.0714em' });
 });
 
 test('form authoring accepts exact length only through its live control and never rounds legacy radii', () => {
@@ -187,8 +215,8 @@ test('form authoring accepts exact length only through its live control and neve
   assert.equal(author('rounded-xl', current), 'rounded-xl');
   assert.throws(() => author('-6px', current), /generic_form_radius_control_gap/u);
   assert.throws(() => author('var(--unpublished)', current), /generic_form_radius_control_gap/u);
-  const typography = { labelFontFamily: '_system_Arial', inputFontFamily: '_system_Georgia', buttonFontFamily: '_system_Arial', labelLineHeight: '24px', buttonLineHeight: '20px' };
-  const typographyControls = [{ type: 'font-picker', props: ['labelFontFamily', 'inputFontFamily', 'buttonFontFamily'] }, { type: 'css-value', props: ['labelLineHeight', 'buttonLineHeight'], units: ['', 'px', 'rem', 'em'], min: 0 }];
+  const typography = { labelFontFamily: '_system_Arial', inputFontFamily: '_system_Georgia', buttonFontFamily: '_system_Arial', labelLineHeight: '24px', inputLineHeight: '24px', buttonLineHeight: '20px' };
+  const typographyControls = [{ type: 'font-picker', props: ['labelFontFamily', 'inputFontFamily', 'buttonFontFamily'] }, { type: 'css-value', props: ['labelLineHeight', 'inputLineHeight', 'buttonLineHeight'], units: ['', 'px', 'rem', 'em'], min: 0 }];
   author('6px', current, typography, typographyControls, typography);
   author('6px', current, typography, [], Object.fromEntries(Object.keys(typography).map((key) => [key, undefined])));
   author('6px', current, { labelLineHeight: 'var(--private)' }, typographyControls, { labelLineHeight: undefined });

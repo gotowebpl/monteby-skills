@@ -1345,8 +1345,7 @@ function renderFormBlock(props) {
   const buttonWidth = /^(?:0|\d+(?:\.\d+)?(?:px|rem|em|%))$/u.test(buttonWidthCandidate) ? buttonWidthCandidate : '';
   const buttonJustifySelf = ['start', 'center', 'end', 'stretch'].includes(props.buttonJustifySelf)
     ? props.buttonJustifySelf : buttonWidth ? 'start' : '';
-  const buttonLineHeight = String(props.buttonLineHeight ?? '').trim();
-  const safeButtonLineHeight = /^(?:\d+(\.\d+)?(px|rem|em)?|var\(--monteby-token-typography-line-height\)|var\(--gcb-typo-[a-z0-9_-]+-line-height\))$/.test(buttonLineHeight) ? buttonLineHeight : '';
+  const safeButtonLineHeight = statsGridLength(props.buttonLineHeight, '', 'px', true, 'line-height');
   const submitStyles = [
     'display:inline-flex', 'align-items:center', 'justify-content:center', 'gap:8px',
     styleDeclaration('grid-column', columns === 2 ? 'span 2' : ''),
@@ -1373,10 +1372,10 @@ function renderFormField(rawField, props, columns, index) {
   const label = safeTextValue(field.label, '');
   const required = field.required === true;
   const column = columns === 2 && Number(field.columnSpan) === 2 ? 'span 2' : '';
-  const labelLineHeight = String(props.labelLineHeight ?? '').trim();
-  const safeLabelLineHeight = /^(?:\d+(\.\d+)?(px|rem|em)?|var\(--monteby-token-typography-line-height\)|var\(--gcb-typo-[a-z0-9_-]+-line-height\))$/.test(labelLineHeight) ? labelLineHeight : '';
+  const safeLabelLineHeight = statsGridLength(props.labelLineHeight, '', 'px', true, 'line-height');
+  const safeInputLineHeight = statsGridLength(props.inputLineHeight, '', 'px', true, 'line-height');
   const labelStyle = `color:${cssColorValue(props.labelColor) || '#111827'};font-size:${cssValue(props.labelFontSize) || '14px'};font-weight:${formFontWeight(props.labelFontWeight) || '600'};font-family:${cssFontFamilyValue(props.labelFontFamily) || 'inherit'};letter-spacing:${formLetterSpacing(props.labelLetterSpacing)};text-transform:${formTextTransform(props.labelTextTransform)}${safeLabelLineHeight ? `;line-height:${safeLabelLineHeight}` : ''}`;
-  const controlStyle = `width:100%;height:${cssValue(props.inputHeight) || 'auto'};padding:${statsGridLength(props.inputPaddingTop, '14px')} ${statsGridLength(props.inputPaddingRight, '16px')} ${statsGridLength(props.inputPaddingBottom, '14px')} ${statsGridLength(props.inputPaddingLeft, '16px')};border:${formBorderWidth(props.inputBorderWidth) || '1px'} solid ${cssColorValue(props.inputBorderColor) || '#e5e7eb'};border-radius:${formBorderRadius(props.inputBorderRadius) || '12px'};background-color:${cssColorValue(props.inputBgColor) || '#ffffff'};color:${cssColorValue(props.inputColor) || '#111827'};font-size:${cssValue(props.inputFontSize) || '16px'};font-family:${cssFontFamilyValue(props.inputFontFamily) || 'inherit'};font-weight:${formFontWeight(props.inputFontWeight) || '400'};--monteby-preview-form-focus-color:${cssColorValue(props.inputFocusColor) || '#2563eb'}`;
+  const controlStyle = `width:100%;height:${cssValue(props.inputHeight) || 'auto'};padding:${statsGridLength(props.inputPaddingTop, '14px')} ${statsGridLength(props.inputPaddingRight, '16px')} ${statsGridLength(props.inputPaddingBottom, '14px')} ${statsGridLength(props.inputPaddingLeft, '16px')};border:${formBorderWidth(props.inputBorderWidth) || '1px'} solid ${cssColorValue(props.inputBorderColor) || '#e5e7eb'};border-radius:${formBorderRadius(props.inputBorderRadius) || '12px'};background-color:${cssColorValue(props.inputBgColor) || '#ffffff'};color:${cssColorValue(props.inputColor) || '#111827'};font-size:${cssValue(props.inputFontSize) || '16px'};font-family:${cssFontFamilyValue(props.inputFontFamily) || 'inherit'};font-weight:${formFontWeight(props.inputFontWeight) || '400'}${safeInputLineHeight ? `;line-height:${safeInputLineHeight}` : ''};--monteby-preview-form-focus-color:${cssColorValue(props.inputFocusColor) || '#2563eb'}`;
   const mark = required ? `<span aria-hidden="true" style="color:${escapeAttr(cssColorValue(props.requiredColor) || '#ef4444')}">*</span>` : '';
   if (type === 'checkbox') {
     const linkText = safeTextValue(field.linkText, '');
@@ -1402,10 +1401,10 @@ function renderFormField(rawField, props, columns, index) {
   return `${wrapStart}${labelHtml}<input class="monteby-preview-form-control" type="${type}" name="${escapeAttr(name)}" placeholder="${placeholder}"${required ? ' required' : ''} style="${escapeAttr(controlStyle)}"></div>`;
 }
 
-function statsGridLength(value, fallback, defaultUnit = 'px', allowUnitless = false) {
+function statsGridLength(value, fallback, defaultUnit = 'px', allowUnitless = false, tokenKind = 'length') {
   const candidate = value ?? fallback;
   if (typeof candidate === 'number') {
-    if (!Number.isFinite(candidate)) {
+    if (!Number.isFinite(candidate) || (tokenKind === 'line-height' && candidate < 0)) {
       return fallback;
     }
     return allowUnitless || candidate === 0 ? String(candidate) : `${candidate}${defaultUnit}`;
@@ -1415,6 +1414,11 @@ function statsGridLength(value, fallback, defaultUnit = 'px', allowUnitless = fa
   }
 
   const raw = candidate.trim();
+  if (tokenKind === 'line-height') {
+    return /^(?:\d+(?:\.\d+)?(?:px|rem|em)?|var\(--monteby-token-typography-line-height\)|var\(--gcb-typo-[a-z0-9_-]+-line-height\))$/.test(raw)
+      ? raw
+      : fallback;
+  }
   if (/^-?\d+(?:\.\d+)?$/.test(raw)) {
     return allowUnitless || raw === '0' ? raw : `${raw}${defaultUnit}`;
   }

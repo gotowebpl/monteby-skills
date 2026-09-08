@@ -3442,6 +3442,7 @@ test('generic measured drafting recognizes a multi-field form as one contract-ba
       fontSize: '16px',
       fontWeight: '400',
       fontFamily: 'Arial, sans-serif',
+      lineHeight: '24px',
       borderTopColor: 'oklch(0.88 0.01 260)',
       borderTopWidth: '2px',
       borderRadius: '8px',
@@ -3490,7 +3491,12 @@ test('generic measured drafting recognizes a multi-field form as one contract-ba
     }));
   }
 
-  fs.writeFileSync(contractPath, JSON.stringify(contract()));
+  const formContract = contract();
+  const formComponent = formContract.components.find((component) => component.name === 'FormBlock');
+  formComponent.props.push('inputLineHeight');
+  formComponent.aiProps = [...new Set([...(formComponent.aiProps || formComponent.props), 'inputLineHeight'])];
+  formComponent.controls.push({ type: 'css-value', props: ['inputLineHeight'], units: ['', 'px', 'rem', 'em'], min: 0, step: 0.1 });
+  fs.writeFileSync(contractPath, JSON.stringify(formContract));
   fs.writeFileSync(briefPath, JSON.stringify({
     ...visualBrief({ target: { variant: 'split-hero', archetype: '', referenceStyle: '' } }),
     media: { surfaces: [], requiredRoles: [] },
@@ -3539,6 +3545,7 @@ test('generic measured drafting recognizes a multi-field form as one contract-ba
   assert.equal(forms[0].props.formPaddingX, '24px');
   assert.equal(forms[0].props.formPaddingY, '24px');
   assert.equal(forms[0].props.inputHeight, '50px');
+  assert.equal(forms[0].props.inputLineHeight, '24px');
   assert.equal(forms[0].props.inputBorderWidth, 'border-2');
   assert.equal(forms[0].props.inputBorderRadius, 'rounded-lg');
   assert.equal(forms[0].props.inputColor, 'rgb(99, 99, 99)');
