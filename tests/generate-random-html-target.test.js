@@ -1210,11 +1210,22 @@ test('reference capture generated Playwright script runs with resource throttlin
   fs.writeFileSync(fixturePath, '<!doctype html><html><head><title>Generated Script Reference</title></head><body><h1>Generated script</h1><img src="/hero.jpg"></body></html>');
   fs.writeFileSync(path.join(moduleDirectory, 'index.js'), `
 const fs = require('fs');
+const vm = require('node:vm');
 
 exports.chromium = {
   async launch() {
     return {
       async newPage() {
+        const window = {
+          scrollX: 0,
+          scrollY: 352,
+          scrollTo(options) {
+            if (options.behavior === 'instant') {
+              this.scrollX = options.left;
+              this.scrollY = options.top;
+            }
+          },
+        };
         return {
           async route(_pattern, handler) {
             for (const request of [
@@ -1244,11 +1255,20 @@ exports.chromium = {
           async goto() {},
           async waitForLoadState() {},
           async waitForTimeout() {},
+          async waitForFunction(callback, argument, options) {
+            if (argument !== null || options.timeout !== 5000
+              || vm.runInNewContext('(' + callback.toString() + ')()', { window }) !== true) {
+              throw new Error('Capture scroll origin did not settle within the bound');
+            }
+          },
           async screenshot(options) {
             fs.writeFileSync(options.path, 'fakepng');
           },
           async evaluate(callback) {
             const source = String(callback);
+            if (source.includes('window.scrollTo')) {
+              return vm.runInNewContext('(' + source + ')()', { window });
+            }
             if (source.includes('const viewport =')) {
               return {
                 capturedAt: '2026-07-09T00:00:00.000Z',

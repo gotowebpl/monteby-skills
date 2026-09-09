@@ -4080,7 +4080,7 @@ async function warmLazyMedia(page, options = {}) {
 
     const requestedScrollY = steps === 0 ? 0 : Math.min(targetScrollY, reachedScrollY + step);
     const measurement = await page.evaluate((scrollY) => {
-      window.scrollTo(0, scrollY);
+      window.scrollTo({ left: 0, top: scrollY, behavior: 'instant' });
       return {
         scrollY: window.scrollY,
         scrollHeight: Math.max(document.documentElement.scrollHeight, document.body.scrollHeight),
@@ -4213,14 +4213,15 @@ const warmLazyMedia = ${warmLazyMedia.toString()};
     const waitForFontFaceSet = ${waitForFontFaceSet.toString()};
     return waitForFontFaceSet(document.fonts, timeoutMs);
   }, 5000).catch(() => 'error');
-  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.evaluate(() => window.scrollTo({ left: 0, top: 0, behavior: 'instant' }));
   await page.waitForTimeout(120);
   const visualMediaEvidence = await waitForVisualMedia(page, fullPage) || {};
   lazyMediaWarmup = await warmLazyMedia(page, {
     viewportHeight: Number(process.env.MONTEBY_REFERENCE_CAPTURE_HEIGHT || process.env.MONTEBY_REFERENCE_LAYOUT_HEIGHT || '1200'),
     fullPage,
   });
-  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.evaluate(() => window.scrollTo({ left: 0, top: 0, behavior: 'instant' }));
+  await page.waitForFunction(() => window.scrollX === 0 && window.scrollY === 0, null, { timeout: 5000 });
 
   const layoutOut = process.env.MONTEBY_REFERENCE_CAPTURE_LAYOUT_OUT || process.env.MONTEBY_REFERENCE_LAYOUT_OUT || '';
   let capturedLayout = null;

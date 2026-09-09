@@ -71,7 +71,7 @@ test('reference capture accepts a local HTML file without a redundant URL', () =
   assert.match(usage(), /--url <url> \| --html-file <path>/);
 });
 
-test('browser capture measures settled layout before full-page screenshot viewport mutation', () => {
+test('browser capture measures settled layout before full-page screenshot viewport mutation', async () => {
   const source = renderedLayoutCaptureScript();
   const finalWarmupIndex = source.lastIndexOf('lazyMediaWarmup = await warmLazyMedia');
   const layoutIndex = source.indexOf('const layout = await page.evaluate');
@@ -80,6 +80,32 @@ test('browser capture measures settled layout before full-page screenshot viewpo
   assert.ok(finalWarmupIndex >= 0);
   assert.ok(layoutIndex > finalWarmupIndex);
   assert.ok(screenshotIndex > layoutIndex);
+  const layoutOutIndex = source.indexOf('const layoutOut =');
+  const resetIndex = source.lastIndexOf('await page.evaluate', layoutOutIndex);
+  const resetSource = source.slice(resetIndex, layoutOutIndex);
+  const viewport = {
+    scrollX: 0, scrollY: 352,
+    scrollTo(options) {
+      if (options.behavior === 'instant') {
+        this.scrollX = options.left;
+        this.scrollY = options.top;
+      }
+    },
+  };
+  const page = {
+    async evaluate(callback) { return callback(); },
+    async waitForFunction(callback, argument, options) {
+      assert.equal(argument, null);
+      assert.equal(options.timeout, 5000);
+      assert.equal(callback(), true, 'layout capture must reject an unsettled scroll origin');
+    },
+  };
+  const context = require('node:vm').createContext({ window: viewport, page });
+  await require('node:vm').runInContext(`(async () => { ${resetSource} })()`, context);
+  assert.deepEqual([viewport.scrollX, viewport.scrollY], [0, 0]);
+  viewport.scrollY = 352;
+  viewport.scrollTo = () => {};
+  await assert.rejects(require('node:vm').runInContext(`(async () => { ${resetSource} })()`, context), /unsettled scroll origin/);
 });
 
 test('image decode warmup settles at its bound when decode never resolves', async () => {
@@ -362,6 +388,25 @@ test('full-page lazy-media warmup reaches the measured bottom beyond 12,000px', 
   assert.equal(evidence.reachedBottom, true);
   assert.equal(evidence.complete, true);
   assert.deepEqual(evidence.reasons, []);
+});
+
+test('lazy-media warmup measures immediate positions when the page uses smooth scrolling', async () => {
+  const document = { documentElement: { scrollHeight: 1554 }, body: { scrollHeight: 1554 } };
+  const viewport = {
+    scrollY: 0,
+    scrollTo(options) {
+      if (options.behavior === 'instant') this.scrollY = Math.min(options.top, 354);
+    },
+  };
+  const page = {
+    async evaluate(callback, argument) {
+      return require('node:vm').runInNewContext(`(${callback.toString()})(argument)`, { window: viewport, document, argument });
+    },
+    async waitForTimeout() {},
+  };
+  const evidence = await warmLazyMedia(page, { fullPage: true, viewportHeight: 1200, waitMs: 0, maxSteps: 4 });
+  assert.equal(evidence.reachedScrollY, 354);
+  assert.equal(evidence.complete, true);
 });
 
 test('full-page lazy-media warmup discloses a defensive document-height bound', async () => {

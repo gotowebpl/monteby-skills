@@ -2,6 +2,9 @@
 
 ## 0.5.0 - Unreleased
 
+- Restore the scroll origin before measuring full-page geometry, including
+  sites with smooth scrolling; an unsettled origin stops capture instead of
+  reporting missing content bands.
 - Preserve measured native-icon smoothing through a matching live IconBlock
   control; refuse unsupported values instead of adding author CSS. Existing
   unmeasured icons keep their preview behavior.
