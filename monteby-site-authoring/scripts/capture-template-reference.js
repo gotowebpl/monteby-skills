@@ -2786,6 +2786,7 @@ function captureRenderedLayout(
     const href = tag === 'a' ? boundedAttribute(element, 'href', 2048) : '';
     return {
       key,
+      domPathKey: elementPathKey(element),
       ...(typeof element.getAttribute === 'function' && element.getAttribute('data-monteby-node-id')
         ? { montebyNodeId: String(element.getAttribute('data-monteby-node-id')) }
         : {}),
@@ -3027,6 +3028,10 @@ function captureRenderedLayout(
       : '';
     return {
       ...item,
+      domPathKey: elementPathKey(element),
+      ...(typeof element.getAttribute === 'function' && element.getAttribute('data-monteby-node-id')
+        ? { montebyNodeId: String(element.getAttribute('data-monteby-node-id')) }
+        : {}),
       ...(href ? { href } : {}),
       lines: renderedTextLines(element),
       structureKey: elementPathKey(element),
@@ -3213,6 +3218,7 @@ function captureRenderedLayout(
       return {
         order,
         tag: element.tagName.toLowerCase(),
+        domPathKey: elementPathKey(element),
         ...(layoutGroupKeyByElement.has(element) ? { key: layoutGroupKeyByElement.get(element) } : {}),
         ...(typeof element.getAttribute === 'function' && element.getAttribute('data-monteby-node-id')
           ? { montebyNodeId: String(element.getAttribute('data-monteby-node-id')) }

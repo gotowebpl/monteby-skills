@@ -11,6 +11,38 @@ const vm = require('node:vm');
 
 const root = path.resolve(__dirname, '..');
 const renderScript = path.join(root, 'monteby-site-authoring', 'scripts', 'render-monteby-preview.js');
+const { renderDocument } = require('../monteby-site-authoring/scripts/render-monteby-preview');
+
+test('diagnostic identities belong to the existing single widget root without wrappers or child attribution', () => {
+  const cases = [
+    ['Section', 'section', {}], ['Container', 'a', { tag: 'a', href: '/target' }],
+    ['Heading', 'h1', { tag: 'h1', text: 'Heading' }], ['Text', 'p', { text: 'Text' }],
+    ['Text', 'span', { text: 'Inline', display: 'inline-block' }],
+    ['MultilineHeading', 'h2', { lines: [{ text: 'Line' }] }],
+    ['ButtonBlock', 'a', { label: 'Action' }], ['ImageBlock', 'img', { src: '/image.png' }],
+    ['IconBlock', 'span', { icon: 'check_circle' }], ['Divider', 'hr', {}],
+    ['StatsGrid', 'dl', { items: [{ label: 'Count', value: '3' }] }],
+    ['Navbar', 'nav', {}], ['Navbar', 'nav', { mobileMenuBehavior: 'drawer' }],
+    ['FormBlock', 'form', { fields: [{ type: 'text', label: 'Name' }] }],
+    ['TabsBlock', 'div', { tabs: [{ label: 'First', content: 'Panel' }] }],
+    ['AuthorBox', 'aside', { name: 'Author' }], ['PostInfo', 'div', { authorName: 'Author' }],
+    ['QuickAnswer', 'aside', { question: 'Question', answer: 'Answer' }],
+    ['Sources', 'section', { title: 'Sources', items: [{ title: 'Source', url: '/source' }] }],
+  ];
+  for (const [type, tag, props] of cases) {
+    const layout = { ROOT: { nodes: ['node-1'] }, 'node-1': { type: { resolvedName: type }, props, nodes: [] } };
+    const { fragment } = renderDocument(layout, 'Diagnostic');
+    assert.match(fragment, new RegExp(`^<${tag}\\b[^>]* data-monteby-node-id="node-1"[^>]*>`), type);
+    assert.equal((fragment.match(/data-monteby-node-id=/g) || []).length, 1, type);
+    assert.deepEqual(layout['node-1'].props, props);
+  }
+  const { fragment } = renderDocument({ ROOT: { nodes: ['heading"<'] }, 'heading"<': { type: 'Heading', props: { text: 'Safe' } } }, 'Diagnostic');
+  assert.match(fragment, /data-monteby-node-id="heading&quot;&lt;"/);
+  const unsupported = renderDocument({ ROOT: { nodes: ['unknown'] }, unknown: { type: 'UnknownWidget', props: {} } }, 'Diagnostic');
+  assert.doesNotMatch(unsupported.fragment, /data-monteby-node-id/);
+  const empty = renderDocument({ ROOT: { nodes: ['tabs'] }, tabs: { type: 'TabsBlock', props: { tabs: [] } } }, 'Diagnostic');
+  assert.equal(empty.fragment, '');
+});
 
 function renderPreview(layout, prefix, contract = null) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -545,7 +577,7 @@ test('preview renderer writes safe static HTML from a Monteby node map', () => {
   assert.match(html, /background-size:auto,auto/);
   assert.match(html, /background-position:center,center/);
   assert.match(html, /background-repeat:no-repeat,repeat/);
-  assert.match(html, /<hr style="width:100%;border-top:1px solid rgba\(49,95,79,\.22\);border-right:none;border-bottom:none;border-left:none;margin-top:0px;margin-right:auto;margin-bottom:0px;margin-left:0">/);
+  assert.match(html, /<hr style="width:100%;border-top:1px solid rgba\(49,95,79,\.22\);border-right:none;border-bottom:none;border-left:none;margin-top:0px;margin-right:auto;margin-bottom:0px;margin-left:0"[^>]*>/);
   assert.match(html, /monteby-stack-tablet/);
   assert.match(html, /monteby-show-mobile-only/);
   assert.match(html, /monteby-show-tablet-down-only/);
@@ -780,8 +812,8 @@ test('preview renderer inherits responsive Container margin-left resets through 
       nodes: [],
     },
   }, 'monteby-preview-responsive-margin-left-');
-  const tabletResetTag = html.match(/<div style="[^"]*margin-left:255px[^"]*">/u)?.[0] || '';
-  const mobileResetTag = html.match(/<div style="[^"]*margin-left:545\.6px[^"]*">/u)?.[0] || '';
+  const tabletResetTag = html.match(/<div style="[^"]*margin-left:255px[^"]*"[^>]*>/u)?.[0] || '';
+  const mobileResetTag = html.match(/<div style="[^"]*margin-left:545\.6px[^"]*"[^>]*>/u)?.[0] || '';
 
   assert.match(tabletResetTag, /--monteby-margin-left-tablet:0px/u);
   assert.doesNotMatch(tabletResetTag, /--monteby-margin-left-mobile/u);
@@ -1213,7 +1245,7 @@ test('preview renderer rejects unsafe generic CSS while retaining controlled val
       nodes: [],
     },
   }, 'monteby-preview-css-');
-  const textMatch = html.match(/<p style="([^"]*)">CSS probe<\/p>/);
+  const textMatch = html.match(/<p style="([^"]*)"[^>]*>CSS probe<\/p>/);
 
   assert.ok(textMatch);
   const style = textMatch[1];

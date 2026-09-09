@@ -517,6 +517,7 @@ function renderNode(nodeMap, nodeId) {
 
   const type = nodeType(node);
   const props = node.props && typeof node.props === 'object' ? node.props : {};
+  const diagnosticAttrs = ` data-monteby-node-id="${escapeAttr(nodeId)}"`;
   if (type === 'Section') {
     return renderSection(nodeMap, nodeId, props);
   }
@@ -527,26 +528,26 @@ function renderNode(nodeMap, nodeId) {
       tag,
       props,
       renderChildren(nodeMap, nodeId),
-      href ? ` href="${escapeAttr(href)}"` : '',
+      `${href ? ` href="${escapeAttr(href)}"` : ''}${diagnosticAttrs}`,
       true,
     );
   }
   if (type === 'Heading') {
     const tag = safeHeadingTag(props.tag);
-    return renderElement(tag, props, escapeHtml(textProp(props)));
+    return renderElement(tag, props, escapeHtml(textProp(props)), diagnosticAttrs);
   }
   if (type === 'MultilineHeading') {
-    return renderMultilineHeading(props);
+    return renderMultilineHeading(props, diagnosticAttrs);
   }
   if (type === 'Text') {
     const tag = props.display === 'inline-block' || props.display === 'inline-flex' ? 'span' : 'p';
-    return renderElement(tag, props, escapeHtml(textProp(props)));
+    return renderElement(tag, props, escapeHtml(textProp(props)), diagnosticAttrs);
   }
   if (type === 'ButtonBlock' || type === 'Button') {
-    return renderButton(props);
+    return renderButton(props, diagnosticAttrs);
   }
   if (type === 'ImageBlock' || type === 'Image') {
-    return renderImage(props);
+    return renderImage(props, diagnosticAttrs);
   }
   if (type === 'IconBlock') {
     const icon = safeMaterialIcon(props.icon ?? 'check_circle');
@@ -563,34 +564,34 @@ function renderNode(nodeMap, nodeId) {
       : ['inline-flex', 'inline-block', 'block', 'flex'].includes(props.iconDisplay) ? props.iconDisplay : '';
     const smoothing = ['auto', 'antialiased'].includes(props.iconSmoothing)
       ? `;-webkit-font-smoothing:${props.iconSmoothing}` : '';
-    return renderElement('span', { ...props, display }, `<span class="material-symbols-rounded" ${accessibility} style="font-size:${size}px;line-height:1;color:${escapeAttr(color)};flex-shrink:0${smoothing}">${escapeHtml(icon)}</span>`);
+    return renderElement('span', { ...props, display }, `<span class="material-symbols-rounded" ${accessibility} style="font-size:${size}px;line-height:1;color:${escapeAttr(color)};flex-shrink:0${smoothing}">${escapeHtml(icon)}</span>`, diagnosticAttrs);
   }
   if (type === 'Divider') {
-    return renderDivider(props);
+    return renderDivider(props, diagnosticAttrs);
   }
   if (type === 'StatsGrid') {
-    return renderStatsGrid(props);
+    return renderStatsGrid(props, diagnosticAttrs);
   }
   if (type === 'Navbar') {
-    return renderNavbar(props);
+    return renderNavbar(props, diagnosticAttrs);
   }
   if (type === 'FormBlock') {
-    return renderFormBlock(props);
+    return renderFormBlock(props, diagnosticAttrs);
   }
   if (type === 'TabsBlock') {
-    return renderTabsBlock(nodeId, props);
+    return renderTabsBlock(nodeId, props, diagnosticAttrs);
   }
   if (type === 'AuthorBox') {
-    return renderAuthorBox(nodeId, props);
+    return renderAuthorBox(nodeId, props, diagnosticAttrs);
   }
   if (type === 'PostInfo') {
-    return renderPostInfo(props);
+    return renderPostInfo(props, diagnosticAttrs);
   }
   if (type === 'QuickAnswer') {
-    return renderQuickAnswer(nodeId, props);
+    return renderQuickAnswer(nodeId, props, diagnosticAttrs);
   }
   if (type === 'Sources') {
-    return renderSources(nodeId, props);
+    return renderSources(nodeId, props, diagnosticAttrs);
   }
 
   return renderElement('div', props, renderChildren(nodeMap, nodeId));
@@ -633,14 +634,14 @@ function renderSection(nodeMap, nodeId, props) {
   );
 }
 
-function renderButton(props) {
+function renderButton(props, diagnosticAttrs = '') {
   const rawHref = typeof props.url === 'string' && props.url ? props.url : typeof props.href === 'string' && props.href ? props.href : '#';
   const href = safeUrlValue(rawHref, BUTTON_URL_SCHEMES) || '#';
-  const attrs = ` href="${escapeAttr(href)}"`;
+  const attrs = `${diagnosticAttrs} href="${escapeAttr(href)}"`;
   return renderElement('a', { ...props, borderWidth: cssValue(props.borderWidth) || '0px' }, escapeHtml(props.label || props.text || 'Button'), attrs);
 }
 
-function renderImage(props) {
+function renderImage(props, diagnosticAttrs = '') {
   const src = safeUrlValue(props.src || props.url || props.image || '', BACKGROUND_MEDIA_URL_SCHEMES);
   if (!src) {
     return '';
@@ -654,10 +655,10 @@ function renderImage(props) {
     objectPosition: props.objectPosition,
     borderRadius: props.borderRadius,
   });
-  return `<img src="${escapeAttr(src)}" alt="${escapeAttr(props.alt || '')}" style="${escapeAttr(style)}">`;
+  return `<img src="${escapeAttr(src)}" alt="${escapeAttr(props.alt || '')}" style="${escapeAttr(style)}"${diagnosticAttrs}>`;
 }
 
-function renderAuthorBox(nodeId, props) {
+function renderAuthorBox(nodeId, props, diagnosticAttrs = '') {
   const identifier = safeIdentifier(nodeId) || 'monteby-author-box';
   const nameId = `${identifier}-name`;
   const name = safeTextValue(props.name);
@@ -694,7 +695,7 @@ function renderAuthorBox(nodeId, props) {
     : '';
 
   return [
-    `<aside class="monteby-author-box" aria-labelledby="${escapeAttr(nameId)}" style="${escapeAttr(styles)}">`,
+    `<aside class="monteby-author-box" aria-labelledby="${escapeAttr(nameId)}" style="${escapeAttr(styles)}"${diagnosticAttrs}>`,
     image ? `<img src="${escapeAttr(image)}" alt="${escapeAttr(props.imageAlt || '')}" style="width:${escapeAttr(cssValue(props.imageSize) || '96px')};height:${escapeAttr(cssValue(props.imageSize) || '96px')};object-fit:cover;border-radius:9999px">` : '',
     '<div>',
     profile ? `<a href="${escapeAttr(profile)}" rel="author">${nameMarkup}</a>` : nameMarkup,
@@ -707,7 +708,7 @@ function renderAuthorBox(nodeId, props) {
   ].join('');
 }
 
-function renderPostInfo(props) {
+function renderPostInfo(props, diagnosticAttrs = '') {
   const entries = [];
   for (const [dateProp, labelProp] of [
     ['publishedDate', 'publishedLabel'],
@@ -754,10 +755,10 @@ function renderPostInfo(props) {
     styleDeclaration('color', cssColorValue(props.textColor) || '#334155'),
     styleDeclaration('font-size', cssValue(props.fontSize) || '14px'),
   ].filter(Boolean).join(';');
-  return `<div class="monteby-post-info" style="${escapeAttr(styles)}">${entries.join('')}</div>`;
+  return `<div class="monteby-post-info" style="${escapeAttr(styles)}"${diagnosticAttrs}>${entries.join('')}</div>`;
 }
 
-function renderQuickAnswer(nodeId, props) {
+function renderQuickAnswer(nodeId, props, diagnosticAttrs = '') {
   const identifier = safeIdentifier(nodeId) || 'monteby-quick-answer';
   const headingId = `${identifier}-question`;
   const heading = safeExpertHeadingTag(props.headingLevel);
@@ -775,7 +776,7 @@ function renderQuickAnswer(nodeId, props) {
     styleDeclaration('background-color', cssColorValue(props.backgroundColor) || '#f8fafc'),
   ].filter(Boolean).join(';');
   return [
-    `<aside class="monteby-quick-answer" aria-labelledby="${escapeAttr(headingId)}" style="${escapeAttr(styles)}">`,
+    `<aside class="monteby-quick-answer" aria-labelledby="${escapeAttr(headingId)}" style="${escapeAttr(styles)}"${diagnosticAttrs}>`,
     label ? `<span>${escapeHtml(label)}</span>` : '',
     `<${heading} id="${escapeAttr(headingId)}">${escapeHtml(question)}</${heading}>`,
     `<p>${escapeHtml(answer)}</p>`,
@@ -784,7 +785,7 @@ function renderQuickAnswer(nodeId, props) {
   ].join('');
 }
 
-function renderSources(nodeId, props) {
+function renderSources(nodeId, props, diagnosticAttrs = '') {
   const identifier = safeIdentifier(nodeId) || 'monteby-sources';
   const headingId = `${identifier}-title`;
   const heading = safeExpertHeadingTag(props.headingLevel);
@@ -812,7 +813,7 @@ function renderSources(nodeId, props) {
     styleDeclaration('color', cssColorValue(props.textColor) || '#0f172a'),
     styleDeclaration('font-size', cssValue(props.fontSize) || '16px'),
   ].filter(Boolean).join(';');
-  return `<section class="monteby-sources" aria-labelledby="${escapeAttr(headingId)}" style="${escapeAttr(styles)}"><${heading} id="${escapeAttr(headingId)}">${escapeHtml(title)}</${heading}><${listTag} style="display:grid;gap:${escapeAttr(cssValue(props.gap) || '12px')}">${renderedItems}</${listTag}></section>`;
+  return `<section class="monteby-sources" aria-labelledby="${escapeAttr(headingId)}" style="${escapeAttr(styles)}"${diagnosticAttrs}><${heading} id="${escapeAttr(headingId)}">${escapeHtml(title)}</${heading}><${listTag} style="display:grid;gap:${escapeAttr(cssValue(props.gap) || '12px')}">${renderedItems}</${listTag}></section>`;
 }
 
 function renderExpertLink(label, value, relation = '', newTab = false) {
@@ -827,7 +828,7 @@ function renderExpertLink(label, value, relation = '', newTab = false) {
   return `<a href="${escapeAttr(href)}"${target}${rel}>${text}</a>`;
 }
 
-function renderDivider(props) {
+function renderDivider(props, diagnosticAttrs = '') {
   const align = ['left', 'center', 'right'].includes(props.dividerAlign) ? props.dividerAlign : 'center';
   const marginLeft = align === 'left' ? '0' : 'auto';
   const marginRight = align === 'right' ? '0' : 'auto';
@@ -849,10 +850,10 @@ function renderDivider(props) {
     styleDeclaration('margin-bottom', cssValue(props.dividerMargin) || '0px'),
     styleDeclaration('margin-left', marginLeft),
   ];
-  return `<hr style="${escapeAttr(styles.join(';'))}">`;
+  return `<hr style="${escapeAttr(styles.join(';'))}"${diagnosticAttrs}>`;
 }
 
-function renderMultilineHeading(props) {
+function renderMultilineHeading(props, diagnosticAttrs = '') {
   const tag = ['h1', 'h2', 'h3'].includes(props.tag) ? props.tag : 'h2';
   const lines = Array.isArray(props.lines) ? props.lines : [];
   const fallbackColor = cssColorValue(props.textColor || props.color) || '#1f1d1b';
@@ -882,7 +883,7 @@ function renderMultilineHeading(props) {
     return lineHtml;
   }).join('<br>');
 
-  return renderElement(tag, props, content);
+  return renderElement(tag, props, content, diagnosticAttrs);
 }
 
 function multilineHeadingLineOffset(value) {
@@ -902,7 +903,7 @@ function multilineHeadingLineOffset(value) {
     : '';
 }
 
-function renderTabsBlock(nodeId, props) {
+function renderTabsBlock(nodeId, props, diagnosticAttrs = '') {
   const tabs = Array.isArray(props.tabs)
     ? props.tabs.filter((tab) => tab && typeof tab === 'object' && !Array.isArray(tab))
     : [];
@@ -1169,10 +1170,10 @@ function renderTabsBlock(nodeId, props) {
   }).join('');
   const classes = ['gotoweb-tabs', `gotoweb-tabs--${orientation}`, mobileTabLayout ? `gotoweb-tabs--mobile-${mobileTabLayout}` : ''].filter(Boolean).join(' ');
 
-  return `<div class="${classes}" data-gotoweb-tabs data-mobile-tab-layout="${escapeAttr(mobileTabLayout)}" data-panel-stack-at="${panelStackAt}" data-tabs-responsive style="${escapeAttr(rootStyles)}"><div class="gotoweb-tabs__bar" role="tablist" aria-orientation="${orientation}" style="${escapeAttr(barStyles)}">${tabButtons}</div><div class="gotoweb-tabs__panels" style="min-width:0">${panels}</div></div>`;
+  return `<div class="${classes}" data-gotoweb-tabs data-mobile-tab-layout="${escapeAttr(mobileTabLayout)}" data-panel-stack-at="${panelStackAt}" data-tabs-responsive style="${escapeAttr(rootStyles)}"${diagnosticAttrs}><div class="gotoweb-tabs__bar" role="tablist" aria-orientation="${orientation}" style="${escapeAttr(barStyles)}">${tabButtons}</div><div class="gotoweb-tabs__panels" style="min-width:0">${panels}</div></div>`;
 }
 
-function renderStatsGrid(props) {
+function renderStatsGrid(props, diagnosticAttrs = '') {
   const rawItems = Array.isArray(props.items) ? props.items : [];
   const [columns, columnsTablet, columnsMobile] = [
     [props.columns, 4],
@@ -1267,10 +1268,10 @@ function renderStatsGrid(props) {
     return `<div style="${escapeAttr(cellStyles.join(';'))}"><dt style="${escapeAttr(labelStyles.join(';'))}">${escapeHtml(label)}</dt><dd style="${escapeAttr(valueStyles.join(';'))}">${valueInner}</dd></div>`;
   }).join('');
 
-  return `<dl class="gotoweb-grid-template-columns--responsive" style="${escapeAttr(outerStyles.join(';'))}">${itemsHtml}</dl>`;
+  return `<dl class="gotoweb-grid-template-columns--responsive" style="${escapeAttr(outerStyles.join(';'))}"${diagnosticAttrs}>${itemsHtml}</dl>`;
 }
 
-function renderNavbar(props) {
+function renderNavbar(props, diagnosticAttrs = '') {
   const behavior = ['hide-links', 'drawer'].includes(props.mobileMenuBehavior) ? props.mobileMenuBehavior : 'default';
   const breakpoint = ['tablet', 'wide'].includes(props.mobileMenuBreakpoint) ? props.mobileMenuBreakpoint : 'mobile';
   const responsiveClass = behavior === 'default' ? '' : ` monteby-preview-navbar--${behavior}-${breakpoint}`;
@@ -1317,15 +1318,15 @@ function renderNavbar(props) {
   const ctaLabel = safeTextValue(props.ctaLabel, '');
   const cta = ctaLabel ? `<div class="monteby-preview-navbar__actions" style="display:flex;align-items:center;gap:12px"><a href="${escapeAttr(safeUrlValue(props.ctaHref, BUTTON_URL_SCHEMES) || '#')}" style="display:inline-flex;align-items:center;justify-content:center;padding:${escapeAttr(cssValue(props.ctaPaddingY) || '8px')} ${escapeAttr(cssValue(props.ctaPaddingX) || '16px')};border:${escapeAttr(cssValue(props.ctaBorderWidth) || '1px')} solid ${escapeAttr(cssColorValue(props.ctaBorderColor) || '#2563eb')};border-radius:${escapeAttr(cssValue(props.ctaBorderRadius) || '8px')};background-color:${escapeAttr(cssColorValue(props.ctaBackgroundColor) || '#2563eb')};color:${escapeAttr(cssColorValue(props.ctaTextColor) || '#ffffff')};font-size:${escapeAttr(cssValue(props.ctaFontSize) || '14px')};font-weight:${escapeAttr(cssValue(props.ctaFontWeight) || '600')};line-height:1.2;text-decoration:none;white-space:nowrap">${escapeHtml(ctaLabel)}</a></div>` : '';
   if (behavior !== 'drawer') {
-    return `<nav class="monteby-preview-navbar${responsiveClass}" style="${escapeAttr(rootStyles)}"><div class="monteby-preview-navbar__inner" style="${escapeAttr(innerStyles)}"><div style="${escapeAttr(brandStyles)}">${logoMark}${logo}</div>${menu}${cta}</div></nav>`;
+    return `<nav class="monteby-preview-navbar${responsiveClass}" style="${escapeAttr(rootStyles)}"${diagnosticAttrs}><div class="monteby-preview-navbar__inner" style="${escapeAttr(innerStyles)}"><div style="${escapeAttr(brandStyles)}">${logoMark}${logo}</div>${menu}${cta}</div></nav>`;
   }
   const icon = safeMaterialIcon(props.menuButtonIcon || 'menu') || 'menu';
   const buttonLabel = safeTextValue(props.menuButtonLabel, 'Menu');
   const buttonStyles = `display:none;align-items:center;justify-content:center;padding:${cssValue(props.ctaPaddingY) || '8px'} ${cssValue(props.ctaPaddingX) || '16px'};border:${cssValue(props.borderWidth) || '1px'} solid ${cssColorValue(props.borderColor) || '#e5e7eb'};border-radius:${cssValue(props.ctaBorderRadius) || '8px'};background-color:${cssColorValue(props.backgroundColor) || '#ffffff'};color:${cssColorValue(props.linkColor) || '#52525b'};line-height:1`;
-  return `<nav class="monteby-preview-navbar${responsiveClass}" style="${escapeAttr(rootStyles)}"><div class="monteby-preview-navbar__inner" style="${escapeAttr(innerStyles)}"><div style="${escapeAttr(brandStyles)}">${logoMark}${logo}</div><div class="monteby-preview-navbar__desktop" style="display:flex;align-items:center;gap:16px;margin-left:auto">${menu}${cta}</div><button type="button" class="monteby-preview-navbar__toggle" aria-expanded="false" aria-label="${escapeAttr(buttonLabel)}" style="${escapeAttr(buttonStyles)}"><span class="material-symbols-rounded" aria-hidden="true">${escapeHtml(icon)}</span></button><div class="monteby-preview-navbar__drawer" aria-hidden="true" hidden>${menu}${cta}</div></div></nav>`;
+  return `<nav class="monteby-preview-navbar${responsiveClass}" style="${escapeAttr(rootStyles)}"${diagnosticAttrs}><div class="monteby-preview-navbar__inner" style="${escapeAttr(innerStyles)}"><div style="${escapeAttr(brandStyles)}">${logoMark}${logo}</div><div class="monteby-preview-navbar__desktop" style="display:flex;align-items:center;gap:16px;margin-left:auto">${menu}${cta}</div><button type="button" class="monteby-preview-navbar__toggle" aria-expanded="false" aria-label="${escapeAttr(buttonLabel)}" style="${escapeAttr(buttonStyles)}"><span class="material-symbols-rounded" aria-hidden="true">${escapeHtml(icon)}</span></button><div class="monteby-preview-navbar__drawer" aria-hidden="true" hidden>${menu}${cta}</div></div></nav>`;
 }
 
-function renderFormBlock(props) {
+function renderFormBlock(props, diagnosticAttrs = '') {
   const columns = Number(props.formColumns) === 2 ? 2 : 1;
   const rootStyles = [
     'display:grid',
@@ -1364,7 +1365,7 @@ function renderFormBlock(props) {
     styleDeclaration('background-color', cssColorValue(props.buttonBackgroundColor) || '#2563eb'), styleDeclaration('color', cssColorValue(props.buttonTextColor) || '#ffffff'),
     styleDeclaration('font-family', cssFontFamilyValue(props.buttonFontFamily) || 'inherit'), styleDeclaration('line-height', safeButtonLineHeight), styleDeclaration('font-size', cssValue(props.buttonFontSize) || '16px'), styleDeclaration('font-weight', formFontWeight(props.buttonFontWeight) || '600'),
   ].filter(Boolean).join(';');
-  return `<form class="monteby-preview-form${columns === 2 ? ' monteby-preview-form--two-columns' : ''}"${safeIdentifier(props.formId) ? ` id="${escapeAttr(safeIdentifier(props.formId))}"` : ''} style="${escapeAttr(rootStyles)}">${fieldsHtml}<button type="button" style="${escapeAttr(submitStyles)}">${icon ? `<span class="material-symbols-rounded" aria-hidden="true" style="font-size:1.1em;line-height:1">${escapeHtml(icon)}</span>` : ''}${escapeHtml(safeTextValue(props.submitLabel, 'Send'))}</button></form>`;
+  return `<form class="monteby-preview-form${columns === 2 ? ' monteby-preview-form--two-columns' : ''}"${safeIdentifier(props.formId) ? ` id="${escapeAttr(safeIdentifier(props.formId))}"` : ''} style="${escapeAttr(rootStyles)}"${diagnosticAttrs}>${fieldsHtml}<button type="button" style="${escapeAttr(submitStyles)}">${icon ? `<span class="material-symbols-rounded" aria-hidden="true" style="font-size:1.1em;line-height:1">${escapeHtml(icon)}</span>` : ''}${escapeHtml(safeTextValue(props.submitLabel, 'Send'))}</button></form>`;
 }
 
 function renderFormField(rawField, props, columns, index) {

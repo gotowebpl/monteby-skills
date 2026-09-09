@@ -3,6 +3,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { isDeepStrictEqual } = require('node:util');
 
 const REQUIRED_WIDTHS = new Set([1440, 834, 390]);
 const GEOMETRY_WIDTH = 375;
@@ -12,11 +13,35 @@ function normalizedText(value) {
 }
 
 function surfaces(layout) {
-  return [
+  const observed = [
     ...(Array.isArray(layout?.textBoxes) ? layout.textBoxes : []),
     ...(Array.isArray(layout?.layoutGroups) ? layout.layoutGroups : []),
     ...(Array.isArray(layout?.landmarks) ? layout.landmarks : []),
   ];
+  const unique = [];
+  const byDomPath = new Map();
+  for (const surface of observed) {
+    const key = surface?.domPathKey;
+    if (typeof key !== 'string' || key === '') {
+      unique.push(surface);
+      continue;
+    }
+    if (!/^\d+(?:\.\d+)*$/u.test(key)) throw new Error('Invalid capture DOM path key');
+    const existing = byDomPath.get(key);
+    if (!existing) {
+      const copy = { ...surface };
+      byDomPath.set(key, copy);
+      unique.push(copy);
+      continue;
+    }
+    for (const property of Object.keys(surface)) {
+      if (Object.hasOwn(existing, property) && !isDeepStrictEqual(existing[property], surface[property])) {
+        throw new Error(`Conflicting capture evidence for DOM path ${key}`);
+      }
+    }
+    Object.assign(existing, surface);
+  }
+  return unique;
 }
 
 function publicPropVerification(spec, diagnosticLayouts, publicLayouts) {
@@ -58,6 +83,10 @@ function publicPropVerification(spec, diagnosticLayouts, publicLayouts) {
     const identity = expectation.identity;
     if (!identity || typeof identity.tag !== 'string' || identity.tag.trim() === '' || typeof identity.text !== 'string') {
       throw new Error(`Expectation ${index} requires semantic tag/text identity`);
+    }
+    if (String(diagnostic[0].tag || '').toLowerCase() !== identity.tag.toLowerCase()
+      || normalizedText(diagnostic[0].text) !== normalizedText(identity.text)) {
+      throw new Error(`Expectation ${index} identity does not describe the diagnostic root`);
     }
     const candidates = surfaces(publicByWidth.get(width)).filter((surface) => (
       String(surface.tag || '').toLowerCase() === identity.tag.toLowerCase()

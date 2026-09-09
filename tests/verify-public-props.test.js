@@ -131,3 +131,48 @@ test('public prop verification blocks ambiguous identity and missing canonical c
   assert.throws(() => publicPropVerification(spec, layouts(), publicLayouts), /ambiguous or missing/);
   assert.throws(() => publicPropVerification(spec, layouts().slice(0, 3), layouts(true)), /375px/);
 });
+
+test('public prop verification merges only matching capture-local DOM keys without mutating evidence', () => {
+  const captures = [layouts(), layouts(true)];
+  for (const captured of captures) {
+    for (const layout of captured) {
+      const text = layout.textBoxes[0];
+      text.domPathKey = '0.1';
+      layout.layoutGroups.push({ domPathKey: '0.1', tag: text.tag, rect: { ...text.rect } });
+      layout.landmarks.push({ ...text });
+    }
+  }
+  const before = structuredClone(captures);
+  const report = publicPropVerification(completeSpec, ...captures);
+  assert.equal(report.complete, true);
+  assert.equal(report.results.length, 3);
+  assert.deepEqual(captures, before);
+});
+
+test('public prop verification rejects conflicting DOM evidence, multiple roots and legacy duplicates', () => {
+  for (const side of [0, 1]) {
+    for (const change of [{ domPathKey: '0.2' }, { color: 'red' }, { tag: 'p' }, ...(side === 0 ? [{ montebyNodeId: 'other' }] : []), { rect: { left: 0 } }]) {
+      const captures = [layouts(), layouts(true)];
+      captures[side][0].textBoxes[0].domPathKey = '0.1';
+      captures[side][0].landmarks.push({ ...captures[side][0].textBoxes[0], ...change });
+      assert.throws(() => publicPropVerification(completeSpec, ...captures), /Conflicting capture evidence|cannot identify one diagnostic node|ambiguous or missing/);
+    }
+    const captures = [layouts(), layouts(true)];
+    captures[side][0].landmarks.push({ ...captures[side][0].textBoxes[0] });
+    assert.throws(() => publicPropVerification(completeSpec, ...captures), /cannot identify one diagnostic node|ambiguous or missing/);
+  }
+});
+
+test('public prop verification cannot redirect a root expectation to an inner control', () => {
+  const captures = [layouts(), layouts(true)];
+  captures[1][0].textBoxes.push({ tag: 'label', text: 'Name', color: 'rgb(1, 2, 3)' });
+  const spec = structuredClone(completeSpec);
+  spec.expectations[0].identity = { tag: 'label', text: 'Name' };
+  assert.throws(() => publicPropVerification(spec, ...captures), /identity does not describe the diagnostic root/);
+});
+
+test('public prop verification rejects non-DOM-path deduplication keys', () => {
+  const captured = layouts(true);
+  captured[0].textBoxes[0].domPathKey = 'heading-1';
+  assert.throws(() => publicPropVerification(completeSpec, layouts(), captured), /Invalid capture DOM path key/);
+});

@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
+const { publicPropVerification } = require('../monteby-site-authoring/scripts/verify-public-props');
 
 const captureScript = path.join(__dirname, '..', 'monteby-site-authoring', 'scripts', 'capture-template-reference.js');
 const {
@@ -1886,6 +1887,63 @@ test('unsupported computed gradient layers and functions retain only painted bac
   assert.doesNotMatch(JSON.stringify(layout), /source\.example\.test|backgroundImage|(?:linear|radial|conic)-gradient\(|var\(|calc\(/iu);
 });
 
+test('capture records exact DOM path and root node identity without attributing children to their parent', () => {
+  const heading = textElement('h1', 'Title', rect(20, 20, 200, 40), []);
+  heading.getAttribute = controlElement('h1', rect(20, 20, 200, 40), { 'data-monteby-node-id': 'heading-1' }).getAttribute;
+  const text = textElement('p', 'Body', rect(20, 80, 200, 30), []);
+  const section = layoutElement('section', rect(0, 0, 390, 200), [heading, text]);
+  section.getAttribute = controlElement('section', rect(0, 0, 390, 200), { 'data-monteby-node-id': 'section-1' }).getAttribute;
+  const { layout } = captureWithMockDom([heading, text], [], {}, { bodyChildren: [section], landmarkElements: [section] });
+  const headingBox = layout.textBoxes.find((box) => box.tag === 'h1');
+  assert.equal(headingBox.montebyNodeId, 'heading-1');
+  assert.equal(headingBox.domPathKey, '0.0');
+  assert.equal(layout.textBoxes.find((box) => box.tag === 'p').montebyNodeId, undefined);
+  const group = layout.layoutGroups.find((box) => box.montebyNodeId === 'section-1');
+  const landmark = layout.landmarks.find((box) => box.montebyNodeId === 'section-1');
+  assert.equal(group.domPathKey, '0');
+  assert.equal(landmark.domPathKey, group.domPathKey);
+  assert.notEqual(headingBox.domPathKey, group.domPathKey);
+});
+
+test('public prop verification consumes real capture records with overlapping group and landmark categories', () => {
+  const captures = [[], []];
+  for (const side of [0, 1]) {
+    for (const width of [1440, 834, 390, 375]) {
+      const fixture = structuralLayoutFixture();
+      const heading = fixture.textElements.find((element) => element.tagName === 'H1');
+      const quote = textElement('blockquote', 'Composite quotation', rect(20, 900, 200, 80), [], { display: 'grid' });
+      quote.children = [layoutElement('div', rect(20, 940, 200, 40))];
+      fixture.main.children.push(quote);
+      fixture.textElements.push(quote);
+      if (side === 0) {
+        heading.getAttribute = controlElement('h1', heading.getBoundingClientRect(), { 'data-monteby-node-id': 'heading-1' }).getAttribute;
+      }
+      const { layout } = captureWithMockDom(fixture.textElements, fixture.mediaElements, {}, {
+        bodyChildren: [fixture.main], landmarkElements: fixture.landmarks, scrollHeight: 1600, viewportWidth: width,
+      });
+      assert.equal(layout.viewport.width, width);
+      assert.ok(layout.landmarks.some((landmark) => layout.layoutGroups.some((group) => group.domPathKey === landmark.domPathKey)));
+      assert.ok(layout.textBoxes.some((text) => layout.layoutGroups.some((group) => group.domPathKey === text.domPathKey)));
+      assert.ok(layout.textBoxes.every((box) => Number.isFinite(box.rect.left) && Number.isFinite(box.rect.right)));
+      captures[side].push(layout);
+    }
+  }
+  const spec = {
+    schemaVersion: 1, artifact: 'monteby-public-prop-expectations',
+    expectations: [1440, 834, 390].map((width) => ({
+      nodeId: 'heading-1', width, prop: 'fontSize', expected: '42px',
+      identity: { tag: 'h1', text: 'Measured hierarchy' },
+    })),
+  };
+  const report = publicPropVerification(spec, ...captures);
+  assert.equal(report.complete, true);
+  assert.equal(report.results.length, 3);
+  assert.deepEqual(report.geometry375.overflowing, []);
+  const landmark = captures[1][0].landmarks.find((entry) => captures[1][0].layoutGroups.some((group) => group.domPathKey === entry.domPathKey));
+  landmark.backgroundColor = 'rgb(255, 0, 0)';
+  assert.throws(() => publicPropVerification(spec, ...captures), /Conflicting capture evidence/);
+});
+
 test('rendered layout captures safe nested groups for generated nav, grid, ledger, and story structures', () => {
   const fixture = structuralLayoutFixture();
   const { layout } = captureWithMockDom(fixture.textElements, fixture.mediaElements, {}, {
@@ -1997,7 +2055,7 @@ test('rendered layout captures safe nested groups for generated nav, grid, ledge
   assert.ok(layout.landmarks.every((landmark) => /^\d+(?:\.\d+)*$/u.test(landmark.key)));
 
   const allowedGroupFields = new Set([
-    'key', 'parentKey', 'tag', 'rect', 'firstViewportArea', 'display', 'flexDirection',
+    'key', 'domPathKey', 'parentKey', 'tag', 'rect', 'firstViewportArea', 'display', 'flexDirection',
     'flexWrap', 'justifyContent', 'alignItems', 'gap', 'rowGap', 'columnGap',
     'flowParticipation',
     'backgroundColor', 'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft',
@@ -2040,7 +2098,11 @@ test('rendered layout captures safe nested groups for generated nav, grid, ledge
   );
   assert.equal(brief.renderedLayout.layoutGroupCount, 14);
   assert.equal(brief.renderedLayout.firstViewport.layoutGroups, 8);
-  assert.deepEqual(brief.renderedLayout.layoutGroups, layout.layoutGroups);
+  assert.deepEqual(brief.renderedLayout.layoutGroups, layout.layoutGroups.map((group) => {
+    const briefGroup = { ...group };
+    delete briefGroup.domPathKey;
+    return briefGroup;
+  }));
   assert.equal(brief.renderedLayout.landmarks.find((landmark) => landmark.tag === 'nav').key, '0.0');
   assert.deepEqual({
     flexDirection: brief.renderedLayout.landmarks.find((landmark) => landmark.tag === 'aside').flexDirection,
