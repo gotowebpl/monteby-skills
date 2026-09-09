@@ -7985,6 +7985,32 @@ test('generic measured drafting authors every captured SVG through a bound nativ
   const plan = JSON.parse(fs.readFileSync(planPath, 'utf8'));
   assert.deepEqual(plan.unmappedInlineSvg, []);
 
+  referenceLayout.iconSurfaces[0].iconSmoothing = 'auto';
+  fs.writeFileSync(referenceLayoutPath, JSON.stringify(referenceLayout));
+  const smoothingArgs = [draftScript, '--contract', contractPath, '--brief-json', briefPath, '--out', layoutPath,
+    '--plan-out', planPath, '--reference-manifest', manifestPath, '--icon-mapping', mappingPath, '--json'];
+  const absentControl = spawnSync(process.execPath, smoothingArgs, { encoding: 'utf8' });
+  assert.notEqual(absentControl.status, 0);
+  assert.match(absentControl.stderr + absentControl.stdout, /generic_icon_smoothing_control_gap/);
+  const iconContract = contractValue.components.find((component) => component.name === 'IconBlock');
+  iconContract.props.push('iconSmoothing');
+  iconContract.aiProps.push('iconSmoothing');
+  iconContract.controls.push({ type: 'select', prop: 'iconSmoothing', options: ['', 'antialiased'] });
+  fs.writeFileSync(contractPath, JSON.stringify(contractValue));
+  const absentOption = spawnSync(process.execPath, smoothingArgs, { encoding: 'utf8' });
+  assert.notEqual(absentOption.status, 0);
+  assert.match(absentOption.stderr + absentOption.stdout, /generic_icon_smoothing_control_gap/);
+  iconContract.controls.at(-1).options.push('auto');
+  fs.writeFileSync(contractPath, JSON.stringify(contractValue));
+  for (const smoothing of ['auto', 'antialiased']) {
+    referenceLayout.iconSurfaces[0].iconSmoothing = smoothing;
+    fs.writeFileSync(referenceLayoutPath, JSON.stringify(referenceLayout));
+    const measured = spawnSync(process.execPath, smoothingArgs, { encoding: 'utf8' });
+    assert.equal(measured.status, 0, measured.stderr || measured.stdout);
+    const measuredLayout = JSON.parse(fs.readFileSync(layoutPath, 'utf8'));
+    assert.equal(Object.values(measuredLayout).find((node) => node.type.resolvedName === 'IconBlock').props.iconSmoothing, smoothing);
+  }
+
   referenceLayout.landmarks = [{
     key: '0', tag: 'section', rect: measuredRect(0, 0, 1440, 500),
   }];

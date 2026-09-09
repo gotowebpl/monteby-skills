@@ -85,6 +85,9 @@ test('native IconBlock preview preserves measured glyphs, sizing, colours and ac
     ['bounded', { size: 999, iconDisplay: 'flex' }],
     ['invalid', { icon: '<script>invalid-icon</script>', color: 'red;position:fixed', iconLabel: 'bad\nlabel' }],
     ['raw-svg', { icon: 'tune', svg: '<svg onload="bad()"></svg>' }],
+    ['smooth-auto', { icon: 'menu', iconSmoothing: 'auto' }],
+    ['smooth-aa', { icon: 'menu', iconSmoothing: 'antialiased' }],
+    ['smooth-invalid', { icon: 'menu', iconSmoothing: 'none;position:fixed' }],
   ];
   const nodes = { ROOT: { type: { resolvedName: 'RootCanvas' }, props: {}, nodes: cases.map(([id]) => id) } };
   for (const [id, props] of cases) {
@@ -104,7 +107,10 @@ test('native IconBlock preview preserves measured glyphs, sizing, colours and ac
   assert.match(html, /font-size:256px;[^>]*>check_circle<\/span>/);
   assert.match(html, /family=Material\+Symbols\+Rounded/);
   assert.doesNotMatch(html, /invalid-icon|<svg|onload|bad\(\)|position:fixed/);
-  assert.equal((html.match(/class="material-symbols-rounded"/g) || []).length, 4);
+  assert.match(html, /flex-shrink:0;-webkit-font-smoothing:auto">menu/);
+  assert.match(html, /flex-shrink:0;-webkit-font-smoothing:antialiased">menu/);
+  assert.match(html, /flex-shrink:0">menu/);
+  assert.equal((html.match(/class="material-symbols-rounded"/g) || []).length, 7);
 });
 
 test('textarea diagnostic keeps the public frontend minimum independently of single-line height', () => {

@@ -2526,6 +2526,7 @@ function summarizeReferenceBox(box) {
     fontSize: box.fontSize || '',
     fontWeight: box.fontWeight || '',
     fontFamily: box.fontFamily || '',
+    ...(['auto', 'antialiased'].includes(box.iconSmoothing) ? { iconSmoothing: box.iconSmoothing } : {}),
     ...(['loaded-face', 'system-family', 'failed-face', 'unknown'].includes(box.primaryFontEvidence)
       ? { primaryFontEvidence: box.primaryFontEvidence }
       : {}),
@@ -3677,6 +3678,11 @@ function addGenericMeasuredIcons(context, plan) {
     const parentId = context.genericMeasuredGroupNodes.get(String(surface.parentGroupKey || ''))
       || band.generatedSectionId;
     const size = Math.max(8, Math.min(256, Math.round(Number(surface?.rect?.width || 24) * 100) / 100));
+    const smoothing = surface.iconSmoothing;
+    if (smoothing && (!iconComponent.authoringProps.includes('iconSmoothing')
+      || !iconComponent.propOptions?.get('iconSmoothing')?.has(smoothing))) {
+      throw new Error(`[generic_icon_smoothing_control_gap] IconBlock.iconSmoothing does not expose measured ${smoothing} in the live contract.`);
+    }
     const icon = createLeafNode(context, iconComponent.name, parentId, {
       icon: mapping.icon,
       iconDisplay: 'font',
@@ -3684,6 +3690,7 @@ function addGenericMeasuredIcons(context, plan) {
       color: normalizedAuthorableColor(surface.color || surface.fill),
       iconRole: mapping.iconRole,
       iconLabel: mapping.iconLabel,
+      ...(smoothing ? { iconSmoothing: smoothing } : {}),
     });
     context.mappedIconKeys.add(structureKey);
     context.genericMeasuredNodeKeys.set(icon.id, structureKey);

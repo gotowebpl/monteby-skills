@@ -561,7 +561,9 @@ function renderNode(nodeMap, nodeId) {
     const display = props.iconDisplay === undefined
       ? 'inline-flex'
       : ['inline-flex', 'inline-block', 'block', 'flex'].includes(props.iconDisplay) ? props.iconDisplay : '';
-    return renderElement('span', { ...props, display }, `<span class="material-symbols-rounded" ${accessibility} style="font-size:${size}px;line-height:1;color:${escapeAttr(color)};flex-shrink:0">${escapeHtml(icon)}</span>`);
+    const smoothing = ['auto', 'antialiased'].includes(props.iconSmoothing)
+      ? `;-webkit-font-smoothing:${props.iconSmoothing}` : '';
+    return renderElement('span', { ...props, display }, `<span class="material-symbols-rounded" ${accessibility} style="font-size:${size}px;line-height:1;color:${escapeAttr(color)};flex-shrink:0${smoothing}">${escapeHtml(icon)}</span>`);
   }
   if (type === 'Divider') {
     return renderDivider(props);

@@ -2,6 +2,9 @@
 
 ## 0.5.0 - Unreleased
 
+- Preserve measured native-icon smoothing through a matching live IconBlock
+  control; refuse unsupported values instead of adding author CSS. Existing
+  unmeasured icons keep their preview behavior.
 - Use generic capture and drafting with ordered non-landmark bands, preserved
   non-breaking spaces and evidence-backed constraint decisions across viewports.
 - Resolve icons through the versioned native catalog and an approved SHA-bound

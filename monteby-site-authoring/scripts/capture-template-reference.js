@@ -3190,6 +3190,9 @@ function captureRenderedLayout(
         accessibleName,
         color: style.color,
         fill: style.fill,
+        ...(fontIconElements.has(element) && ['auto', 'antialiased'].includes(style.webkitFontSmoothing)
+          ? { iconSmoothing: style.webkitFontSmoothing }
+          : {}),
       };
     })
     .filter(Boolean)

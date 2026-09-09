@@ -235,6 +235,7 @@ test('captured font stacks accept bounded quoted names and reject unsafe source 
 test('reference capture records visible SVG icon semantics without retaining source markup', () => {
   const icon = layoutElement('svg', rect(24, 32, 36, 36), [], {
     color: 'rgb(18, 52, 86)',
+    webkitFontSmoothing: 'auto',
     fill: 'rgb(18, 52, 86)',
   });
   icon.outerHTML = '<svg><path d="private-source-path" /></svg>';
@@ -288,6 +289,7 @@ test('reference capture separates Material font icons from ordinary page text wi
   const icon = textElement('span', 'schedule', rect(20, 20, 24, 24), [rect(20, 20, 24, 24)], {
     fontFamily: '"Material Symbols Rounded", sans-serif',
     color: 'rgb(18, 52, 86)',
+    webkitFontSmoothing: 'auto',
   });
   icon.getAttribute = (name) => ({ 'aria-label': 'Opening hours', role: 'img' })[name] || null;
   const label = textElement('p', 'Hours\u00a09:00', rect(60, 20, 130, 24), [rect(60, 20, 130, 24)]);
@@ -298,6 +300,7 @@ test('reference capture separates Material font icons from ordinary page text wi
   assert.equal(layout.iconSurfaces[0].accessibleName, 'Opening hours');
   assert.equal(layout.iconSurfaces[0].semanticRole, 'meaningful');
   assert.equal(layout.iconSurfaces[0].color, 'rgb(18, 52, 86)');
+  assert.equal(layout.iconSurfaces[0].iconSmoothing, 'auto');
   assert.deepEqual(layout.textBoxes.map((entry) => entry.text), ['Hours\u00a09:00', 'schedule']);
   assert.equal(layout.directTextEntries.some((entry) => entry.structureKey === '0'), false);
   assert.equal(layout.contentTextEntries.some((entry) => entry.structureKey === '0'), false);
@@ -319,6 +322,7 @@ test('reference capture excludes decorative font ligatures from a containing but
   assert.equal(layout.iconSurfaces.length, 1);
   assert.equal(layout.iconSurfaces[0].semanticRole, 'decorative');
   assert.deepEqual(layout.contentTextEntries.map((entry) => entry.text), ['Explore\u00a0more']);
+  assert.equal(Object.hasOwn(layout.iconSurfaces[0], 'iconSmoothing'), false);
   assert.deepEqual(layout.textBoxes.map((entry) => entry.text), ['Explore\u00a0more']);
   assert.equal(layout.textBoxes[0].lines[0].text, 'Explore\u00a0more');
 });
