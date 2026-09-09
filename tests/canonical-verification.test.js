@@ -51,6 +51,46 @@ test('canonical verification is the only pipeline stage that emits DONE', () => 
   assert.equal(benchmark.args.includes('--pad-to-largest'), true);
 });
 
+for (const scenario of [
+  { name: 'inherits the recorded channel when CLI channel is omitted', recorded: 'chrome', expected: ['chrome'] },
+  { name: 'accepts an explicit matching channel', recorded: 'chrome', explicit: 'chrome', expected: ['chrome'] },
+  { name: 'retains the legacy default without recorded channel', expected: [] },
+  { name: 'accepts an explicit channel for a legacy report', explicit: 'chrome', expected: ['chrome'] },
+  { name: 'retains an explicitly recorded bundled default', recorded: '', expected: [] },
+  { name: 'blocks a mismatched explicit channel before capture', recorded: 'chrome', explicit: 'chromium', blocker: 'canonical_capture_channel_mismatch' },
+  { name: 'blocks replacing a recorded bundled default', recorded: '', explicit: 'chrome', blocker: 'canonical_capture_channel_mismatch' },
+  ...[null, false, 42, [], {}, ' chrome', 'chrome\n', '--chrome', '/tmp/chrome'].map((recorded) => ({
+    name: `blocks malformed recorded channel ${JSON.stringify(recorded)}`,
+    recorded,
+    blocker: 'canonical_capture_channel_invalid',
+  })),
+  { name: 'blocks malformed explicit channel before capture', explicit: 'chrome stable', blocker: 'canonical_capture_channel_invalid' },
+]) {
+  test(`canonical verification ${scenario.name}`, () => {
+    const fixture = createFixture();
+    const iteration = JSON.parse(fs.readFileSync(fixture.files.iteration, 'utf8'));
+    if (Object.hasOwn(scenario, 'recorded')) iteration.options.channel = scenario.recorded;
+    fs.writeFileSync(fixture.files.iteration, JSON.stringify(iteration));
+    fixture.extraArgs = scenario.explicit ? ['--channel', scenario.explicit] : [];
+
+    const result = runFixture(fixture, false);
+    const report = JSON.parse(result.stdout);
+    if (scenario.blocker) {
+      assert.equal(result.status, 1, result.stderr || result.stdout);
+      assert.equal(report.status, 'INPUT_BLOCKED');
+      assert.equal(report.ok, false);
+      assert.equal(report.blockers.some((blocker) => blocker.code === scenario.blocker), true);
+      assert.equal(fs.existsSync(fixture.spawnLog), false, 'no browser or benchmark action runs');
+    } else {
+      assert.equal(result.status, 0, result.stderr || result.stdout);
+      assert.equal(report.status, 'DONE');
+      const capture = readSpawns(fixture.spawnLog).find((entry) => entry.script === 'capture-template-reference.js');
+      assert.ok(capture);
+      assert.deepEqual(argumentValues(capture.args, '--channel'), scenario.expected);
+    }
+  });
+}
+
 test('canonical comparison failure returns to local repair and cannot emit DONE', () => {
   const fixture = createFixture();
   const result = runFixture(fixture, true);
@@ -615,6 +655,7 @@ function runFixture(
     '--playwright-package', 'fake',
     '--wait-ms', '0',
     ...(authorizationFile ? ['--subpixel-authorization', authorizationFile] : []),
+    ...(fixture.extraArgs || []),
     '--json',
   ], {
     cwd: root,

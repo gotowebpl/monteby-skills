@@ -425,6 +425,22 @@ function validateIteration(iteration) {
 
 function validateCanonicalEvidence(options, iteration, previewReport) {
   const blockers = validateIteration(iteration);
+  const hasRecordedChannel = isObject(iteration?.options)
+    && Object.hasOwn(iteration.options, 'channel');
+  const recordedChannel = hasRecordedChannel ? iteration.options.channel : '';
+  if ([options.channel, recordedChannel].some((channel) => (
+    typeof channel !== 'string' || (channel !== '' && !/^[a-z][a-z0-9-]*$/u.test(channel))
+  ))) {
+    blockers.push({
+      code: 'canonical_capture_channel_invalid',
+      message: 'Browser channels must be empty defaults or lowercase channel identifiers.',
+    });
+  } else if (hasRecordedChannel && options.channel && options.channel !== recordedChannel) {
+    blockers.push({
+      code: 'canonical_capture_channel_mismatch',
+      message: 'The explicit browser channel differs from the passing reference capture channel.',
+    });
+  }
   if (
     !isObject(previewReport)
     || previewReport.schemaVersion !== 1
@@ -781,6 +797,7 @@ function main() {
       return;
     }
 
+    options.channel = options.channel || iteration.options?.channel || '';
     const capture = runScript('capture-template-reference.js', captureArgs(options));
     report.steps.capture = {
       status: capture.status,
