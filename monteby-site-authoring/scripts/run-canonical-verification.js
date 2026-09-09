@@ -5,6 +5,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { createHash } = require('node:crypto');
 const { spawnSync } = require('node:child_process');
+const { canonicalSha256 } = require('./wordpress-layout-client');
+const { renderDocument } = require('./render-monteby-preview');
+const { appliedPropExpectations, publicPropVerification } = require('./verify-public-props');
 const {
   buildRepairQueue,
   nextActionFor,
@@ -37,6 +40,8 @@ function parseArgs(argv) {
     subpixelAuthorization: '',
     json: false,
     help: false,
+    verifyProps: false,
+    authHeaderEnv: 'MONTEBY_AUTH_HEADER',
   };
 
   for (let index = 0; index < argv.length; index += 1) {
@@ -45,6 +50,13 @@ function parseArgs(argv) {
       options.help = true;
     } else if (option === '--json') {
       options.json = true;
+    } else if (option === '--verify-props') {
+      options.verifyProps = true;
+    } else if (['--operations', '--patch-report', '--apply-report', '--before-snapshot', '--saved-snapshot', '--contract', '--wordpress-wrapper'].includes(option)) {
+      const key = option.slice(2).replace(/-([a-z])/gu, (_, character) => character.toUpperCase());
+      options[key] = path.resolve(requiredValue(argv, index += 1, option));
+    } else if (option === '--auth-header-env') {
+      options.authHeaderEnv = requiredValue(argv, index += 1, option);
     } else if (option === '--iteration-report') {
       options.iterationReport = path.resolve(requiredValue(argv, index += 1, option));
     } else if (option === '--public-page-url') {
@@ -67,8 +79,17 @@ function parseArgs(argv) {
   }
 
   if (!options.help) {
-    if (!options.iterationReport) throw new Error('--iteration-report is required');
-    if (!options.previewReport) throw new Error('--preview-report is required');
+    if (options.verifyProps) {
+      for (const key of ['operations', 'patchReport', 'applyReport', 'beforeSnapshot', 'savedSnapshot', 'contract']) {
+        if (!options[key]) throw new Error(`${key} is required for --verify-props`);
+      }
+      if (options.iterationReport || options.previewReport || options.subpixelAuthorization) throw new Error('Prop verification cannot be combined with visual-fidelity inputs');
+      if (!/^[A-Z_][A-Z0-9_]*$/u.test(options.authHeaderEnv)) throw new Error('Invalid auth environment variable name');
+    } else {
+      if (options.operations || options.patchReport || options.applyReport || options.beforeSnapshot || options.savedSnapshot || options.contract || options.wordpressWrapper) throw new Error('Prop evidence options require --verify-props');
+      if (!options.iterationReport) throw new Error('--iteration-report is required');
+      if (!options.previewReport) throw new Error('--preview-report is required');
+    }
     if (!options.publicPageUrl) throw new Error('--public-page-url is required');
     if (!options.outDir) throw new Error('--out-dir is required');
     let parsed;
@@ -88,10 +109,102 @@ function parseArgs(argv) {
 function usage() {
   return `Usage:
   run-canonical-verification.js --iteration-report visual-iteration-report.json --preview-report preview-response.json --public-page-url URL --out-dir DIR [--subpixel-authorization FILE] [--channel chrome] [--wait-ms MS] [--playwright-package PACKAGE] [--json]
+  run-canonical-verification.js --verify-props --operations FILE --patch-report FILE --apply-report FILE --before-snapshot FILE --saved-snapshot FILE --contract FILE --public-page-url URL --out-dir DIR [--wordpress-wrapper FILE] [--auth-header-env NAME] [--json]
 
 Captures the public WordPress/PHP result at desktop:1440x1200,
 tablet:834x1112, and mobile:390x844, then runs the strict benchmark.
 This is the only site-authoring script that may emit status DONE.`;
+}
+
+function verifyAppliedProps(options, report) {
+  report.mode = 'verify-props';
+  report.nextAction = nextAction('blocked_public_prop_evidence', '', [], [], 'Review the explicit applied-prop evidence blockers; never reapply automatically.');
+  const inputs = Object.fromEntries(['operations', 'patchReport', 'applyReport', 'beforeSnapshot', 'savedSnapshot', 'contract'].map((key) => [key, readJson(options[key])]));
+  const inputHashes = Object.fromEntries(Object.keys(inputs).map((key) => [key, fileSha256(options[key])]));
+  const prepared = appliedPropExpectations({ operations: inputs.operations, preflight: inputs.patchReport, applied: inputs.applyReport,
+    before: inputs.beforeSnapshot, saved: inputs.savedSnapshot, contract: inputs.contract, publicPageUrl: options.publicPageUrl });
+  report.effects = prepared.effects;
+  report.bindings = prepared.bindings;
+  report.bindings.inputFiles = inputHashes;
+  report.bindings.inputFileDigestFormat = 'sha256:file-bytes';
+  report.blockers = prepared.blockers;
+  report.status = 'PUBLIC_PROPS_BLOCKED';
+  if (report.blockers.length) return;
+  const directory = fs.mkdtempSync(path.join(options.outDir, 'public-props-'));
+  const snapshot = (label) => {
+    const outDir = path.join(directory, label);
+    const args = ['snapshot', '--site', prepared.bindings.site, '--page-id', String(prepared.bindings.pageId), '--out-dir', outDir,
+      '--out', path.join(outDir, 'snapshot-report.json'), '--auth-header-env', options.authHeaderEnv];
+    const result = options.wordpressWrapper
+      ? spawnSync(process.execPath, [options.wordpressWrapper, 'skill', scriptPath('wordpress-layout-client.js'), ...args], { encoding: 'utf8' })
+      : spawnSync(process.execPath, [scriptPath('wordpress-layout-client.js'), ...args], { encoding: 'utf8' });
+    if (result.status !== 0) throw new Error(`public_props_${label}_snapshot_failed`);
+    const snapshotReport = readJson(path.join(outDir, 'snapshot-report.json'));
+    if (snapshotReport?.ok !== true || snapshotReport.code !== 'SNAPSHOT_OK'
+      || snapshotReport.scope?.site !== prepared.bindings.site || snapshotReport.scope?.pageId !== prepared.bindings.pageId) throw new Error(`public_props_${label}_snapshot_report_invalid`);
+    const artifact = readJson(path.join(outDir, 'layout-before.json'));
+    const freshContract = readJson(path.join(outDir, 'contract.json'));
+    if (artifact?.artifact !== 'monteby-page-snapshot' || artifact.site !== prepared.bindings.site
+      || artifact.pageId !== prepared.bindings.pageId || artifact.publicPageUrl !== options.publicPageUrl
+      || artifact.data?.id !== prepared.bindings.pageId || artifact.data?.builderJson !== inputs.savedSnapshot.data.builderJson
+      || artifact.data?.postModifiedGmt !== inputs.savedSnapshot.data.postModifiedGmt
+      || !Number.isFinite(Date.parse(artifact.capturedAt))
+      || Date.parse(artifact.capturedAt) < Date.parse(inputs.savedSnapshot.capturedAt)
+      || canonicalSha256(freshContract) !== prepared.bindings.contractSha256) throw new Error(`public_props_${label}_state_changed`);
+    report.bindings[`${label}SnapshotSha256`] = canonicalSha256(artifact);
+    report.files[`${label}Snapshot`] = path.join(outDir, 'layout-before.json');
+  };
+  snapshot('beforeCapture');
+  const rendered = renderDocument(prepared.nodeMap, 'Applied public prop verification', inputs.contract);
+  if (rendered.diagnostics.length) throw new Error('public_props_diagnostic_unresolved');
+  const htmlFile = path.join(directory, 'diagnostic.html');
+  fs.writeFileSync(htmlFile, rendered.html);
+  writeJson(path.join(directory, 'saved-layout.json'), prepared.nodeMap);
+  writeJson(path.join(directory, 'expectations.json'), prepared);
+  report.files.expectations = path.join(directory, 'expectations.json');
+  report.files.savedLayout = path.join(directory, 'saved-layout.json');
+  const captures = [];
+  for (const kind of ['diagnostic', 'public']) {
+    const outDir = path.join(directory, kind);
+    const args = [...(kind === 'public' ? ['--url', options.publicPageUrl] : ['--html-file', htmlFile]), '--out-dir', outDir,
+      '--name', kind, '--wait-ms', options.waitMs, '--playwright-package', options.playwrightPackage,
+      '--capture-layout', '--require-layout', '--full-page', ...(options.channel ? ['--channel', options.channel] : []),
+      ...[...CANONICAL_VIEWPORTS, 'stress:375x844'].flatMap((viewport) => ['--viewport', viewport])];
+    const capture = runScript('capture-template-reference.js', args);
+    if (capture.status !== 0) throw new Error(`public_props_${kind}_capture_failed`);
+    const manifestFile = path.join(outDir, 'reference-manifest.json');
+    const manifest = readJson(manifestFile);
+    if (kind === 'public' && manifest.sourceUrl !== options.publicPageUrl) throw new Error('public_props_capture_url_mismatch');
+    if (manifest.evidenceCompleteness?.complete !== true) throw new Error(`public_props_${kind}_capture_truncated`);
+    const layouts = ['reference-layout.json', 'reference-layout-tablet.json', 'reference-layout-mobile.json', 'reference-layout-stress.json']
+      .map((file) => {
+        const fullPath = path.join(outDir, file);
+        report.bindings[`${kind}:${file}`] = fileSha256(fullPath);
+        return readJson(fullPath);
+      });
+    for (const [index, width] of [1440, 834, 390, 375].entries()) {
+      const layout = layouts[index];
+      if (kind === 'public' && layout?.url !== options.publicPageUrl) throw new Error('public_props_rendered_url_mismatch');
+      if (layout?.viewport?.width !== width || !Number.isFinite(layout.viewport.scrollWidth)
+        || !Number.isFinite(layout.viewport.scrollHeight) || layout.viewport.scrollHeight <= 0
+        || layout.viewport.scrollWidth < width || layout.viewport.scrollWidth > width + 1
+        || layout.evidenceCompleteness?.complete !== true
+        || !Array.isArray(layout.textBoxes) || layout.textBoxes.length === 0) throw new Error(`public_props_${kind}_capture_incomplete_or_overflowing`);
+    }
+    report.files[`${kind}Manifest`] = manifestFile;
+    report.bindings[`${kind}ManifestSha256`] = fileSha256(manifestFile);
+    captures.push(layouts);
+  }
+  snapshot('afterCapture');
+  for (const key of Object.keys(inputs)) {
+    if (fileSha256(options[key]) !== inputHashes[key]) throw new Error('public_props_input_changed_during_capture');
+  }
+  report.verification = publicPropVerification(prepared, ...captures);
+  report.ok = report.verification.complete;
+  report.status = report.ok ? 'PUBLIC_PROPS_VERIFIED' : 'PUBLIC_PROPS_FAILED';
+  report.blockers = report.ok ? [] : [{ code: 'public_prop_mismatch_or_overflow' }];
+  report.nextAction = nextAction(report.ok ? 'public_props_complete' : 'review_public_prop_failure', '', [], [],
+    'This verifies applied observable props only; it is not a fidelity, 1:1 or product-readiness verdict.');
 }
 
 function readJson(file) {
@@ -642,6 +755,13 @@ function main() {
 
     report = baseReport(options);
     fs.mkdirSync(options.outDir, { recursive: true });
+    if (options.verifyProps) {
+      verifyAppliedProps(options, report);
+      persist(report);
+      output(report, options);
+      process.exitCode = report.ok ? 0 : 1;
+      return;
+    }
     const iteration = readJson(options.iterationReport);
     const previewReport = readJson(options.previewReport);
     const inputBlockers = validateCanonicalEvidence(options, iteration, previewReport);
@@ -827,9 +947,11 @@ function main() {
       report = baseReport(options);
     }
     if (report) {
-      report.status = 'ERROR';
-      report.blockers = [{ code: 'canonical_verification_error', message }];
-      report.nextAction = retryAction(options);
+      report.status = options?.verifyProps ? 'PUBLIC_PROPS_BLOCKED' : 'ERROR';
+      report.blockers = [{ code: options?.verifyProps && /^(?:prop|public_props)_[a-z_]+$/u.test(message) ? message : 'canonical_verification_error', message }];
+      report.nextAction = options?.verifyProps
+        ? nextAction('blocked_public_prop_evidence', '', [], [], 'Review the exact failure; never reapply operations automatically.')
+        : retryAction(options);
       persist(report);
       output(report, options);
     } else {
@@ -844,6 +966,7 @@ if (require.main === module) {
 }
 
 module.exports = {
+  verifyAppliedProps,
   benchmarkArgs,
   captureArgs,
   parseArgs,

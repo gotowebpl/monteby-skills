@@ -681,7 +681,7 @@ function materializeNextAction(report, options) {
     return nextAction(
       'verify_saved_patch',
       CLIENT_TOOL,
-      snapshotArgs(options),
+      snapshotArgs({ ...options, outDir: path.join(path.dirname(options.snapshot || options.out), 'saved-patch') }),
       [authRequirement, 'CANONICAL_PAGE_REVIEW'],
       'Snapshot the saved page and verify the affected node in canonical WordPress/PHP output.'
     );

@@ -384,9 +384,12 @@ only when their primary reference explicitly calls for it.
 - `scripts/browser-preflight.js` — proves a real Chromium can navigate and
   capture 1440/834/390 plus the 375px narrow-width stress viewport before an
   authoring run. It is mandatory in the production environment.
-- `scripts/verify-public-props.js` — correlates diagnostic node IDs with unique
-  semantic public surfaces and verifies computed props at 1440/834/390 plus
-  horizontal geometry at 375; screenshots alone do not replace this gate.
+- `scripts/run-canonical-verification.js --verify-props` — verifies applied
+  partial-edit props against saved JSON and the public page; follow
+  `references/partial-layout-operations.md`. The underlying
+  `scripts/verify-public-props.js` correlates diagnostic node IDs with unique
+  semantic public surfaces. Handwritten expectations alone do not prove an
+  applied operation, and this verdict does not establish visual fidelity.
 - `scripts/normalize-layout.js` — pre-flight for an existing node map; reports
   every violation class at once, `--fix` writes the repaired copy.
 - `scripts/audit-reference-css.mjs` — classifies every reference CSS declaration

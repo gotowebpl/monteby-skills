@@ -891,8 +891,13 @@ test('patch-save applies only the exact preflighted batch and sends both server 
   let applyBody;
   const server = await startServer(t, async (request, response) => {
     requests.push(`${request.method} ${request.url}`);
-    if (request.url.endsWith('/contract')) return sendJson(response, 200, patchContract());
-    if (request.method === 'GET') return sendJson(response, 200, { postModifiedGmt: 'v1', nodeMap: NODE_MAP });
+    if (request.url.endsWith('/contract')) return sendJson(response, 200, {
+      ...patchContract(), productVersion: '1.5.3', authoring: { capabilities: { providerRenderedWidgetSave: true } },
+    });
+    if (request.method === 'GET') return sendJson(response, 200, {
+      id: 17, postType: 'page', viewUrl: `${server.site}/page-17/`,
+      postModifiedGmt: applyBody ? 'v2' : 'v1', nodeMap: NODE_MAP,
+    });
     applyBody = await readBody(request);
     return sendJson(response, 200, {
       operationCount: 1,
@@ -936,6 +941,16 @@ test('patch-save applies only the exact preflighted batch and sends both server 
     expectedCandidateSha256: LAYOUT_SHA256,
   });
   assert.equal(execution.result.nextAction.id, 'verify_saved_patch');
+  const beforeBytes = fs.readFileSync(snapshotFile, 'utf8');
+  const preflightBytes = fs.readFileSync(reportFile, 'utf8');
+  const verification = await runClient(execution.result.nextAction.args);
+  assert.equal(verification.exitCode, 0);
+  assert.equal(verification.result.code, 'SNAPSHOT_OK');
+  assert.equal(verification.result.artifacts.snapshot, path.join(directory, 'saved-patch', 'layout-before.json'));
+  assert.equal(JSON.parse(fs.readFileSync(verification.result.artifacts.snapshot, 'utf8')).data.postModifiedGmt, 'v2');
+  assert.equal(fs.readFileSync(snapshotFile, 'utf8'), beforeBytes);
+  assert.equal(fs.readFileSync(reportFile, 'utf8'), preflightBytes);
+  assert.equal(requests.filter((request) => request.startsWith('POST ')).length, 1);
   assert.deepEqual(server.errors, []);
 });
 

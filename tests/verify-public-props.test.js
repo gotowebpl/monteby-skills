@@ -176,3 +176,11 @@ test('public prop verification rejects non-DOM-path deduplication keys', () => {
   captured[0].textBoxes[0].domPathKey = 'heading-1';
   assert.throws(() => publicPropVerification(completeSpec, layouts(), captured), /Invalid capture DOM path key/);
 });
+
+test('public prop verification cannot prove 375px geometry from empty or malformed observations', () => {
+  for (const textBoxes of [[], [{ tag: 'h1' }], [{ rect: { left: '0', right: 300 } }], [{ rect: { left: 20, right: 10 } }]]) {
+    const captured = layouts(true);
+    captured[3].textBoxes = textBoxes;
+    assert.throws(() => publicPropVerification(completeSpec, layouts(), captured), /375px observed geometry/);
+  }
+});
