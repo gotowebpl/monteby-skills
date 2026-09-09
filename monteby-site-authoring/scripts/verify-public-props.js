@@ -23,18 +23,40 @@ function publicPropVerification(spec, diagnosticLayouts, publicLayouts) {
   if (spec?.schemaVersion !== 1 || spec?.artifact !== 'monteby-public-prop-expectations' || !Array.isArray(spec.expectations)) {
     throw new Error('Expected a monteby-public-prop-expectations v1 artifact');
   }
-  const diagnosticsByWidth = new Map(diagnosticLayouts.map((layout) => [Number(layout?.viewport?.width), layout]));
-  const publicByWidth = new Map(publicLayouts.map((layout) => [Number(layout?.viewport?.width), layout]));
+  if (spec.expectations.length === 0) throw new Error('Expected nonempty public prop expectations');
+  const diagnosticsByWidth = new Map();
+  const publicByWidth = new Map();
+  for (const [label, layouts, byWidth] of [
+    ['diagnostic', diagnosticLayouts, diagnosticsByWidth],
+    ['public', publicLayouts, publicByWidth],
+  ]) {
+    if (!Array.isArray(layouts)) throw new Error(`Expected ${label} capture array`);
+    for (const layout of layouts) {
+      const width = layout?.viewport?.width;
+      if (!Number.isInteger(width) || width <= 0) throw new Error(`Invalid ${label} capture width`);
+      if (byWidth.has(width)) throw new Error(`Duplicate ${label} capture at ${width}px`);
+      byWidth.set(width, layout);
+    }
+  }
   for (const width of [...REQUIRED_WIDTHS, GEOMETRY_WIDTH]) {
     if (!diagnosticsByWidth.has(width) || !publicByWidth.has(width)) throw new Error(`Missing diagnostic/public capture at ${width}px`);
   }
   const results = spec.expectations.map((expectation, index) => {
-    const width = Number(expectation.width);
+    if (!expectation || typeof expectation !== 'object' || Array.isArray(expectation)
+      || typeof expectation.nodeId !== 'string' || expectation.nodeId.trim() === ''
+      || typeof expectation.prop !== 'string' || !/^(?:rect\.)?[A-Za-z][A-Za-z0-9]*$/u.test(expectation.prop)
+      || !(typeof expectation.expected === 'string' || Number.isFinite(expectation.expected))) {
+      throw new Error(`Expectation ${index} requires a nodeId, property and string or finite numeric expected value`);
+    }
+    if (Object.hasOwn(expectation, 'tolerance') && (!Number.isFinite(expectation.tolerance) || expectation.tolerance < 0)) {
+      throw new Error(`Expectation ${index} requires a finite nonnegative tolerance`);
+    }
+    const width = expectation.width;
     if (!REQUIRED_WIDTHS.has(width)) throw new Error(`Expectation ${index} uses a non-canonical width`);
     const diagnostic = surfaces(diagnosticsByWidth.get(width)).filter((surface) => surface.montebyNodeId === expectation.nodeId);
     if (diagnostic.length !== 1) throw new Error(`Expectation ${index} cannot identify one diagnostic node`);
     const identity = expectation.identity;
-    if (!identity || typeof identity.tag !== 'string' || typeof identity.text !== 'string') {
+    if (!identity || typeof identity.tag !== 'string' || identity.tag.trim() === '' || typeof identity.text !== 'string') {
       throw new Error(`Expectation ${index} requires semantic tag/text identity`);
     }
     const candidates = surfaces(publicByWidth.get(width)).filter((surface) => (
@@ -42,15 +64,23 @@ function publicPropVerification(spec, diagnosticLayouts, publicLayouts) {
       && normalizedText(surface.text) === normalizedText(identity.text)
     ));
     if (candidates.length !== 1) throw new Error(`Expectation ${index} public identity is ambiguous or missing`);
-    const actual = expectation.prop.startsWith('rect.')
-      ? candidates[0]?.rect?.[expectation.prop.slice(5)]
-      : candidates[0]?.[expectation.prop];
+    const observed = expectation.prop.startsWith('rect.') ? candidates[0]?.rect : candidates[0];
+    const property = expectation.prop.startsWith('rect.') ? expectation.prop.slice(5) : expectation.prop;
+    if (!observed || !Object.hasOwn(observed, property)
+      || !(typeof observed[property] === 'string' || Number.isFinite(observed[property]))) {
+      throw new Error(`Expectation ${index} public property is missing or invalid`);
+    }
+    const actual = observed[property];
     const tolerance = Number.isFinite(expectation.tolerance) ? expectation.tolerance : 0;
     const matches = typeof expectation.expected === 'number'
-      ? Number.isFinite(Number(actual)) && Math.abs(Number(actual) - expectation.expected) <= tolerance
-      : String(actual ?? '') === String(expectation.expected);
+      ? (typeof actual === 'number' || actual.trim() !== '')
+        && Number.isFinite(Number(actual)) && Math.abs(Number(actual) - expectation.expected) <= tolerance
+      : String(actual) === expectation.expected;
     return { index, nodeId: expectation.nodeId, width, prop: expectation.prop, expected: expectation.expected, actual, matches };
   });
+  for (const width of REQUIRED_WIDTHS) {
+    if (!results.some((result) => result.width === width)) throw new Error(`Missing public prop expectations at ${width}px`);
+  }
   const geometry375 = publicByWidth.get(GEOMETRY_WIDTH);
   const overflowing = surfaces(geometry375).filter((surface) => {
     const rect = surface?.rect;
