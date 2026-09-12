@@ -327,7 +327,7 @@ exact action. `--resume-capture` reuses the bound capture only when the contract
 source scope, capture options, viewports, full-page mode, owned HTML, manifests,
 layouts, and screenshots are unchanged; otherwise it stops without recapturing.
 Repair actions retain the same checkpoint and mapping.
-This prohibition applies only in `owned-html-reconstruction`, where a measurable reference exists. In `content-brief-authoring` there is no reference to measure, and the canonical route is `layout-kit.mjs` — see `references/brief-to-monteby.md`.
+This prohibition applies only in `owned-html-reconstruction`, where a measurable reference exists. In `content-brief-authoring` there is no reference to measure, and the canonical route is `layout-kit.mjs` — see `references/brief-to-monteby.md`; on Builder ≥ 1.6 with the `compositionInstantiate` gate, the server's `compositions/plan` and `compositions/instantiate` resources own expansion and `layout-kit.mjs` is the offline fallback.
 
 Do not replace this path with a browser snippet, a hand-written `build.mjs`,
 or manual node-map transcription as the primary route.

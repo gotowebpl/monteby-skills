@@ -496,9 +496,12 @@ export function expandCompositionPlan(contract, plan, options = {}) {
   }
   const recipes = new Map();
   for (const recipe of manifest.recipes) {
-    compositionRecord(recipe, ['id', 'label', 'slots', 'tree'], 'recipe');
+    compositionRecord(recipe, ['id', 'label', 'description', 'slots', 'tree'], 'recipe');
     if (typeof recipe.id !== 'string' || !/^[a-z][a-z0-9-]{0,63}$/.test(recipe.id) || recipes.has(recipe.id)) {
       throw new Error('recipe: invalid or duplicate id');
+    }
+    if (recipe.description !== undefined && typeof recipe.description !== 'string') {
+      throw new Error(`recipe ${recipe.id}: description must be text`);
     }
     recipes.set(recipe.id, recipe);
   }

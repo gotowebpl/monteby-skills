@@ -39,13 +39,74 @@ reported as `blocked_contract_inconsistency` if the server accepts it. Configure
 fonts through WordPress Font Library and the contract-backed FontPicker, never
 through CSS imports.
 
+## Partial update and design profiles (Builder 1.6+)
+
+Gate both paths through `references/site-contract-compatibility.json`:
+`globalStylesPatch` requires `productVersion >= 1.6.0` and
+`globalStyles.resource.patchMethod: "PATCH"`; `designProfiles` requires
+`authoring.designProfiles.version: 1`. An older Builder is
+`blocked_plugin_version` and keeps the full-document lifecycle above; a 1.6
+Builder without the advertised field is `blocked_contract_inconsistency`.
+Before either write, read `site.capabilities.manageDesign` from the same live
+response: every site-wide design write (global styles `PUT`/`PATCH`,
+`site/branding` `PUT`, `site/company-profile` `PUT`,
+`site/templates/{role}` `PUT`) requires the `monteby_manage_design` meta
+capability (`manage_options` unless the host remaps it). `manageDesign: false`
+means compose and preview only: report the candidate instead of collecting a
+`403`.
+
+### PATCH lifecycle
+
+`PATCH /monteby/v1/global-styles` merges a partial document onto the stored
+one under the same `expectedRevision` precondition as `PUT` (`428` without it,
+`409` when stale). Colors and typography scalars replace per key,
+`typography.fonts.<role>` and `typography.presets.<key>` merge per field,
+`customCSS` replaces whole, and every omitted field keeps its stored value,
+Custom CSS included. Removing a key still needs the complete `PUT`. Validate
+a partial body against the published `globalStyles.patchSchema` and a full
+body against `globalStyles.writeSchema` before sending; never derive either
+shape from memory.
+
+1. `GET` the current document through `globalStyles.resource`; keep its
+   `revision`.
+2. Build the partial document containing only the fields the task named.
+3. Validate it against `patchSchema`.
+4. Send one `PATCH` with the freshly read `expectedRevision`, then verify a
+   fresh `GET`. A conflict requires a new read and manual reconciliation,
+   never an automatic retry.
+
+### Design profiles: compose → preview → apply
+
+`authoring.designProfiles` publishes bundled palette-and-typography profiles
+(`{ version, profiles[], resource }`, each `{ id, label, description, mood[],
+colors, typography, headingStyle }`; every font comes from `fontCatalog`).
+Choose a profile only from that live list.
+
+1. `POST /monteby/v1/global-styles/compose { profileId, overrides? }`
+   (read-only, never writes) applies the profile over the stored document,
+   then the optional `overrides` (a partial document validated like `PATCH`),
+   and returns the complete candidate `styles` with the current `revision`.
+2. `POST /monteby/v1/preview { layout, globalStyles: <styles>, document: true,
+   globalTemplates: true }` renders a page with that candidate without
+   touching the stored document, transients or caches
+   (`renderGlobalStylesFilter` gate; `expectedRevision` is ignored there).
+   Review it at 1440/834/390 before any write.
+3. Apply the reviewed candidate with `PUT` (complete document) or `PATCH`,
+   sending the `revision` from step 1 as `expectedRevision`, then verify a
+   fresh `GET`.
+
+An unknown profile is `404 monteby_global_styles_unknown_profile`; a malformed
+body is `400 monteby_global_styles_compose_invalid_payload`. Neither is
+permission to hand-write a palette: report the failure and stop.
+
 ## Excluded surfaces
 
 - Do not copy Custom CSS from a reference page, screenshot, demo, or another
   site.
 - Do not write page, template, or node CSS during Global Styles authoring.
 - Do not write Custom JS through any automated authoring path.
-- Do not replace the complete document with a partial object.
+- Do not send a partial object to `PUT`; the only partial write is the
+  advertised `patchMethod` described above.
 - Do not use a cached GET after another editor or deployment changed the site.
 
 Report the original document fingerprint, merged-document fingerprint, saved
