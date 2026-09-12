@@ -37,6 +37,64 @@ pass, execute the runner's fresh `snapshot_canonical_page` action and from that
 point follow every `nextAction` without exception. The bootstrap snapshot is
 never reused for save.
 
+### Builder 1.6 discovery and document resources
+
+Each item is gated in `references/site-contract-compatibility.json`
+(`productVersion >= 1.6.0` plus the named capability); an older Builder keeps
+the full-contract flow and the fallback named there. Discover every route from
+the live contract's `layoutPersistence.resources`; never remember it.
+
+- Per-turn discovery reads
+  `GET /wp-json/monteby/v1/contract?mode=authoring&components=summary`
+  (`componentsMode: summary`: name, label, categoryLabel, isCanvas,
+  allowedParents, aiHints) and fetches one schema on demand from
+  `GET /wp-json/monteby/v1/contract/components/{name}`
+  (`layoutPersistence.resources.contractComponent`, own private `ETag`,
+  `404 monteby_site_authoring_unknown_component`). The compiler,
+  `normalize-layout.js` and the Kit still consume the full contract file; a
+  summary projection is a prompt catalog, not a validator input.
+- `GET /wp-json/monteby/v1/contract?mode=catalogs` returns only `iconCatalog`
+  and `fontCatalog` with their `ETag`; fetch them once per run and revalidate
+  with `If-None-Match`. The server validates `icon-svg` props as published
+  Material Symbols names and `font-picker` props as `fontCatalog` values
+  (system `_system_*` tokens, Font Library choices, registered Google
+  families, `var(--gcb-font-*)`); an invented name is `invalid_prop_value`,
+  never a browser fallback. Author only values present in the fetched
+  catalogs.
+- `GET /wp-json/monteby/v1/pages/{id}/context` answers `postId`, `postType`,
+  `documentType`, `title`, `slug`, `status`, `viewUrl`, `editUrl`,
+  `hasLayout`, `layoutState`, `nodeCount`, `postModifiedGmt`, `presentation`,
+  `effectiveLayout`, `headerPostId` and `footerPostId` before a layout read;
+  `GET /wp-json/monteby/v1/site/pages` (`hasLayout`, `postType`, `page`,
+  `perPage` up to 100) lists editable documents newest change first. Use them
+  for scope discovery; the versioned layout resource remains the snapshot
+  identity source for `layout-before.json`.
+  `layoutPersistence.templatePostType` (`gotoweb_template`) and
+  `documentTypes` name the vocabulary of every `documentType` field.
+- `POST /wp-json/monteby/v1/site/pages/bulk { requestId?, items[] }`
+  (`layoutPersistence.resources.bulkCreate`, `maxItems` 25) creates several
+  documents in one write; each item is `{ title, slug?, status?, postType?,
+  layout?, seo?, presentation? }` and is validated before the first post
+  exists. Always send a `requestId` (`[A-Za-z0-9_-]{1,64}`): a repeat with
+  the same id answers `replayed: true` with the original `created[]` and
+  creates nothing, so a timeout never duplicates pages.
+  `400 monteby_site_authoring_invalid_bulk_items` lists
+  `{ itemIndex, code, message }` per failing item and creates nothing;
+  `monteby_site_authoring_bulk_create_failed` names the failed `itemIndex`
+  and the `created` items that stay, so reconcile before any resend. Without
+  the gate, create pages one at a time through the sequential
+  `batch-layout-client.js` path. Menus are not written here.
+- `POST /wp-json/gotoweb-craft/v1/settings/template-create { type, title?,
+  layout? }` validates the layout against the live contract before the post
+  exists, persists it as the first revision and returns `id`, `editUrl`,
+  `documentType`, `revisionId` and `postModifiedGmt`, so the next versioned
+  layout PUT has its precondition without a read. Creation never activates
+  the template; selection stays a separate `selectionResource` PUT.
+- On WordPress 6.9+ with `authoring.capabilities.abilities: true`, Builder
+  registers the same operations as `monteby/*` abilities
+  (`authoring.abilities.names`). They are an alternative transport for the
+  identical contract, gates and preconditions; the fallback is `rest-only`.
+
 ## Required inputs
 
 Local visual work requires:

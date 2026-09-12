@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.6.0 - Unreleased
+
+- Accept the `description` field Builder 1.6 publishes on every composition
+  recipe; `layout-kit.mjs` previously rejected such contracts with
+  `recipe.description: unknown field`.
+- Add optional Builder 1.6.0 feature gates with named fallbacks: annotated
+  render, request-scoped layout/global-styles/global-template render filters,
+  preview global templates, server-side composition instantiation, bulk page
+  creation, global styles PATCH, design profiles, per-component contract reads
+  and WordPress abilities. Existing gates are unchanged.
+- Document the Builder 1.6 authoring surfaces where their workflows live:
+  global styles PATCH and compose → preview → apply under `manageDesign`;
+  revision restore, `lint` and preview options for partial operations;
+  server-side `compositions/plan` and `instantiate` as the canonical brief
+  route with `layout-kit.mjs` as the offline fallback; bulk create with
+  `requestId`, page context, document listing, `template-create` with
+  `layout`, catalog and summary contract modes, icon/font catalog validation
+  and abilities in the mechanical protocol and client handoff.
+
 ## 0.5.0 - Unreleased
 
 - Restore the scroll origin before measuring full-page geometry, including
