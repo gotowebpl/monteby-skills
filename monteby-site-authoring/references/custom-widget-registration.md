@@ -27,25 +27,62 @@ add_action('monteby/widgets/register', function (): void {
             'subtitle' => 'A concise client-specific hero.',
             'image' => '',
             'imageAlt' => '',
+            'highlights' => [
+                [
+                    'title' => 'Fast setup',
+                    'description' => 'Start from an editable, site-specific component.',
+                ],
+            ],
             'ctaLabel' => 'Read more',
             'ctaUrl' => '#',
+            'accentColor' => '#2563eb',
         ],
         'schema' => [
             'sections' => [
                 [
                     'title' => 'Content',
+                    'panel' => 'content',
                     'fields' => [
                         ['type' => 'text', 'label' => 'Title', 'prop' => 'title'],
                         ['type' => 'textarea', 'label' => 'Subtitle', 'prop' => 'subtitle'],
                         ['type' => 'media', 'label' => 'Image', 'prop' => 'image'],
                         ['type' => 'text', 'label' => 'Image alt text', 'prop' => 'imageAlt'],
+                        [
+                            'type' => 'repeater',
+                            'label' => 'Highlights',
+                            'ofProp' => 'highlights',
+                            'minItems' => 1,
+                            'maxItems' => 6,
+                            'itemLabelProp' => 'title',
+                            'addLabel' => 'Add highlight',
+                            'itemFields' => [
+                                ['type' => 'text', 'label' => 'Title', 'prop' => 'title'],
+                                ['type' => 'textarea', 'label' => 'Description', 'prop' => 'description'],
+                            ],
+                        ],
                         ['type' => 'text', 'label' => 'CTA label', 'prop' => 'ctaLabel'],
                         ['type' => 'text', 'label' => 'CTA URL', 'prop' => 'ctaUrl'],
                     ],
                 ],
+                [
+                    'title' => 'Appearance',
+                    'panel' => 'style',
+                    'fields' => [
+                        ['type' => 'color', 'label' => 'Accent color', 'prop' => 'accentColor'],
+                    ],
+                ],
             ],
         ],
-        'aiProps' => ['title', 'subtitle', 'image', 'imageAlt', 'ctaLabel', 'ctaUrl'],
+        'aiProps' => [
+            'title',
+            'subtitle',
+            'image',
+            'imageAlt',
+            'highlights',
+            'ctaLabel',
+            'ctaUrl',
+            'accentColor',
+        ],
         'render_callback' => 'theme_render_client_hero',
         'assets' => [
             'styles' => [],
@@ -59,9 +96,15 @@ function theme_render_client_hero(array $props): string {
     $subtitle = isset($props['subtitle']) && is_scalar($props['subtitle']) ? (string) $props['subtitle'] : '';
     $image = isset($props['image']) && is_scalar($props['image']) ? (string) $props['image'] : '';
     $imageAlt = isset($props['imageAlt']) && is_scalar($props['imageAlt']) ? (string) $props['imageAlt'] : '';
+    $highlights = isset($props['highlights']) && is_array($props['highlights']) ? $props['highlights'] : [];
     $ctaLabel = isset($props['ctaLabel']) && is_scalar($props['ctaLabel']) ? (string) $props['ctaLabel'] : '';
     $ctaUrl = isset($props['ctaUrl']) && is_scalar($props['ctaUrl']) ? (string) $props['ctaUrl'] : '#';
+    $accentColorValue = isset($props['accentColor']) && is_scalar($props['accentColor'])
+        ? sanitize_hex_color((string) $props['accentColor'])
+        : null;
+    $accentColor = is_string($accentColorValue) ? $accentColorValue : '#2563eb';
     $imageMarkup = '';
+    $highlightItems = [];
 
     if ('' !== $image) {
         $imageMarkup = sprintf(
@@ -71,11 +114,40 @@ function theme_render_client_hero(array $props): string {
         );
     }
 
+    foreach ($highlights as $highlight) {
+        if (!is_array($highlight)) {
+            continue;
+        }
+
+        $highlightTitle = isset($highlight['title']) && is_scalar($highlight['title'])
+            ? (string) $highlight['title']
+            : '';
+        $highlightDescription = isset($highlight['description']) && is_scalar($highlight['description'])
+            ? (string) $highlight['description']
+            : '';
+
+        if ('' === $highlightTitle && '' === $highlightDescription) {
+            continue;
+        }
+
+        $highlightItems[] = sprintf(
+            '<li><strong>%s</strong><span>%s</span></li>',
+            esc_html($highlightTitle),
+            esc_html($highlightDescription)
+        );
+    }
+
+    $highlightsMarkup = [] === $highlightItems
+        ? ''
+        : '<ul>' . implode('', $highlightItems) . '</ul>';
+
     return sprintf(
-        '<section class="theme-client-hero">%s<h1>%s</h1><p>%s</p><a href="%s">%s</a></section>',
+        '<section class="theme-client-hero">%s<h1 style="color:%s">%s</h1><p>%s</p>%s<a href="%s">%s</a></section>',
         $imageMarkup,
+        esc_attr($accentColor),
         esc_html($title),
         esc_html($subtitle),
+        $highlightsMarkup,
         esc_url($ctaUrl),
         esc_html($ctaLabel)
     );
@@ -88,6 +160,9 @@ function theme_render_client_hero(array $props): string {
 - Custom widgets are leaf widgets in MVP. They must not be containers/canvases and must not have children.
 - Use existing `Section` and `Container` widgets for layout.
 - Every editable prop must be represented in `schema` and listed in `aiProps` if AI may author it.
+- Every schema section must declare exactly one closed panel value: `panel: content` for data/content controls or `panel: style` for visual controls.
+- A `repeater` binds its owner array with `ofProp`. Never use `prop` for the repeater itself. `prop` remains correct for each field inside `itemFields`.
+- Every repeater must publish bounded `minItems` and `maxItems`, an `itemLabelProp` that names one of its `itemFields`, and the complete editable `itemFields` list. Keep its default array within those bounds.
 - Do not expose an editable prop that the render callback ignores. A `media` prop must be rendered with `esc_url`, and its text alternative must be rendered with `esc_attr` (or the media prop must be removed from defaults, schema, and `aiProps`).
 - Do not expose `className`, `cssId`, raw HTML, raw CSS, JavaScript event handler props, or advanced/runtime props.
 - The render callback must escape every value with WordPress escaping helpers such as `esc_html`, `esc_attr`, and `esc_url`.
@@ -111,7 +186,7 @@ Supported MVP control types:
 - `tag-list`
 - `repeater`
 
-For icons, expose a normal `text` prop containing a Material Symbols icon name and render it safely in PHP. For `select` and `segment`, include `options` as objects with `value` and `label`. For `spacing`, use `spacingProps` with `top`, `right`, `bottom`, and `left` prop names.
+For icons, expose a normal `text` prop containing a Material Symbols icon name and render it safely in PHP. For `select` and `segment`, include `options` as objects with `value` and `label`. For `spacing`, use `spacingProps` with `top`, `right`, `bottom`, and `left` prop names. For `repeater`, use `ofProp`; `prop` on the repeater owner is invalid even though old Builder versions may have accepted it.
 
 ## AI Authoring Behavior
 

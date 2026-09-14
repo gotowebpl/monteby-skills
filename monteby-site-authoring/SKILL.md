@@ -338,6 +338,20 @@ emitted snapshot, validation, versioned save, and PHP preview actions. Only
 may upgrade the verdict after comparing the saved canonical WordPress/PHP page
 at all three widths.
 
+When a diagnostic browser request needs a one-off cache probe, append only the
+neutral `_monteby_probe` query parameter. Never use WordPress routing variables
+such as `s`, `p`, `page_id`, or `preview` for cache busting: they can select a
+different template or resource while returning a successful response. A final
+URL or route that no longer identifies the requested page invalidates the
+evidence.
+
+Do not infer the physical pixel dimensions of the selected `srcset` candidate
+from `naturalWidth` divided by the CSS-rendered rectangle. Browsers may expose a
+density-corrected intrinsic width instead of the fetched file's pixel width. Use
+only unambiguous selected-candidate descriptor or decoded-resource evidence;
+when it is unavailable, record image-resolution status as `unknown` and fail
+open rather than reporting a false undersized-image defect.
+
 Exact zero difference is the only `canonical_verified_1_to_1` result. A stable
 subpixel fixed point may become
 `canonical_verified_with_authorized_residual` only when the local and canonical
