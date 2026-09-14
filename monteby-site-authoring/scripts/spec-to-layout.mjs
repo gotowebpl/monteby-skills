@@ -21,6 +21,9 @@
 
 import { readFile, writeFile } from 'node:fs/promises';
 import { Kit } from './layout-kit.mjs';
+import designProfileModule from './resolved-design-profile.js';
+
+const { UNMEASURED_CONTENT_SECTION_DEFAULTS } = designProfileModule;
 
 // ---------------------------------------------------------------- narzędzia
 
@@ -565,8 +568,8 @@ class Compiler {
           const [wrapTop, r, wrapBottom, l] = wrap.style.padding;
           if (l || r) {
             props.innerPaddingX = px(Math.max(l, r));
-            props.innerPaddingXTablet = '40px';
-            props.innerPaddingXMobile = '20px';
+            props.innerPaddingXTablet = UNMEASURED_CONTENT_SECTION_DEFAULTS.innerPaddingXTablet;
+            props.innerPaddingXMobile = UNMEASURED_CONTENT_SECTION_DEFAULTS.innerPaddingXMobile;
           }
           // pionowe paddingi wrappera sumują się z paddingiem sekcji
           const sectionTop = style.padding ? style.padding[0] : 0;
@@ -601,8 +604,8 @@ class Compiler {
       if (!props.innerMaxWidth && this.spec.contentWidth) props.innerMaxWidth = px(this.spec.contentWidth);
       if (!props.innerPaddingX) {
         props.innerPaddingX = '56px';
-        props.innerPaddingXTablet = '40px';
-        props.innerPaddingXMobile = '20px';
+        props.innerPaddingXTablet = UNMEASURED_CONTENT_SECTION_DEFAULTS.innerPaddingXTablet;
+        props.innerPaddingXMobile = UNMEASURED_CONTENT_SECTION_DEFAULTS.innerPaddingXMobile;
       }
     }
     const childIds = children.map((child, i) => this.node(child, `${path}.${i}`));

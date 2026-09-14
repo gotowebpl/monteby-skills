@@ -216,12 +216,25 @@ test('layout-kit consumes the same resolvedDesignProfile and preserves local ove
   const button = Object.values(map).find((node) => node.type?.resolvedName === 'ButtonBlock');
 
   assert.equal(map[section].props.innerMaxWidth, '1376px');
+  assert.equal(map[section].props.innerPaddingXTablet, '24px');
+  assert.equal(map[section].props.innerPaddingXMobile, '16px');
   assert.equal(heading.props.typographyPreset, 'h1');
   assert.equal(heading.props.fontSize, '72px');
   assert.equal(button.props.backgroundColor, 'var(--gcb-color-accent)');
   assert.equal(button.props.borderRadius, 'var(--monteby-token-buttons-radius)');
   assert.equal(button.props.textColor, '#eeeeee');
   assert.ok(kit.notes.some((note) => note.includes('global-design-token-conflict')));
+
+  const explicitKit = await Kit.fromContract(contractPath);
+  const explicit = explicitKit.shell({
+    innerPaddingX: '0px',
+    innerPaddingXTablet: '0px',
+    innerPaddingXMobile: '0px',
+  }, []);
+  const explicitMap = explicitKit.build([explicit]);
+  assert.equal(explicitMap[explicit].props.innerPaddingX, '0px');
+  assert.equal(explicitMap[explicit].props.innerPaddingXTablet, '0px');
+  assert.equal(explicitMap[explicit].props.innerPaddingXMobile, '0px');
 });
 
 test('normalization reports literals and relinks only an explicit exact match repair', () => {

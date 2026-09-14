@@ -1,6 +1,14 @@
 # Changelog
 
-## 0.5.1 - Unreleased
+## 0.5.2 - 2026-09-14
+
+- Keep generic measured authoring independent from historical benchmark recipes.
+  Client names, domains and archetype labels cannot enable those recipes; only an
+  explicit benchmark-only classification can load them.
+- Use 24 px tablet and 16 px mobile inner spacing for new, unmeasured content
+  sections while preserving measured values, explicit values and intentional zero.
+
+## 0.5.1 - 2026-09-14
 
 - Document the editable custom-widget repeater contract with `ofProp`, bounded
   item counts, item labels, nested controls, and explicit Content/Style panel

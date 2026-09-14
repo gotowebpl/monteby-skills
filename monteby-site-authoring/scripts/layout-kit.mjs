@@ -36,6 +36,7 @@ import designProfileModule from './resolved-design-profile.js';
 import controlContractModule from './control-contract.js';
 
 const {
+  UNMEASURED_CONTENT_SECTION_DEFAULTS,
   applyResolvedDesignDefaults,
   buildResolvedDesignProfile,
   effectiveTypographyValue,
@@ -324,15 +325,17 @@ export class Kit {
 
   /** Sekcja z kolumną treści o szerokości serwisu. */
   shell(props, children) {
-    return this.section(
+    return this.node(
+      'Section',
       {
         innerMaxWidth: props.innerMaxWidth ?? this.designProfile.layout.contentWidth ?? '1280px',
         innerPaddingX: props.innerPaddingX ?? '56px',
-        innerPaddingXTablet: props.innerPaddingXTablet ?? '40px',
-        innerPaddingXMobile: props.innerPaddingXMobile ?? '20px',
+        innerPaddingXTablet: props.innerPaddingXTablet ?? UNMEASURED_CONTENT_SECTION_DEFAULTS.innerPaddingXTablet,
+        innerPaddingXMobile: props.innerPaddingXMobile ?? UNMEASURED_CONTENT_SECTION_DEFAULTS.innerPaddingXMobile,
         ...props,
       },
-      children
+      children,
+      'unmeasured-content-section'
     );
   }
 

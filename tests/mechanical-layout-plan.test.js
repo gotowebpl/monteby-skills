@@ -121,7 +121,13 @@ test('plan-out records specialized root section ids and mode', () => {
       stats: [],
     },
     media: { surfaces: [], requiredRoles: [] },
-    authoringRequirements: { requiredMediaRoles: [] },
+    authoringRequirements: {
+      requiredMediaRoles: [],
+      referenceClassification: {
+        kind: 'historical-benchmark-recipe',
+        source: 'test-fixture',
+      },
+    },
   }));
 
   const result = spawnSync(process.execPath, [
