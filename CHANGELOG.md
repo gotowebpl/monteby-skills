@@ -1,6 +1,18 @@
 # Changelog
 
-## 0.5.0 - Unreleased
+## 0.5.1 - Unreleased
+
+- Document the editable custom-widget repeater contract with `ofProp`, bounded
+  item counts, item labels, nested controls, and explicit Content/Style panel
+  placement. Legacy repeater `prop` remains a Builder compatibility input, not
+  new registration guidance.
+- Reserve `_monteby_probe` for diagnostic cache probes so WordPress routing
+  variables cannot silently change the page being verified.
+- Treat physical `srcset` candidate dimensions as unknown without unambiguous
+  descriptor or decoded-resource evidence instead of deriving them from a
+  density-corrected `naturalWidth`.
+
+## 0.5.0 - 2026-09-09
 
 - Restore the scroll origin before measuring full-page geometry, including
   sites with smooth scrolling; an unsettled origin stops capture instead of

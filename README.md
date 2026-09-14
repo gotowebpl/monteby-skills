@@ -1,6 +1,6 @@
 # Monteby Skills
 
-Development candidate: `0.5.0` (not yet published). Site Authoring 0.5.0 requires Monteby
+Development candidate: `0.5.1` (not yet published). Site Authoring 0.5.1 requires Monteby
 Builder 1.4.0 for canonical writes and uses named feature gates from the live
 contract; Query controls remain available from Builder 1.3.9. Builder 1.5.0
 adds the optional live `designTokens` contract consumed by the shared design

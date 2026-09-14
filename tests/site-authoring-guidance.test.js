@@ -113,6 +113,28 @@ test('skill gates provider-rendered host widgets and separates them from product
   assert.match(customWidgets, /do not submit authored\s+HTML/);
 });
 
+test('custom-widget guidance publishes an editable bounded repeater in the correct inspector panel', () => {
+  const customWidgets = read(path.join(references, 'custom-widget-registration.md'));
+
+  assert.match(customWidgets, /'panel' => 'content'/);
+  assert.match(customWidgets, /'panel' => 'style'/);
+  assert.match(customWidgets, /'type' => 'repeater'[\s\S]*'ofProp' => 'highlights'/);
+  assert.match(customWidgets, /'minItems' => 1[\s\S]*'maxItems' => 6/);
+  assert.match(customWidgets, /'itemLabelProp' => 'title'/);
+  assert.match(customWidgets, /'itemFields' => \[[\s\S]*'prop' => 'title'[\s\S]*'prop' => 'description'/);
+  assert.match(customWidgets, /Never use `prop` for the repeater itself/);
+  assert.match(customWidgets, /`prop` remains correct for each field inside `itemFields`/);
+});
+
+test('canonical evidence guidance cannot change WordPress routes or guess srcset file dimensions', () => {
+  assert.match(skill, /append only the\s+neutral `_monteby_probe` query parameter/);
+  assert.match(skill, /Never use WordPress routing variables\s+such as `s`, `p`, `page_id`, or `preview` for cache busting/);
+  assert.match(skill, /final\s+URL or route that no longer identifies the requested page invalidates the\s+evidence/);
+  assert.match(skill, /Do not infer the physical pixel dimensions of the selected `srcset` candidate\s+from `naturalWidth` divided by the CSS-rendered rectangle/);
+  assert.match(skill, /selected-candidate descriptor or decoded-resource evidence/);
+  assert.match(skill, /record image-resolution status as `unknown` and fail\s+open/);
+});
+
 test('global styles are an explicit site-wide GET merge save task with no imports or custom JS', () => {
   const guidance = read(path.join(references, 'global-styles-authoring.md'));
   const brief = read(path.join(references, 'brief-to-monteby.md'));
@@ -463,7 +485,7 @@ test('custom-widget example renders and escapes every exposed image prop', () =>
   assert.match(guidance, /\$imageMarkup = sprintf/);
   assert.match(guidance, /esc_url\(\$image\)/);
   assert.match(guidance, /esc_attr\(\$imageAlt\)/);
-  assert.match(guidance, /<section class="theme-client-hero">%s<h1>/);
+  assert.match(guidance, /<section class="theme-client-hero">%s<h1 style="color:%s">%s<\/h1>/);
   assert.match(guidance, /Do not expose an editable prop that the render callback ignores/);
 });
 
