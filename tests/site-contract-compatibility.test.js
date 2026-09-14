@@ -17,7 +17,7 @@ test('site contract compatibility manifest requires the exact live contract with
 
   assert.deepEqual(manifest, {
     schemaVersion: 3,
-    skillVersion: '0.5.1',
+    skillVersion: '0.5.2',
     minimumBuilderVersion: '1.4.0',
     contractEndpoint: '/wp-json/monteby/v1/contract',
     liveContractRequired: true,
@@ -98,6 +98,11 @@ test('site contract compatibility manifest ships in the npm package', () => {
     packedPaths.includes('monteby-site-authoring/scripts/resolved-design-profile.js'),
     true,
     'the shared design profile resolver must ship in the npm package'
+  );
+  assert.equal(
+    packedPaths.includes('monteby-site-authoring/scripts/historical-benchmark-recipes.js'),
+    true,
+    'the explicitly gated historical benchmark recipes must ship with the drafter'
   );
   assert.equal(
     packedPaths.some((file) => file.startsWith('audit-evidence/')),

@@ -1,6 +1,6 @@
 # Monteby Skills
 
-Development candidate: `0.5.1` (not yet published). Site Authoring 0.5.1 requires Monteby
+Current release: `0.5.2`. Site Authoring 0.5.2 requires Monteby
 Builder 1.4.0 for canonical writes and uses named feature gates from the live
 contract; Query controls remain available from Builder 1.3.9. Builder 1.5.0
 adds the optional live `designTokens` contract consumed by the shared design
@@ -13,7 +13,10 @@ versioned native icon catalog: icon authoring requires its verified SHA and an
 approved reference-bound mapping. Missing catalogs or mappings block that work;
 they never enable raster or raw SVG substitutions. Logo commands accept the
 extended native-identity response while continuing to write only Monteby logo
-settings, without changing the WordPress site name, tagline or site icon.
+settings, without changing the WordPress site name, tagline or site icon. Generic
+measured authoring never selects historical benchmark recipes from client names,
+domains, or archetype labels; those recipes require an explicit benchmark-only
+classification.
 
 Reusable Agent Skills for working with the Monteby ecosystem.
 
