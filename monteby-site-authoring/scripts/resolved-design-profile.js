@@ -10,6 +10,10 @@ const LOCAL_TYPOGRAPHY_PROPS = new Set([
   'lineHeight',
   'textTransform',
 ]);
+const UNMEASURED_CONTENT_SECTION_DEFAULTS = Object.freeze({
+  innerPaddingXTablet: '24px',
+  innerPaddingXMobile: '16px',
+});
 
 function isRecord(value) {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
@@ -252,6 +256,16 @@ function semanticPreset(component, props, semanticRole = '') {
 function applyResolvedDesignDefaults(component, props, profile, semanticRole = '') {
   const resolved = { ...(isRecord(props) ? props : {}) };
   const allowedProps = profile?.componentProps?.[component] || new Set();
+  if (component === 'Section' && semanticRole === 'unmeasured-content-section') {
+    for (const [prop, value] of Object.entries(UNMEASURED_CONTENT_SECTION_DEFAULTS)) {
+      if (
+        allowedProps.has(prop)
+        && (resolved[prop] === undefined || resolved[prop] === null || resolved[prop] === '')
+      ) {
+        resolved[prop] = value;
+      }
+    }
+  }
   const bindings = profile?.bindings?.[component] || {};
   for (const [prop, tokenKey] of Object.entries(bindings)) {
     if (
@@ -350,6 +364,7 @@ function localTypographyOverrides(props) {
 }
 
 module.exports = {
+  UNMEASURED_CONTENT_SECTION_DEFAULTS,
   applyResolvedDesignDefaults,
   buildResolvedDesignProfile,
   firstTokenReference,

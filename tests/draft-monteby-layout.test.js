@@ -2501,6 +2501,7 @@ test('draft layout preserves seven ordered generic measured bands with responsiv
   const layoutPath = path.join(directory, 'layout-draft.json');
   const planPath = path.join(directory, 'mechanical-layout-plan.json');
   const manifestPath = path.join(directory, 'reference-manifest.json');
+  const recipeLoadGuardPath = path.join(directory, 'reject-historical-recipe-load.cjs');
   const contractValue = contract();
   const sectionComponent = contractValue.components.find((component) => component.name === 'Section');
   sectionComponent.props = sectionComponent.props.map((prop) => prop === 'backgroundColor' ? 'background' : prop);
@@ -2700,7 +2701,7 @@ test('draft layout preserves seven ordered generic measured bands with responsiv
     authoringRequirements: {
       requiredMediaRoles: [],
       referenceClassification: {
-        kind: 'generated-target',
+        kind: 'generic-measured-reference',
         family: 'lumen-eye-care-editorial',
         familyMechanics: true,
         source: 'generated-html',
@@ -2721,8 +2722,20 @@ test('draft layout preserves seven ordered generic measured bands with responsiv
   fs.writeFileSync(contractPath, JSON.stringify(contractValue));
   fs.writeFileSync(briefPath, JSON.stringify(brief));
   fs.writeFileSync(manifestPath, JSON.stringify(manifest));
+  fs.writeFileSync(recipeLoadGuardPath, `'use strict';
+const Module = require('node:module');
+const originalLoad = Module._load;
+Module._load = function guardedLoad(request, parent, isMain) {
+  if (String(request).includes('historical-benchmark-recipes')) {
+    throw new Error('generic drafter loaded historical benchmark recipes');
+  }
+  return originalLoad.call(this, request, parent, isMain);
+};
+`);
 
   const result = spawnSync(process.execPath, [
+    '--require',
+    recipeLoadGuardPath,
     draftScript,
     '--contract',
     contractPath,
@@ -5468,7 +5481,7 @@ test('generic measured drafting preserves a stable Lumen-like mixed hero stack a
       reuseSourceMedia: true,
       requiredMediaRoles: [],
       referenceClassification: {
-        kind: 'generated-target',
+        kind: 'generic-measured-reference',
         family: 'lumen-eye-care-editorial',
         familyMechanics: true,
       },
@@ -9792,6 +9805,12 @@ function visualBrief(overrides = {}) {
     },
     authoringRequirements: {
       requiredMediaRoles: requiredMediaRoles(),
+      referenceClassification: {
+        kind: 'historical-benchmark-recipe',
+        family: target.archetype || 'optomatta-optical-retail',
+        familyMechanics: true,
+        source: 'test-fixture',
+      },
       firstViewportMediaCoverage: {
         sourceLayout: 'desktop',
         target: 0.42,
