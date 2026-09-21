@@ -64,6 +64,7 @@ test('site contract compatibility manifest requires the exact live contract with
       },
       contractLightProjection: {
         minimumBuilderVersion: '1.6.0',
+        contractMode: 'light',
         contractPath: 'mode',
         expectedValue: 'light',
         optional: true,
@@ -71,6 +72,7 @@ test('site contract compatibility manifest requires the exact live contract with
       },
       contractDesignProjection: {
         minimumBuilderVersion: '1.6.0',
+        contractMode: 'design',
         contractPath: 'mode',
         expectedValue: 'design',
         optional: true,
@@ -78,6 +80,7 @@ test('site contract compatibility manifest requires the exact live contract with
       },
       contractAuthoringProjection: {
         minimumBuilderVersion: '1.6.0',
+        contractMode: 'authoring',
         contractPath: 'mode',
         expectedValue: 'authoring',
         optional: true,
@@ -85,6 +88,7 @@ test('site contract compatibility manifest requires the exact live contract with
       },
       contractCatalogsProjection: {
         minimumBuilderVersion: '1.6.0',
+        contractMode: 'catalogs',
         contractPath: 'mode',
         expectedValue: 'catalogs',
         optional: true,
@@ -92,6 +96,7 @@ test('site contract compatibility manifest requires the exact live contract with
       },
       contractComponentsSummary: {
         minimumBuilderVersion: '1.6.0',
+        contractMode: 'authoring-summary',
         contractPath: 'componentsMode',
         expectedValue: 'summary',
         optional: true,

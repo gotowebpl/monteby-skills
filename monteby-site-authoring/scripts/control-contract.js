@@ -26,6 +26,35 @@ const CONTROL_RULE_FIELDS = Object.freeze([
   'itemControls',
   'itemFields',
 ]);
+const ALLOWED_AUTHORING_TAGS = new Set([
+  'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'span', 'small', 'strong', 'em',
+  'div', 'section', 'article', 'aside', 'header', 'footer', 'main', 'nav', 'a', 'form',
+]);
+const CSS_COLOR_KEYWORDS = new Set((
+  'aliceblue antiquewhite aqua aquamarine azure beige bisque black blanchedalmond blue blueviolet brown burlywood '
+  + 'cadetblue chartreuse chocolate coral cornflowerblue cornsilk crimson cyan darkblue darkcyan darkgoldenrod darkgray '
+  + 'darkgreen darkgrey darkkhaki darkmagenta darkolivegreen darkorange darkorchid darkred darksalmon darkseagreen '
+  + 'darkslateblue darkslategray darkslategrey darkturquoise darkviolet deeppink deepskyblue dimgray dimgrey dodgerblue '
+  + 'firebrick floralwhite forestgreen fuchsia gainsboro ghostwhite gold goldenrod gray green greenyellow grey honeydew '
+  + 'hotpink indianred indigo ivory khaki lavender lavenderblush lawngreen lemonchiffon lightblue lightcoral lightcyan '
+  + 'lightgoldenrodyellow lightgray lightgreen lightgrey lightpink lightsalmon lightseagreen lightskyblue lightslategray '
+  + 'lightslategrey lightsteelblue lightyellow lime limegreen linen magenta maroon mediumaquamarine mediumblue mediumorchid '
+  + 'mediumpurple mediumseagreen mediumslateblue mediumspringgreen mediumturquoise mediumvioletred midnightblue mintcream '
+  + 'mistyrose moccasin navajowhite navy oldlace olive olivedrab orange orangered orchid palegoldenrod palegreen '
+  + 'paleturquoise palevioletred papayawhip peachpuff peru pink plum powderblue purple rebeccapurple red rosybrown '
+  + 'royalblue saddlebrown salmon sandybrown seagreen seashell sienna silver skyblue slateblue slategray slategrey snow '
+  + 'springgreen steelblue tan teal thistle tomato turquoise violet wheat white whitesmoke yellow yellowgreen transparent '
+  + 'currentcolor inherit'
+).split(' '));
+const SYSTEM_FONT_FAMILIES = new Set([
+  'system', 'serif', 'sans-serif', 'monospace', 'cursive', 'fantasy', 'math', 'emoji', 'fangsong',
+  'system-ui', 'ui-serif', 'ui-sans-serif', 'ui-monospace', 'ui-rounded', '-apple-system',
+  'blinkmacsystemfont', 'sfprodisplay-regular', 'arial', 'helvetica', 'georgia', 'times',
+  'times new roman', 'courier', 'courier new', 'verdana', 'geneva', 'trebuchet ms', 'segoe ui',
+  'inherit', 'initial', 'unset', 'revert', 'revert-layer',
+]);
+const CONTROL_CHARACTER_PATTERN = /[\u0000-\u001f\u007f]/u;
+const CUSTOM_CONTROL_CHARACTER_PATTERN = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u;
 
 function hasOwn(value, key) {
   return isRecord(value) && Object.prototype.hasOwnProperty.call(value, key);
@@ -1078,6 +1107,169 @@ function normalizeCollection(control, value, publishedReferences, options) {
   };
 }
 
+function validateLinkValue(control, value) {
+  const prop = control?.[CONTROL_CONTEXT]?.prop;
+  if (typeof prop !== 'string' || prop === '') return { valid: true };
+  const dynamic = prop.startsWith('dynamic') && (prop.endsWith('Href') || prop.endsWith('Url'));
+  const link = !dynamic && (
+    prop === 'href'
+    || prop === 'url'
+    || prop.endsWith('Href')
+    || ['linkUrl', 'ctaUrl', 'redirectUrl'].includes(prop)
+  );
+  if (!dynamic && !link) return { valid: true };
+  if (!['string', 'number'].includes(typeof value) || !Number.isFinite(typeof value === 'number' ? value : 0)) {
+    return { valid: false, reason: 'odnośnik musi być wartością tekstową' };
+  }
+  const raw = String(value).trim();
+  if (raw === '') return { valid: true };
+  if (dynamic) {
+    return /^[A-Za-z0-9_.-]+(?::[A-Za-z0-9_.-]+){0,2}$/u.test(raw)
+      ? { valid: true }
+      : { valid: false, reason: 'dynamiczny odnośnik musi być kluczem opublikowanego pola' };
+  }
+  if (CONTROL_CHARACTER_PATTERN.test(raw)) {
+    return { valid: false, reason: 'odnośnik zawiera znak sterujący' };
+  }
+  return /^(?:https?:\/\/|\/|\.\/|\.\.\/|\?|mailto:|tel:|#)/iu.test(raw)
+    ? { valid: true }
+    : { valid: false, reason: 'odnośnik nie przechodzi polityki bezpiecznych adresów renderera' };
+}
+
+function rendererColorIsSafe(value) {
+  if (typeof value !== 'string') return false;
+  const color = value.trim();
+  return /^#[0-9a-f]{3,8}$/iu.test(color)
+    || CSS_COLOR_KEYWORDS.has(color.toLowerCase())
+    || /^rgba?\([0-9.,\s%]+\)$/iu.test(color);
+}
+
+function normalizeRendererColor(value, label) {
+  if (!['string', 'number', 'boolean'].includes(typeof value)) {
+    return { accepted: false, reason: `${label} nie jest skalarnym kolorem` };
+  }
+  const color = String(value).trim();
+  if (color === '') return { accepted: true, value: '' };
+  if (!rendererColorIsSafe(color)) {
+    return { accepted: false, reason: `${label} nie jest kolorem obsługiwanym przez renderer` };
+  }
+  return {
+    accepted: true,
+    value: color,
+    ...(color !== value ? { changed: true, changeReason: `${label} → ${JSON.stringify(color)}` } : {}),
+  };
+}
+
+function splitFontStack(value) {
+  const families = [];
+  let current = '';
+  let quote = '';
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index];
+    if (quote !== '') {
+      if (character === '\\') {
+        if (index + 1 >= value.length) return null;
+        current += character + value[index + 1];
+        index += 1;
+        continue;
+      }
+      current += character;
+      if (character === quote) quote = '';
+      continue;
+    }
+    if (character === '"' || character === "'") {
+      quote = character;
+      current += character;
+      continue;
+    }
+    if (character === ',') {
+      families.push(current.trim());
+      current = '';
+      continue;
+    }
+    current += character;
+  }
+  if (quote !== '') return null;
+  families.push(current.trim());
+  return families;
+}
+
+function normalizeFontFamilyName(value) {
+  let family = value.trim();
+  if (family === '') return '';
+  const first = family[0];
+  const last = family[family.length - 1];
+  if (['"', "'"].includes(first) || ['"', "'"].includes(last)) {
+    if (first !== last || !['"', "'"].includes(first)) return null;
+    family = family.slice(1, -1).trim();
+  }
+  if (family.toLowerCase().startsWith('_system_')) return '';
+  family = family.replace(/_/gu, ' ').replace(/\s+/gu, ' ').trim();
+  if (family === '') return '';
+  if (Buffer.byteLength(family, 'utf8') > 80 || !/^[A-Za-z0-9][A-Za-z0-9 .'-]*$/u.test(family)) return null;
+  return SYSTEM_FONT_FAMILIES.has(family.toLowerCase()) ? '' : family;
+}
+
+function fontValueIsPublished(control, value) {
+  const contract = control?.[CONTROL_CONTEXT]?.contract;
+  if (!isRecord(contract)) return { valid: true };
+  const catalog = contract.fontCatalog;
+  if (!isRecord(catalog)
+      || catalog.version !== 1
+      || !isRecord(catalog.system)
+      || !isRecord(catalog.google)
+      || !isRecord(catalog.local)
+      || !Array.isArray(catalog.local.choices)) {
+    return { valid: false, contractError: true, reason: 'live contract nie publikuje kompletnego fontCatalog' };
+  }
+  if (hasOwn(catalog.system, value)) return { valid: true };
+  if (catalog.local.choices.some((choice) => (
+    isRecord(choice) && typeof choice.value === 'string' && choice.value.toLowerCase() === value.toLowerCase()
+  ))) {
+    return { valid: true };
+  }
+  if (value.includes('(') || value.includes(')') || value.includes(';')) {
+    return { valid: false, reason: 'font zawiera niedozwoloną składnię CSS' };
+  }
+  const families = splitFontStack(value);
+  if (!families) return { valid: false, reason: 'stos fontów ma nieprawidłowe cudzysłowy' };
+  const google = new Set(Object.entries(catalog.google).flatMap(([key, entry]) => (
+    typeof entry?.family === 'string' ? [key.toLowerCase(), entry.family.toLowerCase()] : [key.toLowerCase()]
+  )));
+  for (const rawFamily of families) {
+    const family = normalizeFontFamilyName(rawFamily);
+    if (family === null || (family !== '' && !google.has(family.toLowerCase()))) {
+      return { valid: false, reason: `${JSON.stringify(rawFamily)} nie występuje w bieżącym fontCatalog` };
+    }
+  }
+  return { valid: true };
+}
+
+function normalizeCustomValue(control, value, label) {
+  if (!['string', 'number', 'boolean'].includes(typeof value)
+      || (typeof value === 'number' && !Number.isFinite(value))) {
+    return { accepted: false, reason: `${label} nie jest skalarną wartością kontrolki custom` };
+  }
+  const context = control?.[CONTROL_CONTEXT];
+  if (context?.hasDefault === true) {
+    const defaultValue = context.defaultValue;
+    if ((typeof defaultValue === 'boolean' && typeof value !== 'boolean')
+        || (typeof defaultValue === 'number' && typeof value !== 'number')) {
+      return { accepted: false, reason: `${label} nie ma typu opublikowanej wartości domyślnej` };
+    }
+  }
+  if (typeof value === 'string' && CUSTOM_CONTROL_CHARACTER_PATTERN.test(value)) {
+    return { accepted: false, reason: 'wartość custom zawiera niedozwolony znak sterujący' };
+  }
+  if (context?.prop === 'tag') {
+    const tag = String(value).trim().toLowerCase();
+    if (tag !== '' && !ALLOWED_AUTHORING_TAGS.has(tag)) {
+      return { accepted: false, reason: `${JSON.stringify(tag)} nie jest tagiem obsługiwanym przez renderer` };
+    }
+  }
+  return { accepted: true, value };
+}
+
 function normalizeControlValue(control, value, publishedReferences = new Set(), options = {}) {
   if (!isRecord(control)) return { accepted: true, value };
   const label = JSON.stringify(value);
@@ -1091,6 +1283,10 @@ function normalizeControlValue(control, value, publishedReferences = new Set(), 
   const hostContract = validateHostBinding(control, value, { ...options, metadataOnly: true });
   if (!hostContract.valid) {
     return { accepted: false, contractError: true, reason: hostContract.reason };
+  }
+  const link = validateLinkValue(control, value);
+  if (!link.valid) {
+    return { accepted: false, reason: link.reason };
   }
   const publishedSchema = validatePublishedValueSchema(control, value);
   if (!publishedSchema.valid) {
@@ -1143,6 +1339,53 @@ function normalizeControlValue(control, value, publishedReferences = new Set(), 
   }
   if (['text', 'textarea'].includes(type)) {
     return normalizeTextValue(control, value);
+  }
+  if (type === 'custom') {
+    const custom = normalizeCustomValue(control, value, label);
+    if (!custom.accepted) return custom;
+    if (hasOwn(control, 'pattern') || hasOwn(control, 'minLength') || hasOwn(control, 'maxLength')) {
+      return normalizeTextValue(control, custom.value);
+    }
+    return custom;
+  }
+  if (type === 'border-color') {
+    const prop = control?.[CONTROL_CONTEXT]?.prop || '';
+    if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') {
+      return { accepted: false, reason: `${label} nie jest skalarną wartością obramowania` };
+    }
+    const scalar = String(value).trim();
+    if (scalar === '') return { accepted: true, value: '' };
+    if (prop.endsWith('Mode')) {
+      return ['all', 'sides'].includes(scalar)
+        ? { accepted: true, value: scalar }
+        : { accepted: false, reason: 'tryb koloru obramowania musi mieć wartość all albo sides' };
+    }
+    return normalizeRendererColor(value, label);
+  }
+  if (type === 'color') {
+    return normalizeRendererColor(value, label);
+  }
+  if (type === 'font-picker') {
+    if (!['string', 'number', 'boolean'].includes(typeof value)) {
+      return { accepted: false, reason: `${label} nie jest skalarną nazwą fontu` };
+    }
+    const font = String(value).trim();
+    if (font === '') return { accepted: true, value: '' };
+    if (Buffer.byteLength(font, 'utf8') > 2048) {
+      return { accepted: false, reason: 'wartość fontu przekracza opublikowany limit' };
+    }
+    const published = fontValueIsPublished(control, font);
+    if (!published.valid) {
+      return { accepted: false, contractError: published.contractError === true, reason: published.reason };
+    }
+    return {
+      accepted: true,
+      value: font,
+      ...(font !== value ? { changed: true, changeReason: `${label} → ${JSON.stringify(font)}` } : {}),
+    };
+  }
+  if (type === 'media' && !['string', 'number', 'boolean'].includes(typeof value)) {
+    return { accepted: false, reason: `${label} nie jest skalarnym odwołaniem do medium` };
   }
   if (type === 'toggle' && typeof value !== 'boolean') {
     return { accepted: false, reason: `${label} nie jest wartością logiczną` };

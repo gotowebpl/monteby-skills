@@ -317,8 +317,7 @@ function main() {
     console.log(JSON.stringify(report, null, 2));
   } else {
     console.log(`Węzły: ${report.nodes}`);
-    console.log('NIE SPRAWDZAM kształtu wartości dla kontrolek typu: spacing, color, font-picker, media, custom '
-      + '(m.in. Heading.tag, ImageBlock.src, ButtonBlock.href, Container.padding) — „0 błędów” ich nie obejmuje.');
+    console.log('Sprawdzono typy, zakresy i zamknięte polityki kontrolek, w tym linki, tagi, kolory, fonty, media i spacing.');
     console.log(`Błędy: ${errors.length} | naprawy wartości: ${repairs.length} | ostrzeżenia renderera: ${warnings.length}`);
     for (const item of errors.slice(0, 40)) {
       console.log(`  BŁĄD  ${item.node}${item.prop ? '.' + item.prop : ''}: ${item.message}`);

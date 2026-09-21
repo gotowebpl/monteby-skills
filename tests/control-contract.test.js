@@ -408,3 +408,82 @@ test('published CSS references stay scoped to the exact component prop', () => {
   assert.equal(heading.has('var(--monteby-token-typography-heading-size)'), true);
   assert.equal(heading.has('var(--monteby-token-typography-body-size)'), false);
 });
+
+test('live controls reject values that the Builder renderer and save validator cannot accept', () => {
+  const contract = {
+    fontCatalog: {
+      version: 1,
+      system: { _system_Arial: 'Arial, Helvetica, sans-serif' },
+      google: { inter: { family: 'Inter', weights: '400;700' } },
+      local: { choices: [{ label: 'Brand', value: 'Brand Local' }], faces: {} },
+    },
+    components: [
+      {
+        name: 'ButtonBlock',
+        controls: [
+          { type: 'text', props: ['href'] },
+          { type: 'text', props: ['dynamicHref'] },
+        ],
+      },
+      {
+        name: 'Heading',
+        controls: [
+          { type: 'custom', props: ['tag'] },
+          { type: 'font-picker', props: ['fontFamily'] },
+          { type: 'color', props: ['color'] },
+        ],
+      },
+      {
+        name: 'Section',
+        controls: [{
+          type: 'border-color',
+          prop: 'borderColor',
+          borderColorModeProp: 'borderColorMode',
+          borderColorProps: { top: 'borderTopColor' },
+        }],
+      },
+    ],
+  };
+  const index = buildControlIndex(contract);
+
+  assert.equal(normalizeControlValue(index.get('ButtonBlock.href'), 'https://example.test/path').accepted, true);
+  assert.equal(normalizeControlValue(index.get('ButtonBlock.href'), '/relative-path').accepted, true);
+  assert.equal(normalizeControlValue(index.get('ButtonBlock.href'), 'javascript:alert(1)').accepted, false);
+  assert.equal(normalizeControlValue(index.get('ButtonBlock.href'), 'plain-relative-path').accepted, false);
+  assert.equal(normalizeControlValue(index.get('ButtonBlock.dynamicHref'), 'custom_field:cta_url').accepted, true);
+  assert.equal(normalizeControlValue(index.get('ButtonBlock.dynamicHref'), 'https://example.test').accepted, false);
+
+  assert.equal(normalizeControlValue(index.get('Heading.tag'), 'h2').accepted, true);
+  assert.equal(normalizeControlValue(index.get('Heading.tag'), 'script').accepted, false);
+  assert.equal(normalizeControlValue(index.get('Heading.tag'), 'div\u0000').accepted, false);
+
+  assert.equal(normalizeControlValue(index.get('Heading.fontFamily'), '_system_Arial').accepted, true);
+  assert.equal(normalizeControlValue(index.get('Heading.fontFamily'), 'Inter, sans-serif').accepted, true);
+  assert.equal(normalizeControlValue(index.get('Heading.fontFamily'), 'Brand Local').accepted, true);
+  assert.equal(normalizeControlValue(index.get('Heading.fontFamily'), 'Made Up Secret Font').accepted, false);
+  assert.equal(normalizeControlValue(index.get('Heading.fontFamily'), 'Inter; color: red').accepted, false);
+
+  assert.equal(normalizeControlValue(index.get('Heading.color'), '#112233').accepted, true);
+  assert.equal(normalizeControlValue(index.get('Heading.color'), 'currentColor').accepted, true);
+  assert.equal(normalizeControlValue(index.get('Heading.color'), 'rgba(10,20,30,0.5)').accepted, true);
+  assert.equal(normalizeControlValue(index.get('Heading.color'), 'not-a-color').accepted, false);
+  assert.equal(normalizeControlValue(index.get('Heading.color'), 'hsl(0 100% 50%)').accepted, false);
+
+  assert.equal(normalizeControlValue(index.get('Section.borderColorMode'), 'sides').accepted, true);
+  assert.equal(normalizeControlValue(index.get('Section.borderColorMode'), 'rogue').accepted, false);
+  assert.equal(normalizeControlValue(index.get('Section.borderTopColor'), 'transparent').accepted, true);
+  assert.equal(normalizeControlValue(index.get('Section.borderTopColor'), 'trasparent').accepted, false);
+});
+
+test('font controls fail closed when a live contract omits its catalog', () => {
+  const control = buildControlIndex({
+    components: [{
+      name: 'Heading',
+      controls: [{ type: 'font-picker', props: ['fontFamily'] }],
+    }],
+  }).get('Heading.fontFamily');
+
+  const result = normalizeControlValue(control, 'Inter');
+  assert.equal(result.accepted, false);
+  assert.equal(result.contractError, true);
+});
