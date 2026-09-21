@@ -255,8 +255,8 @@ The client removes an `update_props` entry only when both `props` and
 Save only through the page-layout write descriptor. Immediately before writing,
 send the token through the field named by `layoutPersistence.writePreconditionField`
 and compare/send its canonical layout digest; this closes same-second lost updates.
-Current names are `postModifiedGmt` and `expectedModifiedGmt`; they are live-contract examples, not fixed client keys.
-A save returning `428` means the declared precondition is absent. Classify a
+Current names are `postModifiedGmt` and `expectedModifiedGmt`; they are live-contract examples, not fixed client keys. A save returns `428` or `409` only when the server refuses the requested write.
+`428` means the declared precondition is absent. Classify a
 `409` by the WordPress REST error `code`: only an explicit revision/digest
 `*_conflict` means another editor changed the resource. A write lock, required
 classic-content conversion, corrupt stored layout, or Builder/Theme integrity
@@ -264,9 +264,7 @@ failure is a different terminal state and must follow its named recovery path;
 it must not enter the resnapshot/reconcile conflict loop. Never retry either
 status automatically. Never bypass a conflict with stale JSON, and never write
 post meta or `post_content` directly.
-
-A successful write is not proven by an arbitrary `2xx` or `{ "saved": true }`.
-Require a token and exact saved representation, then read through the same descriptor.
+A successful write is not proven by an arbitrary `2xx` or `{ "saved": true }`; require a token and exact saved representation, then read through the same descriptor.
 The token may stay unchanged when the host version field has coarse resolution, but only
 after the write used the exact source and candidate digest preconditions and both the
 write response and canonical readback prove the exact candidate representation. Patch apply also requires the exact preflighted compiled HTML digest. The
