@@ -232,15 +232,13 @@ settings, cache, content, versions, or deployment state from this report alone.
 
 ## Persistence resources
 
-`GET /wp-json/monteby/v1/contract` is the fixed bootstrap. Discover validation,
+`GET /wp-json/monteby/v1/contract` is the fixed bootstrap; `contract-fetch` adds projection, component hydration and ETag caching. Discover validation,
 page-layout read/write, and preview methods, paths, carriers, and context fields
 from the live `layoutPersistence.resources` document. Current Builder versions
 publish `/monteby/v1/validate`, `/monteby/v1/pages/{postId}/layout`, and
-`/monteby/v1/preview`; those names are examples of the current live descriptor,
-not routes an authoring client may remember. A missing, malformed, or unsupported
-descriptor is a hard stop; never fall back to a guessed endpoint or payload key.
-The page-layout path must contain exactly one `{postId}` placeholder. Snapshot,
-fresh read, write, and readback must return the requested numeric `id`.
+`/monteby/v1/preview`; examples only. `--help` lists context, documents, revisions,
+preview, bulk, composition, safe global styles, SEO and read-only Abilities.
+A missing, malformed, or unsupported descriptor is a hard stop; page paths have one `{postId}` and scoped numeric `id`; never fall back to a guessed endpoint or payload key.
 
 For a bounded change to existing nodes, prefer the operation resources exposed
 under `layoutPersistence.operations` in the live contract. Read
@@ -268,10 +266,9 @@ A successful write is not proven by an arbitrary `2xx` or `{ "saved": true }`.
 Require a token and exact saved representation, then read through the same descriptor.
 The token may stay unchanged when the host version field has coarse resolution, but only
 after the write used the exact source and candidate digest preconditions and both the
-write response and canonical readback prove the exact candidate representation. Patch
-apply also requires the exact preflighted compiled HTML digest. The readback token must
-equal the write response token. Keep the separately validated candidate SHA-256, preview
-the exact readback, and preserve validation `lint` in `SAVE_OK`.
+write response and canonical readback prove the exact candidate representation. Patch apply also requires the exact preflighted compiled HTML digest. The
+readback token must equal the write response token and the readback node-map SHA-256 must equal the saved
+write-response representation SHA-256. Keep the separately validated candidate SHA-256, preview that exact readback and preserve validation `lint` in `SAVE_OK`.
 
 Apply the same rule to partial writes: never retry `409` or `428`, never apply
 without a successful preflight, and never reuse a preflight after the page or

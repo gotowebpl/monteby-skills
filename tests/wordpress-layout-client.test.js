@@ -86,6 +86,120 @@ function layoutContract({
   };
 }
 
+function capabilityContract() {
+  const contract = layoutContract();
+  return {
+    ...contract,
+    authoring: {
+      capabilities: {
+        providerRenderedWidgetSave: true,
+        annotatedRender: true,
+        renderGlobalStylesFilter: true,
+        previewGlobalTemplates: true,
+        previewVirtualGlobalTemplates: true,
+      },
+      compositions: {
+        version: 1,
+        recipes: [{ id: 'hero', label: 'Hero', slots: {}, tree: {} }],
+        resources: {
+          instantiate: {
+            method: 'POST', path: '/monteby/v1/compositions/instantiate', carrier: 'slots',
+          },
+          plan: { method: 'POST', path: '/monteby/v1/compositions/plan', carrier: 'plan' },
+        },
+      },
+      designProfiles: {
+        version: 1,
+        profiles: [{ id: 'editorial', label: 'Editorial' }],
+        resource: {
+          composeMethod: 'POST',
+          composePath: '/monteby/v1/global-styles/compose',
+          previewPath: '/monteby/v1/preview',
+          previewField: 'globalStyles',
+          applyPath: '/monteby/v1/global-styles',
+          applyMethods: ['PUT', 'PATCH'],
+        },
+      },
+      abilities: {
+        available: true,
+        namespace: 'monteby',
+        category: 'monteby',
+        restNamespace: 'wp-abilities/v1',
+        listPath: '/wp-abilities/v1/abilities',
+        runPath: '/wp-abilities/v1/abilities/{name}/run',
+        names: ['monteby/get-contract', 'monteby/save-layout'],
+      },
+    },
+    globalStyles: {
+      colors: { primary: '#112233' },
+      typography: { body_size: '16px' },
+      revision: 'b'.repeat(64),
+      resource: {
+        patchMethod: 'PATCH',
+        path: '/monteby/v1/global-styles',
+        versionField: 'revision',
+        writePreconditionField: 'expectedRevision',
+        allowedFields: ['colors', 'typography'],
+      },
+      patchSchema: {
+        type: 'object',
+        additionalProperties: false,
+        minProperties: 2,
+        required: ['expectedRevision'],
+        properties: {
+          colors: { type: 'object', additionalProperties: { type: 'string' } },
+          typography: { type: 'object' },
+          expectedRevision: { type: 'string', pattern: '^[a-f0-9]{64}$' },
+        },
+      },
+    },
+    layoutPersistence: {
+      ...contract.layoutPersistence,
+      seo: {
+        schema: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['title', 'description'],
+          properties: { title: { type: 'string' }, description: { type: 'string' } },
+        },
+      },
+      resources: {
+        ...contract.layoutPersistence.resources,
+        pageContext: {
+          method: 'GET', path: '/monteby/v1/pages/{postId}/context', postIdField: 'postId',
+        },
+        documents: {
+          method: 'GET', path: '/monteby/v1/site/pages',
+          queryFields: ['hasLayout', 'postType', 'page', 'perPage'],
+        },
+        revisions: {
+          method: 'GET', path: '/monteby/v1/pages/{postId}/layout/revisions',
+          queryFields: ['page', 'perPage'],
+        },
+        restoreRevision: {
+          method: 'POST', path: '/monteby/v1/pages/{postId}/layout/restore',
+          carrier: 'revisionId', revisionField: 'revisionId',
+          writePreconditionField: 'expectedModifiedGmt',
+        },
+        pageSeo: {
+          readMethod: 'GET', writeMethod: 'PUT',
+          path: '/monteby/v1/pages/{postId}/seo', carrier: 'seo',
+        },
+        bulkCreate: {
+          method: 'POST', path: '/monteby/v1/site/pages/bulk', carrier: 'items',
+          maxItems: 25, idempotencyField: 'requestId',
+          payloadDigestField: 'payloadSha256', replayMode: 'durable-payload-bound',
+          idempotencyTtlSeconds: 86_400, retryAfterUncertainOutcome: false,
+          itemFields: ['title', 'slug', 'status', 'postType', 'layout', 'seo', 'presentation'],
+        },
+        contractComponent: {
+          method: 'GET', path: '/monteby/v1/contract/components/{name}', nameField: 'name',
+        },
+      },
+    },
+  };
+}
+
 test('operation generation prunes empty update_props entries without changing meaningful values', () => {
   const meaningful = {
     type: 'update_props',
@@ -2410,5 +2524,693 @@ test('branding commands reject unsafe URLs, foreign options, and response shape 
     code: 'BRANDING_DOCUMENT_INVALID',
   });
   assert.equal(requestCount, 2);
+  assert.deepEqual(server.errors, []);
+});
+
+test('contract-fetch caches projections by ETag and hydrates components from the declared resource', async (t) => {
+  const directory = tempDir(t);
+  const cache = path.join(directory, 'contract-cache.json');
+  const requests = [];
+  const projection = {
+    version: 1,
+    productVersion: '1.6.0',
+    mode: 'authoring',
+    components: [{ name: 'Section' }],
+  };
+  const server = await startServer(t, (request, response) => {
+    requests.push({ url: request.url, etag: request.headers['if-none-match'] || '' });
+    if (request.url === '/wp-json/monteby/v1/contract') {
+      sendJson(response, 200, capabilityContract());
+      return;
+    }
+    if (request.url.startsWith('/wp-json/monteby/v1/contract?')) {
+      if (request.headers['if-none-match'] === '"projection-v1"') {
+        response.writeHead(304, { ETag: '"projection-v1"' });
+        response.end();
+        return;
+      }
+      response.writeHead(200, {
+        'Content-Type': 'application/json',
+        ETag: '"projection-v1"',
+      });
+      response.end(JSON.stringify(projection));
+      return;
+    }
+    if (request.url === '/wp-json/monteby/v1/contract/components/Section') {
+      response.writeHead(200, {
+        'Content-Type': 'application/json',
+        ETag: '"section-v1"',
+      });
+      response.end(JSON.stringify({
+        version: 1,
+        productVersion: '1.6.0',
+        component: { name: 'Section', controls: [] },
+      }));
+      return;
+    }
+    sendJson(response, 404, { code: 'not_found' });
+  });
+
+  const first = await runClient([
+    'contract-fetch', '--site', server.site, '--mode', 'authoring',
+    '--components', 'summary', '--cache', cache, '--out', path.join(directory, 'first.json'),
+  ]);
+  const second = await runClient([
+    'contract-fetch', '--site', server.site, '--mode', 'authoring',
+    '--components', 'summary', '--cache', cache, '--out', path.join(directory, 'second.json'),
+  ]);
+  const component = await runClient([
+    'contract-fetch', '--site', server.site, '--component', 'Section',
+    '--cache', cache, '--out', path.join(directory, 'component.json'),
+  ]);
+
+  assertEnvelope(first.result, { ok: true, stage: 'contract-fetch', code: 'CONTRACT_FETCH_OK' });
+  assert.equal(first.result.evidence.notModified, false);
+  assertEnvelope(second.result, { ok: true, stage: 'contract-fetch', code: 'CONTRACT_FETCH_OK' });
+  assert.equal(second.result.evidence.notModified, true);
+  assert.deepEqual(second.result.response, projection);
+  assertEnvelope(component.result, { ok: true, stage: 'contract-fetch', code: 'CONTRACT_COMPONENT_OK' });
+  assert.equal(component.result.response.component.name, 'Section');
+  assert.equal(requests[1].etag, '"projection-v1"');
+  assert.deepEqual(server.errors, []);
+});
+
+test('page-context and documents-list follow their descriptors and enforce exact scope', async (t) => {
+  const directory = tempDir(t);
+  const queryFile = path.join(directory, 'query.json');
+  writeJson(queryFile, { hasLayout: true, postType: 'page', page: 2, perPage: 10 });
+  const requests = [];
+  const server = await startServer(t, (request, response) => {
+    requests.push(request.url);
+    if (request.url === '/wp-json/monteby/v1/contract') return sendJson(response, 200, capabilityContract());
+    if (request.url === '/wp-json/monteby/v1/pages/17/context') {
+      return sendJson(response, 200, {
+        postId: 17, postType: 'page', documentType: 'page', hasLayout: true,
+        layoutState: 'stored', postModifiedGmt: 'v1',
+      });
+    }
+    if (request.url.startsWith('/wp-json/monteby/v1/site/pages?')) {
+      return sendJson(response, 200, {
+        items: [{ id: 17, postType: 'page' }], page: 2, perPage: 10, total: 11, totalPages: 2,
+      });
+    }
+    return sendJson(response, 404, { code: 'not_found' });
+  });
+
+  const context = await runClient([
+    'page-context', '--site', server.site, '--page-id', '17',
+    '--out', path.join(directory, 'context.json'),
+  ]);
+  const documents = await runClient([
+    'documents-list', '--site', server.site, '--input', queryFile,
+    '--out', path.join(directory, 'documents.json'),
+  ]);
+
+  assertEnvelope(context.result, { ok: true, stage: 'page-context', code: 'PAGE_CONTEXT_OK' });
+  assert.equal(context.result.response.postId, 17);
+  assertEnvelope(documents.result, { ok: true, stage: 'documents-list', code: 'DOCUMENTS_LIST_OK' });
+  assert.equal(documents.result.response.items[0].id, 17);
+  assert.ok(requests.some((url) => url.includes('hasLayout=true')));
+  assert.ok(requests.some((url) => url.includes('perPage=10')));
+  assert.deepEqual(server.errors, []);
+});
+
+test('revision-list follows the page-scoped descriptor and returns bounded restore choices', async (t) => {
+  const directory = tempDir(t);
+  const queryFile = path.join(directory, 'revision-query.json');
+  writeJson(queryFile, { page: 2, perPage: 10 });
+  const layoutSha256 = 'a'.repeat(64);
+  let collectionRequest = '';
+  const server = await startServer(t, (request, response) => {
+    if (request.url === '/wp-json/monteby/v1/contract') {
+      return sendJson(response, 200, capabilityContract());
+    }
+    if (request.url.startsWith('/wp-json/monteby/v1/pages/17/layout/revisions?')) {
+      collectionRequest = request.url;
+      return sendJson(response, 200, {
+        items: [{
+          revisionId: 91,
+          title: 'Page revision',
+          authorId: 3,
+          createdGmt: '2026-09-21 08:00:00',
+          modifiedGmt: '2026-09-21 08:00:00',
+          hasLayout: true,
+          layoutSha256,
+        }, {
+          revisionId: 90,
+          title: 'Classic revision',
+          authorId: 3,
+          createdGmt: '2026-09-20 08:00:00',
+          modifiedGmt: '2026-09-20 08:00:00',
+          hasLayout: false,
+          layoutSha256: null,
+        }],
+        page: 2,
+        perPage: 10,
+        total: 12,
+        totalPages: 2,
+        currentPostModifiedGmt: '2026-09-21 08:05:00',
+      });
+    }
+    return sendJson(response, 404, { code: 'not_found' });
+  });
+
+  const execution = await runClient([
+    'revision-list', '--site', server.site, '--page-id', '17', '--input', queryFile,
+    '--out', path.join(directory, 'revisions.json'),
+  ]);
+
+  assertEnvelope(execution.result, {
+    ok: true, stage: 'revision-list', code: 'REVISION_LIST_OK',
+  });
+  assert.equal(execution.result.response.items[0].revisionId, 91);
+  assert.equal(execution.result.response.items[1].layoutSha256, null);
+  assert.ok(collectionRequest.includes('page=2'));
+  assert.ok(collectionRequest.includes('perPage=10'));
+  assert.equal(execution.result.evidence.currentPostModifiedGmt, '2026-09-21 08:05:00');
+  assert.deepEqual(server.errors, []);
+});
+
+test('revision-restore proves the scoped write through canonical layout readback', async (t) => {
+  const directory = tempDir(t);
+  const inputFile = path.join(directory, 'restore.json');
+  writeJson(inputFile, { revisionId: 91, expectedModifiedGmt: 'v1' });
+  const restored = {
+    ...NODE_MAP,
+    'section-1': { ...NODE_MAP['section-1'], props: { background: '#000000' } },
+  };
+  const methods = [];
+  const server = await startServer(t, async (request, response) => {
+    methods.push(`${request.method} ${request.url}`);
+    if (request.url === '/wp-json/monteby/v1/contract') return sendJson(response, 200, capabilityContract());
+    if (request.url === '/wp-json/monteby/v1/pages/17/context') {
+      return sendJson(response, 200, { postId: 17, postModifiedGmt: 'v1' });
+    }
+    if (request.method === 'POST' && request.url === '/wp-json/monteby/v1/pages/17/layout/restore') {
+      assert.deepEqual(await readBody(request), { revisionId: 91, expectedModifiedGmt: 'v1' });
+      return sendJson(response, 200, {
+        id: 17, restored: true, revisionId: 91, layout: restored, postModifiedGmt: 'v2',
+      });
+    }
+    if (request.method === 'GET' && request.url === '/wp-json/monteby/v1/pages/17/layout') {
+      return sendJson(response, 200, layoutResponse(server.site, 17, 'v2', restored));
+    }
+    return sendJson(response, 404, { code: 'not_found' });
+  });
+
+  const execution = await runClient([
+    'revision-restore', '--site', server.site, '--page-id', '17',
+    '--input', inputFile, '--out', path.join(directory, 'report.json'),
+  ]);
+
+  assertEnvelope(execution.result, { ok: true, stage: 'revision-restore', code: 'REVISION_RESTORE_OK' });
+  assert.equal(execution.result.evidence.revisionId, 91);
+  assert.equal(methods.filter((entry) => entry.startsWith('POST ')).length, 1);
+  assert.deepEqual(server.errors, []);
+});
+
+test('preview-resource supports annotated subtree and virtual chrome without leaking HTML into JSON', async (t) => {
+  const directory = tempDir(t);
+  const inputFile = path.join(directory, 'preview.json');
+  const reportFile = path.join(directory, 'preview-report.json');
+  writeJson(inputFile, {
+    layout: NODE_MAP,
+    postId: 17,
+    nodeId: 'section-1',
+    annotateNodeIds: true,
+    assets: true,
+    document: true,
+    globalTemplates: true,
+    templateCandidates: { header: NODE_MAP },
+    globalStyles: { colors: { primary: '#334455' } },
+  });
+  let previewBody;
+  const server = await startServer(t, async (request, response) => {
+    if (request.url === '/wp-json/monteby/v1/contract') return sendJson(response, 200, capabilityContract());
+    if (request.url === '/wp-json/monteby/v1/preview') {
+      previewBody = await readBody(request);
+      return sendJson(response, 200, {
+        valid: true,
+        html: '<!doctype html><html><body>preview</body></html>',
+        assets: { styles: [] },
+      });
+    }
+    return sendJson(response, 404, { code: 'not_found' });
+  });
+
+  const execution = await runClient([
+    'preview-resource', '--site', server.site, '--input', inputFile, '--out', reportFile,
+  ]);
+
+  assertEnvelope(execution.result, { ok: true, stage: 'preview-resource', code: 'PREVIEW_RESOURCE_OK' });
+  assert.equal(previewBody.nodeMap.ROOT.type.resolvedName, 'RootCanvas');
+  assert.equal(previewBody.templateCandidates.header.ROOT.type.resolvedName, 'RootCanvas');
+  assert.equal(previewBody.globalStyles.colors.primary, '#334455');
+  assert.equal(Object.hasOwn(execution.result.response, 'html'), false);
+  assert.equal(fs.readFileSync(execution.result.artifacts.preview, 'utf8').includes('preview'), true);
+  assert.deepEqual(server.errors, []);
+});
+
+test('capability inputs reject Custom CSS before any REST request', async (t) => {
+  const directory = tempDir(t);
+  const inputFile = path.join(directory, 'preview.json');
+  const secretFile = path.join(directory, 'preview-secret.json');
+  writeJson(inputFile, { layout: NODE_MAP, globalStyles: { customCSS: 'body{}' } });
+  writeJson(secretFile, { layout: NODE_MAP, integration: { clientSecret: 'must-not-leak' } });
+  let requests = 0;
+  const server = await startServer(t, (_request, response) => {
+    requests += 1;
+    sendJson(response, 500, { code: 'unexpected' });
+  });
+
+  const execution = await runClient([
+    'preview-resource', '--site', server.site, '--input', inputFile,
+    '--out', path.join(directory, 'report.json'),
+  ]);
+
+  assertEnvelope(execution.result, {
+    ok: false, stage: 'preview-resource', code: 'CAPABILITY_PRIVATE_INPUT',
+  });
+  const secretExecution = await runClient([
+    'preview-resource', '--site', server.site, '--input', secretFile,
+    '--out', path.join(directory, 'secret-report.json'),
+  ]);
+  assertEnvelope(secretExecution.result, {
+    ok: false, stage: 'preview-resource', code: 'CAPABILITY_PRIVATE_INPUT',
+  });
+  assert.equal(JSON.stringify(secretExecution.result).includes('must-not-leak'), false);
+  assert.equal(requests, 0);
+});
+
+test('bulk-create requires a stable requestId and preserves replay evidence', async (t) => {
+  const directory = tempDir(t);
+  const inputFile = path.join(directory, 'bulk.json');
+  const incompleteFile = path.join(directory, 'bulk-incomplete.json');
+  writeJson(inputFile, { requestId: 'release-160-pages', items: [{ title: 'About' }] });
+  writeJson(incompleteFile, {
+    requestId: 'release-160-incomplete',
+    items: [{ title: 'About' }, { title: 'Contact' }],
+  });
+  const received = [];
+  const server = await startServer(t, async (request, response) => {
+    if (request.url === '/wp-json/monteby/v1/contract') return sendJson(response, 200, capabilityContract());
+    if (request.url === '/wp-json/monteby/v1/site/pages/bulk') {
+      const body = await readBody(request);
+      received.push(body);
+      const payloadSha256 = canonicalSha256(body.items);
+      if (body.requestId === 'release-160-incomplete') {
+        return sendJson(response, 201, {
+          replayed: false,
+          created: [{ id: 81, title: 'About' }],
+          count: 1,
+          requestId: body.requestId,
+          payloadSha256,
+        });
+      }
+      return sendJson(response, 201, {
+        replayed: false,
+        created: [{ id: 81, title: 'About' }],
+        count: 1,
+        requestId: 'release-160-pages',
+        payloadSha256,
+      });
+    }
+    return sendJson(response, 404, { code: 'not_found' });
+  });
+
+  const execution = await runClient([
+    'bulk-create', '--site', server.site, '--input', inputFile,
+    '--out', path.join(directory, 'report.json'),
+  ]);
+  const incomplete = await runClient([
+    'bulk-create', '--site', server.site, '--input', incompleteFile,
+    '--out', path.join(directory, 'incomplete-report.json'),
+  ]);
+
+  assertEnvelope(execution.result, { ok: true, stage: 'bulk-create', code: 'BULK_CREATE_OK' });
+  assert.deepEqual(received[0], { requestId: 'release-160-pages', items: [{ title: 'About' }] });
+  assert.deepEqual(execution.result.evidence.ids, [81]);
+  assert.equal(execution.result.evidence.payloadSha256, canonicalSha256([{ title: 'About' }]));
+  assertEnvelope(incomplete.result, {
+    ok: false, stage: 'bulk-create', code: 'CAPABILITY_WRITE_UNPROVEN',
+  });
+  assert.deepEqual(server.errors, []);
+});
+
+test('bulk-create fails closed without durable payload-bound replay semantics', async (t) => {
+  const directory = tempDir(t);
+  const inputFile = path.join(directory, 'bulk.json');
+  writeJson(inputFile, { requestId: 'unsafe-descriptor', items: [{ title: 'About' }] });
+  let writeRequests = 0;
+  const server = await startServer(t, (request, response) => {
+    if (request.url === '/wp-json/monteby/v1/contract') {
+      const contract = capabilityContract();
+      delete contract.layoutPersistence.resources.bulkCreate.replayMode;
+      return sendJson(response, 200, contract);
+    }
+    writeRequests += 1;
+    return sendJson(response, 500, { code: 'unexpected_write' });
+  });
+
+  const execution = await runClient([
+    'bulk-create', '--site', server.site, '--input', inputFile,
+    '--out', path.join(directory, 'report.json'),
+  ]);
+
+  assertEnvelope(execution.result, {
+    ok: false, stage: 'bulk-create', code: 'CAPABILITY_RESOURCE_INVALID',
+  });
+  assert.equal(writeRequests, 0);
+  assert.deepEqual(server.errors, []);
+});
+
+test('composition commands use embedded recipes and their declared carriers', async (t) => {
+  const directory = tempDir(t);
+  const instantiateFile = path.join(directory, 'instantiate.json');
+  const planFile = path.join(directory, 'plan.json');
+  writeJson(instantiateFile, { recipeId: 'hero', slots: { title: 'Hello' }, parentId: 'ROOT' });
+  writeJson(planFile, { plan: { sections: [{ recipeId: 'hero', slots: {} }] } });
+  const bodies = [];
+  const server = await startServer(t, async (request, response) => {
+    if (request.url === '/wp-json/monteby/v1/contract') return sendJson(response, 200, capabilityContract());
+    if (request.url === '/wp-json/monteby/v1/compositions/instantiate') {
+      bodies.push(await readBody(request));
+      return sendJson(response, 200, {
+        valid: true, recipeId: 'hero', rootNodeId: 'hero-1', nodes: {}, operation: {}, errors: [], lint: [], decisions: [],
+      });
+    }
+    if (request.url === '/wp-json/monteby/v1/compositions/plan') {
+      bodies.push(await readBody(request));
+      return sendJson(response, 200, {
+        valid: true, layout: NODE_MAP, sections: [], errors: [], lint: [], decisions: [],
+      });
+    }
+    return sendJson(response, 404, { code: 'not_found' });
+  });
+
+  const list = await runClient([
+    'compositions-list', '--site', server.site, '--out', path.join(directory, 'list.json'),
+  ]);
+  const instantiate = await runClient([
+    'composition-instantiate', '--site', server.site, '--input', instantiateFile,
+    '--out', path.join(directory, 'instantiate-report.json'),
+  ]);
+  const plan = await runClient([
+    'composition-plan', '--site', server.site, '--input', planFile,
+    '--out', path.join(directory, 'plan-report.json'),
+  ]);
+
+  assertEnvelope(list.result, { ok: true, stage: 'compositions-list', code: 'COMPOSITIONS_LIST_OK' });
+  assert.equal(list.result.response.recipes[0].id, 'hero');
+  assertEnvelope(instantiate.result, { ok: true, stage: 'composition-instantiate', code: 'COMPOSITION_INSTANTIATE_OK' });
+  assertEnvelope(plan.result, { ok: true, stage: 'composition-plan', code: 'COMPOSITION_PLAN_OK' });
+  assert.deepEqual(bodies, [
+    { recipeId: 'hero', slots: { title: 'Hello' }, parentId: 'ROOT' },
+    { plan: { sections: [{ recipeId: 'hero', slots: {} }] } },
+  ]);
+  assert.deepEqual(server.errors, []);
+});
+
+test('global styles read, compose and patch stay on the safe projection and prove readback', async (t) => {
+  const directory = tempDir(t);
+  const composeFile = path.join(directory, 'compose.json');
+  const patchFile = path.join(directory, 'patch.json');
+  writeJson(composeFile, { profileId: 'editorial', overrides: { colors: { primary: '#445566' } } });
+  writeJson(patchFile, { expectedRevision: 'b'.repeat(64), colors: { primary: '#445566' } });
+  let revision = 'b'.repeat(64);
+  let primary = '#112233';
+  const server = await startServer(t, async (request, response) => {
+    if (request.url === '/wp-json/monteby/v1/contract') {
+      const contract = capabilityContract();
+      contract.globalStyles.revision = revision;
+      contract.globalStyles.colors.primary = primary;
+      return sendJson(response, 200, contract);
+    }
+    if (request.url === '/wp-json/monteby/v1/global-styles/compose') {
+      return sendJson(response, 200, {
+        profileId: 'editorial',
+        styles: { colors: { primary: '#445566' }, typography: {}, customCSS: '.private{}' },
+        revision,
+        apply: {},
+      });
+    }
+    if (request.method === 'PATCH' && request.url === '/wp-json/monteby/v1/global-styles') {
+      const body = await readBody(request);
+      assert.equal(body.expectedRevision, revision);
+      primary = body.colors.primary;
+      revision = 'c'.repeat(64);
+      return sendJson(response, 200, {
+        success: true,
+        styles: { colors: { primary }, typography: {}, customCSS: '.private{}' },
+        revision,
+      });
+    }
+    return sendJson(response, 404, { code: 'not_found' });
+  });
+
+  const read = await runClient([
+    'global-styles-get', '--site', server.site, '--out', path.join(directory, 'styles.json'),
+  ]);
+  const compose = await runClient([
+    'global-styles-compose', '--site', server.site, '--input', composeFile,
+    '--out', path.join(directory, 'compose-report.json'),
+  ]);
+  const patch = await runClient([
+    'global-styles-patch', '--site', server.site, '--input', patchFile,
+    '--out', path.join(directory, 'patch-report.json'),
+  ]);
+
+  assertEnvelope(read.result, { ok: true, stage: 'global-styles-get', code: 'GLOBAL_STYLES_GET_OK' });
+  assert.equal(read.result.response.colors.primary, '#112233');
+  assertEnvelope(compose.result, { ok: true, stage: 'global-styles-compose', code: 'GLOBAL_STYLES_COMPOSE_OK' });
+  assert.equal(Object.hasOwn(compose.result.response.styles, 'customCSS'), false);
+  assertEnvelope(patch.result, { ok: true, stage: 'global-styles-patch', code: 'GLOBAL_STYLES_PATCH_OK' });
+  assert.equal(patch.result.evidence.revision, 'c'.repeat(64));
+  assert.equal(JSON.stringify(patch.result).includes('.private{}'), false);
+  assert.deepEqual(server.errors, []);
+});
+
+test('global styles require a revision advance for a genuine change', async (t) => {
+  const directory = tempDir(t);
+  const inputFile = path.join(directory, 'patch.json');
+  const noOpFile = path.join(directory, 'noop.json');
+  const revision = 'b'.repeat(64);
+  writeJson(inputFile, { expectedRevision: revision, colors: { primary: '#445566' } });
+  writeJson(noOpFile, { expectedRevision: revision, colors: { primary: '#112233' } });
+  let primary = '#112233';
+  const server = await startServer(t, async (request, response) => {
+    if (request.url === '/wp-json/monteby/v1/contract') {
+      const contract = capabilityContract();
+      contract.globalStyles.revision = revision;
+      contract.globalStyles.colors.primary = primary;
+      return sendJson(response, 200, contract);
+    }
+    if (request.method === 'PATCH' && request.url === '/wp-json/monteby/v1/global-styles') {
+      const body = await readBody(request);
+      primary = body.colors.primary;
+      return sendJson(response, 200, { success: true, revision });
+    }
+    return sendJson(response, 404, { code: 'not_found' });
+  });
+
+  const noOp = await runClient([
+    'global-styles-patch', '--site', server.site, '--input', noOpFile,
+    '--out', path.join(directory, 'noop-report.json'),
+  ]);
+  const execution = await runClient([
+    'global-styles-patch', '--site', server.site, '--input', inputFile,
+    '--out', path.join(directory, 'report.json'),
+  ]);
+
+  assertEnvelope(noOp.result, {
+    ok: true, stage: 'global-styles-patch', code: 'GLOBAL_STYLES_PATCH_OK',
+  });
+  assert.equal(noOp.result.evidence.noOp, true);
+  assert.equal(noOp.result.evidence.revisionAdvanced, false);
+  assertEnvelope(execution.result, {
+    ok: false, stage: 'global-styles-patch', code: 'CAPABILITY_WRITE_UNPROVEN',
+  });
+  assert.equal(execution.result.nextAction.id, 'blocked_client_error');
+  assert.deepEqual(server.errors, []);
+});
+
+test('mutating capability transport failures require read-only reconciliation', async (t) => {
+  const directory = tempDir(t);
+  const inputFile = path.join(directory, 'patch.json');
+  const revision = 'b'.repeat(64);
+  writeJson(inputFile, { expectedRevision: revision, colors: { primary: '#445566' } });
+  const server = await startServer(t, async (request, response) => {
+    if (request.url === '/wp-json/monteby/v1/contract') {
+      const contract = capabilityContract();
+      contract.globalStyles.revision = revision;
+      return sendJson(response, 200, contract);
+    }
+    if (request.method === 'PATCH' && request.url === '/wp-json/monteby/v1/global-styles') {
+      await readBody(request);
+      return sendJson(response, 500, { code: 'committed_but_response_failed' });
+    }
+    return sendJson(response, 404, { code: 'not_found' });
+  });
+
+  const execution = await runClient([
+    'global-styles-patch', '--site', server.site, '--input', inputFile,
+    '--out', path.join(directory, 'report.json'),
+  ]);
+
+  assertEnvelope(execution.result, {
+    ok: false, stage: 'global-styles-patch', code: 'WRITE_OUTCOME_UNCERTAIN',
+  });
+  assert.equal(execution.result.retryable, false);
+  assert.equal(execution.result.nextAction.id, 'reconcile_uncertain_write');
+  assert.equal(execution.result.nextAction.tool, '');
+  assert.deepEqual(execution.result.nextAction.args, []);
+  assert.deepEqual(server.errors, []);
+});
+
+test('page SEO read and write use the dedicated resource and exact canonical readback', async (t) => {
+  const directory = tempDir(t);
+  const inputFile = path.join(directory, 'seo.json');
+  const submittedSeo = { title: 'Updated title', description: 'Updated description' };
+  writeJson(inputFile, { seo: submittedSeo, expectedModifiedGmt: 'v1' });
+  let version = 'v1';
+  let seo = { title: 'Original title', description: 'Original description' };
+  let writeBody;
+  const server = await startServer(t, async (request, response) => {
+    if (request.url === '/wp-json/monteby/v1/contract') {
+      return sendJson(response, 200, capabilityContract());
+    }
+    if (request.url === '/wp-json/monteby/v1/pages/17/seo' && request.method === 'GET') {
+      return sendJson(response, 200, {
+        id: 17,
+        title: 'Page',
+        postType: 'page',
+        viewUrl: `${server.site}/page/`,
+        postModifiedGmt: version,
+        seo,
+        seoOwnership: {},
+        seoGraph: {},
+      });
+    }
+    if (request.url === '/wp-json/monteby/v1/pages/17/seo' && request.method === 'PUT') {
+      writeBody = await readBody(request);
+      seo = writeBody.seo;
+      version = 'v2';
+      return sendJson(response, 200, { id: 17, saved: true, seo, postModifiedGmt: version });
+    }
+    return sendJson(response, 404, { code: 'not_found' });
+  });
+
+  const read = await runClient([
+    'seo-get', '--site', server.site, '--page-id', '17',
+    '--out', path.join(directory, 'seo-before.json'),
+  ]);
+  const write = await runClient([
+    'seo-put', '--site', server.site, '--page-id', '17', '--input', inputFile,
+    '--out', path.join(directory, 'seo-save.json'),
+  ]);
+
+  assertEnvelope(read.result, { ok: true, stage: 'seo-get', code: 'SEO_GET_OK' });
+  assert.deepEqual(read.result.response.seo, {
+    title: 'Original title', description: 'Original description',
+  });
+  assertEnvelope(write.result, { ok: true, stage: 'seo-put', code: 'SEO_PUT_OK' });
+  assert.deepEqual(writeBody, { seo: submittedSeo, expectedModifiedGmt: 'v1' });
+  assert.equal(write.result.evidence.versionToken, 'v2');
+  assert.equal(write.result.evidence.canonicalReadback, true);
+  assert.deepEqual(server.errors, []);
+});
+
+test('Abilities discovery executes only schema-valid read-only abilities', async (t) => {
+  const directory = tempDir(t);
+  const inputFile = path.join(directory, 'ability-input.json');
+  const invalidOutputInputFile = path.join(directory, 'ability-invalid-output.json');
+  const mutationInputFile = path.join(directory, 'mutation-input.json');
+  writeJson(inputFile, { mode: 'light' });
+  writeJson(invalidOutputInputFile, { mode: 'full' });
+  writeJson(mutationInputFile, {});
+  const abilities = [{
+    name: 'monteby/get-contract',
+    input_schema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: { mode: { type: 'string', enum: ['light', 'full'] } },
+    },
+    output_schema: {
+      type: 'object',
+      required: ['version', 'product', 'productVersion', 'source', 'mode'],
+      additionalProperties: true,
+      properties: {
+        version: { type: 'integer' },
+        product: { type: 'string' },
+        productVersion: { type: 'string' },
+        source: { type: 'string' },
+        mode: { type: 'string' },
+      },
+    },
+    meta: {
+      show_in_rest: true,
+      annotations: { readonly: true, destructive: false, idempotent: true },
+    },
+  }, {
+    name: 'monteby/save-layout',
+    input_schema: { type: 'object', additionalProperties: false, properties: {} },
+    output_schema: { type: 'object', additionalProperties: true, properties: {} },
+    meta: {
+      show_in_rest: true,
+      annotations: { readonly: false, destructive: true, idempotent: false },
+    },
+  }];
+  const requests = [];
+  const server = await startServer(t, (request, response) => {
+    requests.push(`${request.method} ${request.url}`);
+    if (request.url === '/wp-json/monteby/v1/contract') {
+      return sendJson(response, 200, capabilityContract());
+    }
+    if (request.url.startsWith('/wp-json/wp-abilities/v1/abilities?')) {
+      return sendJson(response, 200, abilities);
+    }
+    if (request.url.startsWith('/wp-json/wp-abilities/v1/abilities/monteby/get-contract/run?')) {
+      if (request.url.includes('input%5Bmode%5D=full')) {
+        return sendJson(response, 200, { mode: 'full' });
+      }
+      return sendJson(response, 200, {
+        version: 1,
+        product: 'Monteby Builder',
+        productVersion: '1.6.0',
+        source: 'live-site',
+        mode: 'light',
+      });
+    }
+    return sendJson(response, 500, { code: 'unexpected_ability_request' });
+  });
+
+  const list = await runClient([
+    'abilities-list', '--site', server.site, '--out', path.join(directory, 'abilities.json'),
+  ]);
+  const readOnly = await runClient([
+    'ability-run', '--site', server.site, '--name', 'monteby/get-contract',
+    '--input', inputFile, '--out', path.join(directory, 'ability-result.json'),
+  ]);
+  const mutation = await runClient([
+    'ability-run', '--site', server.site, '--name', 'monteby/save-layout',
+    '--input', mutationInputFile, '--out', path.join(directory, 'mutation-result.json'),
+  ]);
+  const invalidOutput = await runClient([
+    'ability-run', '--site', server.site, '--name', 'monteby/get-contract',
+    '--input', invalidOutputInputFile, '--out', path.join(directory, 'ability-invalid-result.json'),
+  ]);
+
+  assertEnvelope(list.result, { ok: true, stage: 'abilities-list', code: 'ABILITIES_LIST_OK' });
+  assert.deepEqual(list.result.evidence.names, ['monteby/get-contract', 'monteby/save-layout']);
+  assertEnvelope(readOnly.result, { ok: true, stage: 'ability-run', code: 'ABILITY_RUN_OK' });
+  assert.equal(readOnly.result.response.mode, 'light');
+  assertEnvelope(mutation.result, {
+    ok: false, stage: 'ability-run', code: 'CAPABILITY_MUTATION_REQUIRES_CANONICAL_CLIENT',
+  });
+  assertEnvelope(invalidOutput.result, {
+    ok: false, stage: 'ability-run', code: 'CAPABILITY_RESPONSE_INVALID',
+  });
+  assert.equal(requests.some((entry) => entry.includes('monteby/save-layout/run')), false);
+  assert.ok(requests.some((entry) => entry.includes('input%5Bmode%5D=light')));
   assert.deepEqual(server.errors, []);
 });
