@@ -80,12 +80,14 @@ function parseArgs(argv) {
   }
 
   if (!options.help) {
+    if (!/^[A-Z_][A-Z0-9_]*$/u.test(options.authHeaderEnv)) {
+      throw new Error('Invalid auth environment variable name');
+    }
     if (options.verifyProps) {
       for (const key of ['operations', 'patchReport', 'applyReport', 'beforeSnapshot', 'savedSnapshot', 'contract']) {
         if (!options[key]) throw new Error(`${key} is required for --verify-props`);
       }
       if (options.iterationReport || options.previewReport || options.subpixelAuthorization) throw new Error('Prop verification cannot be combined with visual-fidelity inputs');
-      if (!/^[A-Z_][A-Z0-9_]*$/u.test(options.authHeaderEnv)) throw new Error('Invalid auth environment variable name');
     } else {
       if (options.operations || options.patchReport || options.applyReport || options.beforeSnapshot || options.savedSnapshot || options.contract || options.wordpressWrapper) throw new Error('Prop evidence options require --verify-props');
       if (!options.iterationReport) throw new Error('--iteration-report is required');
@@ -109,7 +111,7 @@ function parseArgs(argv) {
 
 function usage() {
   return `Usage:
-  run-canonical-verification.js --iteration-report visual-iteration-report.json --preview-report preview-response.json --public-page-url URL --out-dir DIR [--subpixel-authorization FILE] [--channel chrome] [--wait-ms MS] [--playwright-package PACKAGE] [--json]
+  run-canonical-verification.js --iteration-report visual-iteration-report.json --preview-report preview-response.json --public-page-url URL --out-dir DIR [--subpixel-authorization FILE] [--channel chrome] [--wait-ms MS] [--playwright-package PACKAGE] [--auth-header-env NAME] [--json]
   run-canonical-verification.js --verify-props --operations FILE --patch-report FILE --apply-report FILE --before-snapshot FILE --saved-snapshot FILE --contract FILE --public-page-url URL --out-dir DIR [--wordpress-wrapper FILE] [--auth-header-env NAME] [--json]
 
 Captures the public WordPress/PHP result at desktop:1440x1200,
@@ -603,11 +605,11 @@ function normalizeComparableUrl(value) {
   }
 }
 
-function captureArgs(options) {
+function captureArgs(options, proof = {}) {
   return [
-    '--url', options.publicPageUrl,
-    '--out-dir', path.join(options.outDir, 'capture'),
-    '--name', 'canonical-candidate',
+    ...(proof.htmlFile ? ['--html-file', proof.htmlFile] : ['--url', options.publicPageUrl]),
+    '--out-dir', proof.outDir || path.join(options.outDir, 'capture'),
+    '--name', proof.name || 'canonical-candidate',
     '--wait-ms', options.waitMs,
     '--playwright-package', options.playwrightPackage,
     '--capture-layout',
@@ -618,24 +620,42 @@ function captureArgs(options) {
   ];
 }
 
-function validateCanonicalMotionEvidence(iteration, candidateManifest) {
+function canonicalMotionContext(iteration) {
   let contract;
   let layout;
   try {
     contract = readJson(iteration.files.contract);
     layout = readJson(iteration.files.layout);
   } catch {
-    return [{ code: 'canonical_motion_inputs_invalid', message: 'Canonical motion validation could not read the bound contract and layout.' }];
+    return {
+      profile: null,
+      audit: null,
+      blockers: [{ code: 'canonical_motion_inputs_invalid', message: 'Canonical motion validation could not read the bound contract and layout.' }],
+    };
   }
-  const nodeMap = layout?.ROOT ? layout : layout?.layout || layout?.nodeMap || layout;
+  const nodeMap = extractNodeMap(layout);
+  if (!nodeMap) {
+    return {
+      profile: null,
+      audit: null,
+      blockers: [{ code: 'canonical_motion_inputs_invalid', message: 'Canonical motion validation requires a bound root node map.' }],
+    };
+  }
   const profile = buildResolvedMotionProfile(contract);
   const audit = auditMotionLayout(nodeMap, profile);
-  if (audit.errors.length > 0) {
-    return audit.errors.map((entry) => ({ code: entry.code, message: entry.message }));
-  }
-  if (audit.claims.length === 0) return [];
+  return {
+    profile,
+    audit,
+    blockers: audit.errors.map((entry) => ({ code: entry.code, message: entry.message })),
+  };
+}
 
-  const evidence = candidateManifest?.motionEvidence;
+function validateCanonicalMotionEvidence(iteration, proofManifest, preparedContext = null) {
+  const context = preparedContext || canonicalMotionContext(iteration);
+  if (context.blockers.length > 0 || !context.profile || !context.audit) return context.blockers;
+  if (context.audit.claims.length === 0) return [];
+
+  const evidence = proofManifest?.motionEvidence;
   const viewports = Array.isArray(evidence?.viewports) ? evidence.viewports : [];
   const byLabel = new Map(viewports.map((viewport) => [viewport?.label, viewport]));
   const blockers = [];
@@ -670,7 +690,7 @@ function validateCanonicalMotionEvidence(iteration, candidateManifest) {
         message: `${viewport} must prove motion in a normal JavaScript-enabled fine-pointer environment without keyboard or wheel interception.`,
       });
     }
-    for (const claim of audit.claims) {
+    for (const claim of context.audit.claims) {
       const observed = captured.owners.some((owner) => (
         owner?.nodeId === claim.nodeId
         && owner?.recipeId === claim.recipeId
@@ -712,11 +732,11 @@ function validateCanonicalMotionEvidence(iteration, candidateManifest) {
       }
     }
     const observedBudgets = [
-      ['entrance', captured.owners.filter((owner) => owner?.kind === 'entrance').length, profile.policy.maxEntranceOwnersPerPage],
-      ['first-viewport-entrance', captured.owners.filter((owner) => owner?.kind === 'entrance' && owner.firstViewport === true).length, profile.policy.maxFirstViewportEntranceOwners],
-      ['pointer', captured.owners.filter((owner) => owner?.kind === 'pointer').length, profile.policy.maxPointerEffectsPerPage],
-      ['pinned', captured.owners.filter((owner) => owner?.kind === 'pinned').length, profile.policy.maxPinnedScenesPerPage],
-      ['background', captured.owners.filter((owner) => ['ambient', 'scroll'].includes(owner?.kind)).length, profile.policy.maxBackgroundEffectsPerPage],
+      ['entrance', captured.owners.filter((owner) => owner?.kind === 'entrance').length, context.profile.policy.maxEntranceOwnersPerPage],
+      ['first-viewport-entrance', captured.owners.filter((owner) => owner?.kind === 'entrance' && owner.firstViewport === true).length, context.profile.policy.maxFirstViewportEntranceOwners],
+      ['pointer', captured.owners.filter((owner) => owner?.kind === 'pointer').length, context.profile.policy.maxPointerEffectsPerPage],
+      ['pinned', captured.owners.filter((owner) => owner?.kind === 'pinned').length, context.profile.policy.maxPinnedScenesPerPage],
+      ['background', captured.owners.filter((owner) => ['ambient', 'scroll'].includes(owner?.kind)).length, context.profile.policy.maxBackgroundEffectsPerPage],
     ];
     for (const [kind, count, maximum] of observedBudgets) {
       if (count > maximum) {
@@ -725,6 +745,137 @@ function validateCanonicalMotionEvidence(iteration, candidateManifest) {
     }
   }
   return blockers;
+}
+
+function buildCanonicalMotionProof(options, iteration, previewReport, files) {
+  const layout = extractNodeMap(readJson(iteration.files.layout));
+  if (!layout) {
+    return {
+      blockers: [{ code: 'canonical_motion_inputs_invalid', message: 'The motion proof could not read the bound root node map.' }],
+      steps: {},
+      manifest: null,
+      evidence: null,
+    };
+  }
+  const input = {
+    layout,
+    postId: previewReport.scope.pageId,
+    annotateNodeIds: true,
+    assets: true,
+    document: true,
+  };
+  writeJson(files.motionPreviewInput, input);
+  const inputFileSha256 = fileSha256(files.motionPreviewInput);
+  const preview = runScript('wordpress-layout-client.js', [
+    'preview-resource',
+    '--site', previewReport.scope.site,
+    '--input', files.motionPreviewInput,
+    '--out', files.motionPreviewReport,
+    '--auth-header-env', options.authHeaderEnv,
+  ]);
+  const steps = {
+    motionPreview: {
+      status: preview.status,
+      ok: preview.report?.ok,
+      code: preview.report?.code,
+      stderr: preview.stderr,
+    },
+  };
+  if (preview.status !== 0 || !fs.existsSync(files.motionPreviewReport)) {
+    return {
+      blockers: [{
+        code: 'canonical_motion_annotated_preview_failed',
+        message: preview.stderr || 'The request-scoped annotated preview did not produce its persisted proof report.',
+      }],
+      steps,
+      manifest: null,
+      evidence: null,
+    };
+  }
+
+  const proofReport = readJson(files.motionPreviewReport);
+  const expectedDocumentFile = files.motionPreviewDocument;
+  const reportDocumentFile = typeof proofReport.artifacts?.document === 'string'
+    ? path.resolve(proofReport.artifacts.document)
+    : '';
+  const expectedLayoutSha256 = nodeMapSha256(layout);
+  const previewReportValid = proofReport.schemaVersion === 1
+    && proofReport.ok === true
+    && proofReport.stage === 'preview-resource'
+    && proofReport.code === 'PREVIEW_RESOURCE_OK'
+    && typeof proofReport.artifacts?.input === 'string'
+    && path.resolve(proofReport.artifacts.input) === path.resolve(files.motionPreviewInput)
+    && reportDocumentFile === path.resolve(expectedDocumentFile)
+    && fs.existsSync(expectedDocumentFile)
+    && proofReport.evidence?.inputLayoutSha256 === expectedLayoutSha256
+    && proofReport.evidence?.inputLayoutSha256 === previewReport.layoutSha256
+    && proofReport.evidence?.postId === previewReport.scope.pageId
+    && proofReport.evidence?.document === true
+    && fileSha256(files.motionPreviewInput) === inputFileSha256;
+  if (!previewReportValid) {
+    return {
+      blockers: [{
+        code: 'canonical_motion_annotated_preview_invalid',
+        message: 'The annotated preview report is not bound to the exact saved page, layout, input, and standalone document.',
+      }],
+      steps,
+      manifest: null,
+      evidence: null,
+    };
+  }
+
+  const documentHtml = fs.readFileSync(expectedDocumentFile, 'utf8');
+  const documentSha256 = createHash('sha256').update(documentHtml, 'utf8').digest('hex');
+  if (
+    proofReport.evidence?.documentSha256 !== documentSha256
+    || !documentHtml.includes('data-monteby-node-id=')
+    || !documentHtml.includes('data-monteby-motion-recipe=')
+  ) {
+    return {
+      blockers: [{
+        code: 'canonical_motion_annotated_preview_missing',
+        message: 'The request-scoped preview document does not contain hash-bound node and motion-recipe annotations.',
+      }],
+      steps,
+      manifest: null,
+      evidence: null,
+    };
+  }
+
+  const capture = runScript('capture-template-reference.js', captureArgs(options, {
+    htmlFile: expectedDocumentFile,
+    outDir: path.dirname(files.motionProofManifest),
+    name: 'canonical-motion-proof',
+  }));
+  steps.motionCapture = {
+    status: capture.status,
+    stderr: capture.stderr,
+  };
+  if (capture.status !== 0 || !fs.existsSync(files.motionProofManifest)) {
+    return {
+      blockers: [{
+        code: 'canonical_motion_annotated_capture_failed',
+        message: capture.stderr || 'The annotated motion proof capture did not produce a manifest.',
+      }],
+      steps,
+      manifest: null,
+      evidence: null,
+    };
+  }
+
+  return {
+    blockers: [],
+    steps,
+    manifest: readJson(files.motionProofManifest),
+    evidence: {
+      mode: 'request-scoped-annotated-preview',
+      previewReportSha256: fileSha256(files.motionPreviewReport),
+      previewDocumentSha256: documentSha256,
+      captureManifestSha256: fileSha256(files.motionProofManifest),
+      layoutSha256: expectedLayoutSha256,
+      pageId: previewReport.scope.pageId,
+    },
+  };
 }
 
 function validateCanonicalSavedQualityGates(iteration, previewReport) {
@@ -1067,6 +1218,10 @@ function baseReport(options) {
       benchmarkMarkdown: path.join(options.outDir, 'BENCHMARK.md'),
       report: path.join(options.outDir, 'canonical-verification-report.json'),
       subpixelResidual: path.join(options.outDir, 'subpixel-residual.json'),
+      motionPreviewInput: path.join(options.outDir, 'motion-proof', 'preview-input.json'),
+      motionPreviewReport: path.join(options.outDir, 'motion-proof', 'preview-resource-report.json'),
+      motionPreviewDocument: path.join(options.outDir, 'motion-proof', 'preview-resource-report-document.html'),
+      motionProofManifest: path.join(options.outDir, 'motion-proof', 'capture', 'reference-manifest.json'),
     },
     steps: {},
     blockers: [],
@@ -1086,6 +1241,7 @@ function retryAction(options) {
       '--out-dir', options.outDir,
       '--wait-ms', options.waitMs,
       '--playwright-package', options.playwrightPackage,
+      '--auth-header-env', options.authHeaderEnv,
       ...(options.channel ? ['--channel', options.channel] : []),
       ...(options.subpixelAuthorization
         ? ['--subpixel-authorization', options.subpixelAuthorization]
@@ -1192,14 +1348,59 @@ function main() {
 
     const candidateManifest = readJson(report.files.candidateManifest);
     const completeness = validateCanonicalCaptureCompleteness(candidateManifest);
-    const motionBlockers = validateCanonicalMotionEvidence(iteration, candidateManifest);
+    const publicMotionViewports = Array.isArray(candidateManifest?.motionEvidence?.viewports)
+      ? candidateManifest.motionEvidence.viewports
+      : [];
+    const publicAnnotationOwners = publicMotionViewports.flatMap((viewport) => (
+      Array.isArray(viewport?.owners) ? viewport.owners : []
+    )).filter((owner) => (
+      String(owner?.nodeId || '') !== '' || String(owner?.recipeId || '') !== ''
+    ));
+    const publicAnnotationBlockers = publicAnnotationOwners.length > 0
+      ? [{
+        code: 'canonical_public_capture_contains_authoring_annotations',
+        message: 'The plain public-page capture contains request-scoped authoring annotations and cannot be canonical parity evidence.',
+      }]
+      : [];
     report.qualityGates.completeness = completeness.gate;
+    if (completeness.blockers.length > 0 || publicAnnotationBlockers.length > 0) {
+      report.status = 'CANONICAL_QUALITY_BLOCKED';
+      report.blockers = [...completeness.blockers, ...publicAnnotationBlockers];
+      report.nextAction = nextAction(
+        'blocked_canonical_quality_evidence',
+        '',
+        [],
+        ['COMPLETE_UNANNOTATED_PUBLIC_CAPTURE'],
+        'Stop. Restore a complete plain public capture without authoring annotations, then rerun canonical verification.'
+      );
+      persist(report);
+      output(report, options);
+      process.exitCode = 1;
+      return;
+    }
+
+    const motionContext = canonicalMotionContext(iteration);
+    let motionBlockers = motionContext.blockers;
+    let motionProofEvidence = null;
+    if (motionBlockers.length === 0 && motionContext.audit?.claims.length > 0) {
+      const proof = buildCanonicalMotionProof(options, iteration, previewReport, report.files);
+      Object.assign(report.steps, proof.steps);
+      motionProofEvidence = proof.evidence;
+      motionBlockers = proof.blockers.length > 0
+        ? proof.blockers
+        : validateCanonicalMotionEvidence(iteration, proof.manifest, motionContext);
+    }
     report.qualityGates.motion = {
       evaluated: true,
       passed: motionBlockers.length === 0,
       blockerCount: motionBlockers.length,
+      claimCount: motionContext.audit?.claims.length || 0,
+      proofMode: motionContext.audit?.claims.length > 0
+        ? 'request-scoped-annotated-preview'
+        : 'not-required',
+      ...(motionProofEvidence ? { evidence: motionProofEvidence } : {}),
     };
-    const canonicalQualityBlockers = [...completeness.blockers, ...motionBlockers];
+    const canonicalQualityBlockers = [...motionBlockers];
     if (canonicalQualityBlockers.length > 0) {
       report.status = 'CANONICAL_QUALITY_BLOCKED';
       report.blockers = canonicalQualityBlockers;
@@ -1367,6 +1568,9 @@ function main() {
       saveReport: previewReport.evidence.saveReport,
       previewReport: options.previewReport,
       publicPageUrl: options.publicPageUrl,
+      ...(report.qualityGates.motion?.evidence
+        ? { motionProof: report.qualityGates.motion.evidence }
+        : {}),
       ...(authorizedResidual ? { subpixelResidual: authorizedResidual } : {}),
     };
     report.nextAction = nextAction(
