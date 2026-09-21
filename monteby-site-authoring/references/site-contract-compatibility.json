@@ -47,6 +47,7 @@
     },
     "contractLightProjection": {
       "minimumBuilderVersion": "1.6.0",
+      "contractMode": "light",
       "contractPath": "mode",
       "expectedValue": "light",
       "optional": true,
@@ -54,6 +55,7 @@
     },
     "contractDesignProjection": {
       "minimumBuilderVersion": "1.6.0",
+      "contractMode": "design",
       "contractPath": "mode",
       "expectedValue": "design",
       "optional": true,
@@ -61,6 +63,7 @@
     },
     "contractAuthoringProjection": {
       "minimumBuilderVersion": "1.6.0",
+      "contractMode": "authoring",
       "contractPath": "mode",
       "expectedValue": "authoring",
       "optional": true,
@@ -68,6 +71,7 @@
     },
     "contractCatalogsProjection": {
       "minimumBuilderVersion": "1.6.0",
+      "contractMode": "catalogs",
       "contractPath": "mode",
       "expectedValue": "catalogs",
       "optional": true,
@@ -75,6 +79,7 @@
     },
     "contractComponentsSummary": {
       "minimumBuilderVersion": "1.6.0",
+      "contractMode": "authoring-summary",
       "contractPath": "componentsMode",
       "expectedValue": "summary",
       "optional": true,
