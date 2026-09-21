@@ -189,24 +189,27 @@ function buildResolvedMotionProfile(contract) {
   }
 
   const recipeById = new Map(recipes.map((recipe) => [recipe.id, recipe]));
-  const motionSections = new Set();
+  const motionSectionsByComponent = new Map();
   const propNamesByComponent = new Map();
   for (const recipe of recipes) {
     for (const component of recipe.components) {
       const propNames = propNamesByComponent.get(component) || new Set();
+      const motionSections = motionSectionsByComponent.get(component) || new Set();
       Object.keys(recipe.props).forEach((prop) => {
         propNames.add(prop);
         const section = controls.get(`${component}.${prop}`)?.section;
         if (typeof section === 'string' && section) motionSections.add(section);
       });
       propNamesByComponent.set(component, propNames);
+      motionSectionsByComponent.set(component, motionSections);
     }
   }
   for (const [path, control] of controls) {
-    if (typeof control?.section !== 'string' || !motionSections.has(control.section)) continue;
     const separator = path.indexOf('.');
     if (separator < 1 || separator === path.length - 1) continue;
     const component = path.slice(0, separator);
+    const motionSections = motionSectionsByComponent.get(component);
+    if (typeof control?.section !== 'string' || !motionSections?.has(control.section)) continue;
     const prop = path.slice(separator + 1);
     const propNames = propNamesByComponent.get(component) || new Set();
     propNames.add(prop);
@@ -247,7 +250,7 @@ function orderedNodeIds(nodeMap) {
 }
 
 function recipeForNode(profile, component, props) {
-  const publishedProps = profile.propNames || new Set();
+  const publishedProps = profile.propNamesByComponent?.get(component) || new Set();
   const matches = profile.recipes.filter((recipe) => (
     recipe.components.includes(component)
     && Object.entries(recipe.props).every(([prop, value]) => (
@@ -402,11 +405,15 @@ function auditMotionLayout(nodeMap, profile) {
     const node = nodeMap[nodeId];
     const component = nodeType(node);
     const props = isRecord(node.props) ? node.props : {};
-    const hasComponentMotion = hasMotionProps(profile, component, props);
-    const hasPublishedMotion = Object.entries(props).some(([prop, value]) => (
+    const componentProps = profile.propNamesByComponent?.get(component) || new Set();
+    const forbiddenMotion = Object.entries(props).some(([prop, value]) => (
       profile.propNames.has(prop) && !motionPropIsInactive(value)
     ));
-    if (forbidden.has(component) && hasPublishedMotion) {
+    const hasComponentMotion = hasMotionProps(profile, component, props);
+    const hasPublishedMotion = Object.entries(props).some(([prop, value]) => (
+      componentProps.has(prop) && !motionPropIsInactive(value)
+    ));
+    if (forbidden.has(component) && forbiddenMotion) {
       errors.push({ code: 'motion_forbidden_component', nodeId, component, message: `${nodeId} (${component}) is forbidden by the live motion policy.` });
       continue;
     }
@@ -566,14 +573,15 @@ function motionSignature(nodeMap, profile) {
   return orderedNodeIds(nodeMap).flatMap((nodeId) => {
     const node = nodeMap[nodeId];
     const props = isRecord(node?.props) ? node.props : {};
-    const publishedProps = profile.propNames || new Set();
-    const recipe = recipeForNode(profile, nodeType(node), props);
+    const component = nodeType(node);
+    const publishedProps = profile.propNamesByComponent?.get(component) || new Set();
+    const recipe = recipeForNode(profile, component, props);
     const selected = recipe
       ? Object.fromEntries(Object.keys(recipe.props).map((prop) => [prop, props[prop]]))
       : Object.fromEntries(Object.entries(props).filter(([prop, value]) => (
         publishedProps.has(prop) && !motionPropIsInactive(value)
       )));
-    return Object.keys(selected).length > 0 ? [{ nodeId, component: nodeType(node), props: selected }] : [];
+    return Object.keys(selected).length > 0 ? [{ nodeId, component, props: selected }] : [];
   });
 }
 

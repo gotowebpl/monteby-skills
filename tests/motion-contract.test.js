@@ -432,8 +432,8 @@ test('motion audit requires one exact active recipe signature while tolerating n
   assert.equal(
     auditMotionLayout(crossComponentMixed, profile).errors
       .some((entry) => entry.code === 'motion_recipe_unmatched'),
-    true,
-    'a globally published active motion prop cannot hide behind another component owner'
+    false,
+    'a prop owned only by another component cannot corrupt this component motion signature'
   );
   assert.deepEqual(motionSignature(crossComponentMixed, profile), [{
     nodeId: 'section-1',
@@ -444,7 +444,6 @@ test('motion audit requires one exact active recipe signature while tolerating n
       motionDuration: 600,
       motionStagger: 100,
       motionRepeat: 'once',
-      pointerEffect: 'magnetic',
     },
   }]);
 
@@ -459,8 +458,10 @@ test('motion audit requires one exact active recipe signature while tolerating n
   };
   assert.equal(
     auditMotionLayout(wrongOwner, profile).errors.some((entry) => entry.code === 'motion_recipe_unmatched'),
-    true
+    false,
+    'an unknown cross-component prop is left to the shared control validator instead of tainting motion identity'
   );
+  assert.deepEqual(motionSignature(wrongOwner, profile), []);
 
   const advanced = contract();
   advanced.components[0].controls = advanced.components[0].controls.map((entry) => ({
@@ -486,6 +487,33 @@ test('motion audit requires one exact active recipe signature while tolerating n
     true,
     'the canonical signature must disclose the unmatched live motion control'
   );
+});
+
+test('motion sections and prop names remain scoped to their owning component', () => {
+  const live = contract();
+  live.components.find((entry) => entry.name === 'ButtonBlock').controls = [
+    control('pointerEffect', 'select', { section: 'Animation', options: ['none', 'magnetic'] }),
+    control('pointerStrength', 'number', { section: 'Animation', min: 1, max: 40, step: 1 }),
+    control('autoplay', 'toggle'),
+  ];
+  live.components.push(component('AnimatedHeadline', [
+    control('duration', 'number', { section: 'Animation', min: 100, max: 10000, step: 100 }),
+  ]));
+  const profile = buildResolvedMotionProfile(live);
+  const nodeMap = {
+    ROOT: { type: { resolvedName: 'RootCanvas' }, isCanvas: true, props: {}, nodes: ['animated'] },
+    animated: {
+      type: { resolvedName: 'AnimatedHeadline' },
+      isCanvas: false,
+      props: { duration: 3000 },
+      parent: 'ROOT',
+      nodes: [],
+    },
+  };
+
+  assert.equal(profile.propNamesByComponent.has('AnimatedHeadline'), false);
+  assert.equal(auditMotionLayout(nodeMap, profile).ok, true);
+  assert.deepEqual(motionSignature(nodeMap, profile), []);
 });
 
 test('motion audit fails closed when published recipe prerequisites are absent', () => {
