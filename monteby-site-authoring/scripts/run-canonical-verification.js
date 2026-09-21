@@ -658,10 +658,40 @@ function validateCanonicalMotionEvidence(iteration, candidateManifest) {
         blockers.push({ code: `canonical_motion_${check.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`)}_failed`, message: `${viewport} motion evidence must report ${check}=${expected}.` });
       }
     }
+    const normalEnvironment = captured.environments?.normalFinePointer;
+    const normalEnvironmentValid = normalEnvironment?.status === 'passed'
+      && normalEnvironment.javaScript === true
+      && normalEnvironment.reducedMotion === false
+      && normalEnvironment.coarsePointer === false
+      && normalEnvironment.keyboardIntercepted === false
+      && normalEnvironment.wheelIntercepted === false;
+    if (!normalEnvironmentValid) {
+      blockers.push({
+        code: 'canonical_motion_normal_environment_failed',
+        message: `${viewport} must prove motion in a normal JavaScript-enabled fine-pointer environment without keyboard or wheel interception.`,
+      });
+    }
     const capturedKinds = new Set(captured.owners.map((owner) => owner?.kind).filter(Boolean));
     for (const kind of claimedKinds) {
       if (!capturedKinds.has(kind)) {
         blockers.push({ code: 'canonical_motion_claim_not_observed', message: `${viewport} did not observe the authored ${kind} motion owner.` });
+      }
+      const proof = normalEnvironment?.positiveByKind?.[kind];
+      const positiveOperation = proof?.passed === true
+        && Number.isInteger(proof.ownerCount)
+        && proof.ownerCount > 0
+        && Number.isInteger(proof.attemptedCount)
+        && proof.attemptedCount > 0
+        && Number.isInteger(proof.passedCount)
+        && proof.passedCount > 0
+        && proof.passedCount <= proof.attemptedCount
+        && Array.isArray(proof.samples)
+        && proof.samples.some((sample) => sample?.passed === true && typeof sample?.mechanism === 'string' && sample.mechanism !== '');
+      if (!positiveOperation) {
+        blockers.push({
+          code: `canonical_motion_${kind.replace(/[^a-z0-9]+/gu, '_')}_positive_operation_failed`,
+          message: `${viewport} did not prove a positive ${kind} runtime operation in the normal JavaScript-enabled fine-pointer environment.`,
+        });
       }
     }
     const observedBudgets = [

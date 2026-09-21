@@ -102,6 +102,96 @@ function layout() {
   };
 }
 
+function canonicalMotionFixture(kind) {
+  const definitions = {
+    entrance: { intent: 'reveal', prop: 'motionPreset', value: 'slide', options: ['none', 'slide'] },
+    pointer: { intent: 'pointer', prop: 'pointerEffect', value: 'magnetic', options: ['none', 'magnetic'] },
+    scroll: { intent: 'background', prop: 'backgroundParallax', value: 'subtle', options: ['none', 'subtle'] },
+    pinned: { intent: 'story', prop: 'sectionStickyScene', value: 'progress', options: ['off', 'progress'] },
+    'state-change': { intent: 'component', prop: 'transitionPreset', value: 'fade', options: ['none', 'fade'] },
+    ambient: { intent: 'background', prop: 'backgroundMotion', value: 'zoom-in', options: ['none', 'zoom-in'] },
+  };
+  const definition = definitions[kind];
+  const liveContract = {
+    components: [component('MotionOwner', [control(definition.prop, 'select', { options: definition.options })])],
+    authoring: {
+      capabilities: { motionRecipes: true },
+      motion: {
+        version: 1,
+        policy: {
+          defaultRepeat: 'once',
+          maxEntranceOwnersPerPage: 2,
+          maxFirstViewportEntranceOwners: 2,
+          maxPointerEffectsPerPage: 2,
+          maxPinnedScenesPerPage: 1,
+          maxBackgroundEffectsPerPage: 2,
+          maxStaggerSpanMs: 300,
+          maxEntranceDurationMs: 700,
+          maxEntranceDelayMs: 150,
+          maxEntranceDistancePx: 32,
+          forbiddenComponents: [],
+          prohibitedInputs: [],
+          rules: [],
+        },
+        recipes: [{
+          id: `proof-${kind}`,
+          intent: definition.intent,
+          components: ['MotionOwner'],
+          props: { [definition.prop]: definition.value },
+        }],
+      },
+    },
+  };
+  return {
+    contract: liveContract,
+    layout: {
+      ROOT: { type: { resolvedName: 'RootCanvas' }, isCanvas: true, props: {}, nodes: ['motion-owner'] },
+      'motion-owner': {
+        type: { resolvedName: 'MotionOwner' },
+        isCanvas: false,
+        props: { [definition.prop]: definition.value },
+        parent: 'ROOT',
+        nodes: [],
+      },
+    },
+  };
+}
+
+function canonicalMotionViewportEvidence(label, kind) {
+  return {
+    label,
+    schemaVersion: 1,
+    normalized: true,
+    owners: [{ kind, firstViewport: true }],
+    environments: {
+      normalFinePointer: {
+        status: 'passed',
+        javaScript: true,
+        reducedMotion: false,
+        coarsePointer: false,
+        keyboardIntercepted: false,
+        wheelIntercepted: false,
+        positiveByKind: {
+          [kind]: {
+            ownerCount: 1,
+            attemptedCount: 1,
+            passedCount: 1,
+            passed: true,
+            samples: [{ id: '1', mechanism: `${kind}-proof`, passed: true }],
+          },
+        },
+      },
+    },
+    checks: {
+      reducedMotionStatic: true,
+      noJavaScriptStatic: true,
+      coarsePointerStatic: true,
+      keyboardOperable: true,
+      wheelInterception: false,
+    },
+  };
+}
+
 test('resolved motion profile accepts only recipes that round-trip through live controls', () => {
   const resolved = buildResolvedMotionProfile(contract());
   assert.equal(resolved.available, true);
@@ -347,7 +437,7 @@ test('normalizer and clean-layout audit both enforce the shared live motion poli
   }
 });
 
-test('canonical verifier requires normalized reduced/no-JS/coarse/input evidence only for claimed motion', () => {
+test('canonical verifier requires normalized normal/reduced/no-JS/coarse/input evidence only for claimed motion', () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'monteby-motion-contract-'));
   const contractFile = path.join(directory, 'contract.json');
   const layoutFile = path.join(directory, 'layout.json');
@@ -357,22 +447,9 @@ test('canonical verifier requires normalized reduced/no-JS/coarse/input evidence
   fs.writeFileSync(contractFile, JSON.stringify(contract()));
   fs.writeFileSync(layoutFile, JSON.stringify(nodeMap));
   const iteration = { files: { contract: contractFile, layout: layoutFile } };
-  const viewportEvidence = (label) => ({
-    label,
-    schemaVersion: 1,
-    normalized: true,
-    owners: [{ kind: 'pointer' }],
-    checks: {
-      reducedMotionStatic: true,
-      noJavaScriptStatic: true,
-      coarsePointerStatic: true,
-      keyboardOperable: true,
-      wheelInterception: false,
-    },
-  });
   const manifest = {
     motionEvidence: {
-      viewports: ['desktop', 'tablet', 'mobile'].map(viewportEvidence),
+      viewports: ['desktop', 'tablet', 'mobile'].map((label) => canonicalMotionViewportEvidence(label, 'pointer')),
     },
   };
   assert.deepEqual(validateCanonicalMotionEvidence(iteration, manifest), []);
@@ -381,6 +458,35 @@ test('canonical verifier requires normalized reduced/no-JS/coarse/input evidence
     validateCanonicalMotionEvidence(iteration, manifest).some((entry) => entry.code === 'canonical_motion_reduced_motion_static_failed'),
     true
   );
+});
+
+test('canonical verifier requires positive normal-runtime proof for every claimed motion kind', () => {
+  for (const kind of ['pointer', 'scroll', 'pinned', 'state-change', 'entrance', 'ambient']) {
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), `monteby-motion-${kind}-`));
+    const contractFile = path.join(directory, 'contract.json');
+    const layoutFile = path.join(directory, 'layout.json');
+    const fixture = canonicalMotionFixture(kind);
+    fs.writeFileSync(contractFile, JSON.stringify(fixture.contract));
+    fs.writeFileSync(layoutFile, JSON.stringify(fixture.layout));
+    const iteration = { files: { contract: contractFile, layout: layoutFile } };
+    const manifest = {
+      motionEvidence: {
+        viewports: ['desktop', 'tablet', 'mobile'].map((label) => canonicalMotionViewportEvidence(label, kind)),
+      },
+    };
+    assert.deepEqual(validateCanonicalMotionEvidence(iteration, manifest), [], `${kind} positive proof`);
+
+    const failedProof = manifest.motionEvidence.viewports[1].environments.normalFinePointer.positiveByKind[kind];
+    failedProof.passed = false;
+    failedProof.passedCount = 0;
+    failedProof.samples[0].passed = false;
+    const expectedCode = `canonical_motion_${kind.replace(/[^a-z0-9]+/gu, '_')}_positive_operation_failed`;
+    assert.equal(
+      validateCanonicalMotionEvidence(iteration, manifest).some((entry) => entry.code === expectedCode),
+      true,
+      `${kind} failed proof`
+    );
+  }
 });
 
 test('browser capture records normalized motion owners and explicit fallback/input probes', () => {
@@ -395,6 +501,14 @@ test('browser capture records normalized motion owners and explicit fallback/inp
     'coarsePointerStatic',
     'keyboardOperable',
     'wheelInterception',
+    'normalFinePointer',
+    'positiveByKind',
+    'pointer-css-variable',
+    'scroll-progress',
+    'pinned-progress',
+    'user-control',
+    'entrance-transition',
+    'running-animation',
   ]) {
     assert.match(source, new RegExp(evidence));
   }

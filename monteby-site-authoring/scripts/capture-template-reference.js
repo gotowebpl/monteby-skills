@@ -3569,7 +3569,7 @@ function captureRenderedLayout(
     if (!Number.isFinite(numeric)) return maximum;
     return Math.max(maximum, trimmed.endsWith('ms') ? numeric : numeric * 1000);
   }, 0);
-  const motionOwners = Array.from(document.querySelectorAll([
+  const attributedMotionOwners = Array.from(document.querySelectorAll([
     '[data-gw-motion]',
     '[data-gw-section-sticky]',
     '[data-gw-section-mask]',
@@ -3578,14 +3578,24 @@ function captureRenderedLayout(
     '[data-monteby-background-parallax]',
     '[data-monteby-pointer-effect]',
     '[data-gw-ct]',
-  ].join(','))).slice(0, 200).map((element) => {
+  ].join(',')));
+  const hoverMotionOwners = Array.from(document.querySelectorAll('[class*="gcb-"]')).filter((element) => {
+    const style = window.getComputedStyle(element);
+    return String(style.getPropertyValue('--gw-hover-transform') || '').trim() !== ''
+      || String(style.getPropertyValue('--gw-hover-shadow') || '').trim() !== ''
+      || String(style.getPropertyValue('--gw-active-transform') || '').trim() !== '';
+  });
+  const motionOwners = Array.from(new Set([...attributedMotionOwners, ...hoverMotionOwners])).slice(0, 200).map((element) => {
     const style = window.getComputedStyle(element);
     const rect = readRect(element);
     const pointer = element.hasAttribute('data-monteby-pointer-effect');
     const pinned = element.hasAttribute('data-gw-section-sticky');
     const scroll = element.hasAttribute('data-monteby-background-parallax')
       || element.hasAttribute('data-gw-section-progress');
-    const stateChange = element.hasAttribute('data-gw-ct');
+    const stateChange = element.hasAttribute('data-gw-ct')
+      || String(style.getPropertyValue('--gw-hover-transform') || '').trim() !== ''
+      || String(style.getPropertyValue('--gw-hover-shadow') || '').trim() !== ''
+      || String(style.getPropertyValue('--gw-active-transform') || '').trim() !== '';
     const kind = pointer ? 'pointer' : pinned ? 'pinned' : scroll ? 'scroll' : stateChange ? 'state-change'
       : element.hasAttribute('data-monteby-background-motion') ? 'ambient' : 'entrance';
     const recipeId = String(element.getAttribute('data-monteby-motion-recipe') || '').trim();
@@ -4250,8 +4260,8 @@ async function probeMotionEnvironment(browser, url, viewport, options = {}) {
   try {
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
     await page.waitForLoadState('load', { timeout: 10000 }).catch(() => {});
-    if (options.javaScript !== false) await page.waitForTimeout(250);
-    return await page.evaluate(({ javaScript, reducedMotion, coarsePointer }) => {
+    if (options.javaScript !== false) await page.waitForTimeout(options.positiveProof === true ? 40 : 250);
+    const result = await page.evaluate(async ({ javaScript, positiveProof }) => {
       const selector = [
         '[data-gw-motion]',
         '[data-gw-section-sticky]',
@@ -4262,16 +4272,64 @@ async function probeMotionEnvironment(browser, url, viewport, options = {}) {
         '[data-monteby-pointer-effect]',
         '[data-gw-ct]',
       ].join(',');
+      const settle = async (delay = 32) => {
+        if (typeof window.requestAnimationFrame === 'function') {
+          await new Promise((resolve) => window.requestAnimationFrame(() => window.requestAnimationFrame(resolve)));
+        }
+        if (delay > 0) await new Promise((resolve) => window.setTimeout(resolve, delay));
+      };
       const durationMilliseconds = (value) => String(value || '').split(',').reduce((maximum, token) => {
         const trimmed = token.trim();
         const numeric = Number.parseFloat(trimmed);
         if (!Number.isFinite(numeric)) return maximum;
         return Math.max(maximum, trimmed.endsWith('ms') ? numeric : numeric * 1000);
       }, 0);
-      const owners = Array.from(document.querySelectorAll(selector)).slice(0, 200);
-      const states = owners.map((element) => {
+      const attributedOwners = Array.from(document.querySelectorAll(selector));
+      const hoverOwners = Array.from(document.querySelectorAll('[class*="gcb-"]')).filter((element) => {
+        const style = window.getComputedStyle(element);
+        return String(style.getPropertyValue('--gw-hover-transform') || '').trim() !== ''
+          || String(style.getPropertyValue('--gw-hover-shadow') || '').trim() !== ''
+          || String(style.getPropertyValue('--gw-active-transform') || '').trim() !== '';
+      });
+      const owners = Array.from(new Set([...attributedOwners, ...hoverOwners])).slice(0, 200);
+      const kindFor = (element, style = window.getComputedStyle(element)) => {
+        if (element.hasAttribute('data-monteby-pointer-effect')) return 'pointer';
+        if (element.hasAttribute('data-gw-section-sticky')) return 'pinned';
+        if (element.hasAttribute('data-monteby-background-parallax') || element.hasAttribute('data-gw-section-progress')) return 'scroll';
+        if (
+          element.hasAttribute('data-gw-ct')
+          || String(style.getPropertyValue('--gw-hover-transform') || '').trim() !== ''
+          || String(style.getPropertyValue('--gw-hover-shadow') || '').trim() !== ''
+          || String(style.getPropertyValue('--gw-active-transform') || '').trim() !== ''
+        ) return 'state-change';
+        if (element.hasAttribute('data-monteby-background-motion')) return 'ambient';
+        return 'entrance';
+      };
+      const styleSignature = (element) => {
+        const style = window.getComputedStyle(element);
+        return [
+          style.opacity,
+          style.translate,
+          style.transform,
+          style.scale,
+          style.clipPath,
+          style.filter,
+          style.boxShadow,
+        ].join('|');
+      };
+      const motionTargets = (element) => [element, ...Array.from(element.querySelectorAll([
+        '.is-gw-motion-pending',
+        '.is-gw-motion-in',
+        '.is-gw-section-mask-pending',
+        '.is-gw-section-mask-in',
+        '.is-gw-ct-pending',
+        '.is-gw-ct-in',
+        '.is-gw-ct-scrim',
+      ].join(',')))].slice(0, 16);
+      const ownerSnapshot = (element) => {
         const style = window.getComputedStyle(element);
         const rect = element.getBoundingClientRect();
+        const targets = motionTargets(element);
         return {
           hidden: rect.width <= 1 || rect.height <= 1 || style.display === 'none'
             || style.visibility === 'hidden' || Number(style.opacity || '1') <= 0.02,
@@ -4280,33 +4338,227 @@ async function probeMotionEnvironment(browser, url, viewport, options = {}) {
             durationMilliseconds(style.transitionDuration)
           ),
           pointer: element.hasAttribute('data-monteby-pointer-effect'),
+          pointerX: String(element.style.getPropertyValue('--monteby-pointer-x') || '').trim(),
+          pointerY: String(element.style.getPropertyValue('--monteby-pointer-y') || '').trim(),
+          sectionProgress: String(element.style.getPropertyValue('--gw-section-progress') || '').trim(),
+          parallaxY: String(element.style.getPropertyValue('--monteby-background-parallax-y') || '').trim(),
+          sceneActive: String(element.getAttribute('data-gw-scene-active') || ''),
+          activeSteps: element.querySelectorAll('.is-gw-scene-step-active').length,
+          runtimeClassActive: targets.some((target) => (
+            target.classList.contains('is-gw-motion-in')
+            || target.classList.contains('is-gw-section-mask-in')
+            || target.classList.contains('is-gw-ct-in')
+          )),
+          runtimePending: targets.some((target) => (
+            target.classList.contains('is-gw-motion-pending')
+            || target.classList.contains('is-gw-section-mask-pending')
+            || target.classList.contains('is-gw-ct-pending')
+            || target.classList.contains('is-gw-ct-scrim')
+          )),
+          styleSignature: targets.map(styleSignature).join('||'),
+          animationName: style.animationName,
+          animationPlayState: style.animationPlayState,
+          animationDurationMs: durationMilliseconds(style.animationDuration),
+          enhanced: element.getAttribute('data-background-motion-enhanced') === 'true',
+          semanticState: [
+            ...Array.from(element.querySelectorAll('[role="tab"][aria-selected]')).map((entry) => `tab:${entry.getAttribute('aria-selected')}`),
+            ...Array.from(element.querySelectorAll('button[aria-expanded]')).map((entry) => `expanded:${entry.getAttribute('aria-expanded')}`),
+            ...Array.from(element.querySelectorAll('.gotoweb-slider__slide,.gotoweb-carousel__slide')).map((entry) => `slide:${entry.classList.contains('is-active')}`),
+            ...Array.from(element.querySelectorAll('[data-tab-panel],[role="tabpanel"]')).map((entry) => `panel:${entry.hidden}`),
+          ].join('|'),
+        };
+      };
+      const states = owners.map((element, index) => {
+        const style = window.getComputedStyle(element);
+        const id = String(index + 1);
+        element.setAttribute('data-monteby-motion-probe-id', id);
+        return {
+          id,
+          kind: kindFor(element, style),
+          hoverCandidate: String(style.getPropertyValue('--gw-hover-transform') || '').trim() !== ''
+            || String(style.getPropertyValue('--gw-hover-shadow') || '').trim() !== '',
+          ...ownerSnapshot(element),
         };
       });
-      const pointerOwners = owners.filter((element) => element.hasAttribute('data-monteby-pointer-effect'));
-      for (const element of pointerOwners) {
+      const kindNames = ['pointer', 'scroll', 'pinned', 'state-change', 'entrance', 'ambient'];
+      const positiveByKind = Object.fromEntries(kindNames.map((kind) => [kind, {
+        ownerCount: states.filter((state) => state.kind === kind).length,
+        attemptedCount: 0,
+        passedCount: 0,
+        passed: false,
+        samples: [],
+      }]));
+      const record = (kind, id, mechanism, passed, details = {}) => {
+        const evidence = positiveByKind[kind];
+        evidence.attemptedCount += 1;
+        if (passed) evidence.passedCount += 1;
+        evidence.samples.push({ id, mechanism, passed, ...details });
+        evidence.passed = evidence.passedCount > 0;
+      };
+      const numericChanged = (left, right) => {
+        const before = Number.parseFloat(String(left || ''));
+        const after = Number.parseFloat(String(right || ''));
+        return Number.isFinite(before) && Number.isFinite(after) && Math.abs(after - before) > 0.01;
+      };
+      const scrollToOwner = async (element, viewportRatio) => {
+        const anchor = element.closest('section,[data-gw-section-sticky],[data-gw-section-progress]') || element.parentElement || element;
+        const rect = anchor.getBoundingClientRect();
+        const documentTop = rect.top + window.scrollY;
+        const maximum = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+        const top = Math.max(0, Math.min(maximum, documentTop - (window.innerHeight * viewportRatio)));
+        window.scrollTo({ left: 0, top, behavior: 'instant' });
+        await settle(48);
+      };
+      const scrollPinnedOwner = async (element, progress) => {
         const rect = element.getBoundingClientRect();
-        const PointerEventConstructor = typeof PointerEvent === 'function' ? PointerEvent : MouseEvent;
-        element.dispatchEvent(new PointerEventConstructor('pointermove', {
-          bubbles: true,
-          ...(typeof PointerEvent === 'function' ? { pointerType: 'mouse' } : {}),
-          clientX: rect.left + rect.width,
-          clientY: rect.top + rect.height,
-        }));
+        const documentTop = rect.top + window.scrollY;
+        const maximum = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+        const track = Math.max(0, rect.height - window.innerHeight);
+        const top = Math.max(0, Math.min(maximum, documentTop + (track * progress)));
+        window.scrollTo({ left: 0, top, behavior: 'instant' });
+        await settle(48);
+      };
+      const initialScroll = { x: Number(window.scrollX || 0), y: Number(window.scrollY || 0) };
+
+      if (positiveProof) {
+        for (const state of states.filter((entry) => entry.kind === 'pointer').slice(0, 8)) {
+          const element = document.querySelector(`[data-monteby-motion-probe-id="${state.id}"]`);
+          if (!element) continue;
+          await scrollToOwner(element, 0.5);
+          const before = ownerSnapshot(element);
+          const rect = element.getBoundingClientRect();
+          const PointerEventConstructor = typeof PointerEvent === 'function' ? PointerEvent : MouseEvent;
+          element.dispatchEvent(new PointerEventConstructor('pointermove', {
+            bubbles: true,
+            ...(typeof PointerEvent === 'function' ? { pointerType: 'mouse' } : {}),
+            clientX: rect.left + Math.max(1, rect.width - 1),
+            clientY: rect.top + Math.max(1, rect.height - 1),
+          }));
+          await settle(16);
+          const after = ownerSnapshot(element);
+          const nonZero = [after.pointerX, after.pointerY].some((value) => Math.abs(Number.parseFloat(value)) > 0.01);
+          const computedChanged = before.styleSignature !== after.styleSignature;
+          record('pointer', state.id, 'pointer-css-variable', nonZero && computedChanged, { nonZero, computedChanged });
+          element.dispatchEvent(new PointerEventConstructor('pointerleave', { bubbles: false }));
+        }
+
+        for (const kind of ['scroll', 'pinned']) {
+          for (const state of states.filter((entry) => entry.kind === kind).slice(0, 8)) {
+            const element = document.querySelector(`[data-monteby-motion-probe-id="${state.id}"]`);
+            if (!element) continue;
+            if (kind === 'pinned') await scrollPinnedOwner(element, 0.12);
+            else await scrollToOwner(element, 0.82);
+            const before = ownerSnapshot(element);
+            if (kind === 'pinned') await scrollPinnedOwner(element, 0.72);
+            else await scrollToOwner(element, 0.18);
+            const after = ownerSnapshot(element);
+            const progressChanged = numericChanged(before.sectionProgress, after.sectionProgress)
+              || numericChanged(before.parallaxY, after.parallaxY);
+            const stepChanged = before.sceneActive !== after.sceneActive || before.activeSteps !== after.activeSteps;
+            record(kind, state.id, kind === 'pinned' ? 'pinned-progress' : 'scroll-progress', progressChanged || stepChanged, {
+              progressChanged,
+              activeStepChanged: stepChanged,
+            });
+          }
+        }
+
+        for (const state of states.filter((entry) => entry.kind === 'state-change').slice(0, 8)) {
+          const element = document.querySelector(`[data-monteby-motion-probe-id="${state.id}"]`);
+          if (!element || state.hoverCandidate) continue;
+          await scrollToOwner(element, 0.5);
+          const inactiveTab = element.querySelector('[role="tab"][aria-selected="false"]');
+          const activeTab = element.querySelector('[role="tab"][aria-selected="true"]');
+          const disclosure = element.querySelector('button[aria-controls][aria-expanded]');
+          const sliderNext = element.querySelector('[data-slider-next],[data-carousel-next]');
+          const sliderPrevious = element.querySelector('[data-slider-prev],[data-carousel-prev]');
+          const modalTrigger = element.querySelector('[data-modal-target]');
+          const control = inactiveTab || disclosure || sliderNext || modalTrigger;
+          if (!control || typeof control.click !== 'function') {
+            record('state-change', state.id, 'user-control', false, { controlAvailable: false });
+            continue;
+          }
+          const before = ownerSnapshot(element);
+          control.click();
+          await settle(16);
+          const after = ownerSnapshot(element);
+          const changed = before.semanticState !== after.semanticState;
+          const transitionRan = after.runtimeClassActive || after.runtimePending || before.styleSignature !== after.styleSignature;
+          record('state-change', state.id, 'user-control', changed && transitionRan, {
+            controlAvailable: true,
+            semanticChanged: changed,
+            transitionObserved: transitionRan,
+          });
+          if (inactiveTab && activeTab && typeof activeTab.click === 'function') activeTab.click();
+          else if (disclosure && typeof disclosure.click === 'function') disclosure.click();
+          else if (sliderNext && sliderPrevious && typeof sliderPrevious.click === 'function') sliderPrevious.click();
+          else if (modalTrigger) document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+          await settle(0);
+        }
+
+        for (const state of states.filter((entry) => entry.kind === 'entrance').slice(0, 8)) {
+          const element = document.querySelector(`[data-monteby-motion-probe-id="${state.id}"]`);
+          if (!element) continue;
+          const before = ownerSnapshot(element);
+          if (!before.runtimeClassActive) {
+            await scrollToOwner(element, 0.5);
+          }
+          const after = ownerSnapshot(element);
+          const activeTransition = before.runtimeClassActive || after.runtimeClassActive
+            || ((before.runtimePending || after.runtimePending) && before.styleSignature !== after.styleSignature);
+          record('entrance', state.id, 'entrance-transition', activeTransition, {
+            runtimeClassObserved: before.runtimeClassActive || after.runtimeClassActive,
+            computedChanged: before.styleSignature !== after.styleSignature,
+          });
+        }
+
+        for (const state of states.filter((entry) => entry.kind === 'ambient').slice(0, 8)) {
+          const element = document.querySelector(`[data-monteby-motion-probe-id="${state.id}"]`);
+          if (!element) continue;
+          await scrollToOwner(element, 0.5);
+          const after = ownerSnapshot(element);
+          const running = after.enhanced
+            && after.animationName !== 'none'
+            && after.animationDurationMs > 20
+            && after.animationPlayState === 'running';
+          record('ambient', state.id, 'running-animation', running, {
+            enhanced: after.enhanced,
+            namedAnimation: after.animationName !== 'none',
+            positiveDuration: after.animationDurationMs > 20,
+            running: after.animationPlayState === 'running',
+          });
+        }
+      }
+
+      const pointerOwners = owners.filter((element) => element.hasAttribute('data-monteby-pointer-effect'));
+      if (!positiveProof) {
+        for (const element of pointerOwners) {
+          const rect = element.getBoundingClientRect();
+          const PointerEventConstructor = typeof PointerEvent === 'function' ? PointerEvent : MouseEvent;
+          element.dispatchEvent(new PointerEventConstructor('pointermove', {
+            bubbles: true,
+            ...(typeof PointerEvent === 'function' ? { pointerType: 'mouse' } : {}),
+            clientX: rect.left + rect.width,
+            clientY: rect.top + rect.height,
+          }));
+        }
       }
       const pointerMoved = pointerOwners.some((element) => {
         const style = element.style;
-        return String(style.getPropertyValue('--monteby-pointer-x')).trim() !== ''
-          || String(style.getPropertyValue('--monteby-pointer-y')).trim() !== '';
+        return [style.getPropertyValue('--monteby-pointer-x'), style.getPropertyValue('--monteby-pointer-y')]
+          .some((value) => Math.abs(Number.parseFloat(String(value || ''))) > 0.01);
       });
       const keyboardEvent = new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true });
       const wheelEvent = new WheelEvent('wheel', { deltaY: 100, bubbles: true, cancelable: true });
       document.body.dispatchEvent(keyboardEvent);
       document.body.dispatchEvent(wheelEvent);
+      window.scrollTo({ left: initialScroll.x, top: initialScroll.y, behavior: 'instant' });
+      await settle(0);
       const bodyTextLength = String(document.body?.innerText || '').trim().length;
       return {
+        status: 'passed',
         javaScript,
-        reducedMotion,
-        coarsePointer,
+        reducedMotion: Boolean(window.matchMedia?.('(prefers-reduced-motion: reduce)').matches),
+        coarsePointer: Boolean(window.matchMedia?.('(pointer: coarse)').matches),
         ownerCount: states.length,
         hiddenOwnerCount: states.filter((state) => state.hidden).length,
         activeOwnerCount: states.filter((state) => state.durationMs > 20).length,
@@ -4315,12 +4567,57 @@ async function probeMotionEnvironment(browser, url, viewport, options = {}) {
         contentVisible: bodyTextLength > 0 && states.every((state) => !state.hidden),
         keyboardIntercepted: keyboardEvent.defaultPrevented,
         wheelIntercepted: wheelEvent.defaultPrevented,
+        positiveByKind,
+        owners: states.map(({ id, kind, hoverCandidate }) => ({ id, kind, hoverCandidate })),
       };
     }, {
       javaScript: options.javaScript !== false,
       reducedMotion: options.reducedMotion === true,
       coarsePointer: options.coarsePointer === true,
+      positiveProof: options.positiveProof === true,
     });
+
+    if (options.positiveProof === true && result.positiveByKind?.['state-change']?.passed !== true) {
+      const hoverOwners = Array.isArray(result.owners)
+        ? result.owners.filter((owner) => owner.kind === 'state-change' && owner.hoverCandidate === true).slice(0, 8)
+        : [];
+      for (const owner of hoverOwners) {
+        const locator = page.locator(`[data-monteby-motion-probe-id="${owner.id}"]`).first();
+        const evidence = result.positiveByKind['state-change'];
+        evidence.attemptedCount += 1;
+        let before = null;
+        let after = null;
+        let passed = false;
+        try {
+          await locator.scrollIntoViewIfNeeded({ timeout: 2000 });
+          before = await locator.evaluate((element) => {
+            const style = window.getComputedStyle(element);
+            return { transform: style.transform, boxShadow: style.boxShadow };
+          });
+          await locator.hover({ timeout: 2000 });
+          await page.waitForTimeout(48);
+          after = await locator.evaluate((element) => {
+            const style = window.getComputedStyle(element);
+            return { transform: style.transform, boxShadow: style.boxShadow };
+          });
+          passed = before.transform !== after.transform || before.boxShadow !== after.boxShadow;
+        } catch {
+          passed = false;
+        }
+        if (passed) evidence.passedCount += 1;
+        evidence.passed = evidence.passedCount > 0;
+        evidence.samples.push({
+          id: owner.id,
+          mechanism: 'hover-computed-style',
+          passed,
+          transformChanged: Boolean(before && after && before.transform !== after.transform),
+          shadowChanged: Boolean(before && after && before.boxShadow !== after.boxShadow),
+        });
+        await page.mouse.move(0, 0).catch(() => {});
+      }
+    }
+    if (result && typeof result === 'object') delete result.owners;
+    return result;
   } finally {
     await context.close();
   }
@@ -4448,13 +4745,15 @@ const warmLazyMedia = ${warmLazyMedia.toString()};
       contentVisible: false,
       keyboardIntercepted: true,
       wheelIntercepted: true,
+      positiveByKind: {},
     };
     const hasMotionOwners = Array.isArray(capturedLayout.motionEvidence?.owners)
       && capturedLayout.motionEvidence.owners.length > 0;
     const probe = (probeOptions) => hasMotionOwners && typeof browser.newContext === 'function'
       ? probeMotionEnvironment(browser, captureUrl, viewport, probeOptions).catch(() => ({ ...unavailableEnvironment, status: 'failed' }))
       : Promise.resolve({ ...unavailableEnvironment, status: hasMotionOwners ? 'unavailable' : 'not-required' });
-    const [reducedMotion, noJavaScript, coarsePointer] = await Promise.all([
+    const [normalFinePointer, reducedMotion, noJavaScript, coarsePointer] = await Promise.all([
+      probe({ positiveProof: true }),
       probe({ reducedMotion: true }),
       probe({ javaScript: false }),
       probe({ coarsePointer: true }),
@@ -4467,6 +4766,7 @@ const warmLazyMedia = ${warmLazyMedia.toString()};
       countsByKind: {},
     };
     capturedLayout.motionEvidence.environments = {
+      normalFinePointer,
       reducedMotion,
       noJavaScript,
       coarsePointer,
@@ -5135,6 +5435,7 @@ module.exports = {
   paintedBackgroundImageRect,
   parseArgs,
   primaryFontEvidence,
+  probeMotionEnvironment,
   probeRenderedTabInteractions,
   renderReferenceBrief,
   renderedLayoutCaptureScript,
