@@ -8,6 +8,12 @@ const {
 
 const MOTION_PLAN_SOURCES = new Set(['explicit-brief', 'measured-reference']);
 const MOTION_FORBIDDEN_COMPONENT_FALLBACK = Object.freeze([]);
+const NON_CONTENT_COMPONENTS = new Set(['DecorativeShape', 'Divider', 'Spacer']);
+const STATE_COLLECTIONS = Object.freeze({
+  AccordionBlock: 'items',
+  SliderBlock: 'slides',
+  TabsBlock: 'tabs',
+});
 const REQUIRED_POLICY_BOUNDS = Object.freeze({
   maxEntranceOwnersPerPage: Object.freeze([1, 12]),
   maxFirstViewportEntranceOwners: Object.freeze([0, 6]),
@@ -112,6 +118,7 @@ function buildResolvedMotionProfile(contract) {
       recipes: [],
       recipeById: new Map(),
       propNames: new Set(),
+      propNamesByComponent: new Map(),
       rejectedRecipes: [{
         id: '',
         reasons: policyErrors.length > 0
@@ -182,6 +189,14 @@ function buildResolvedMotionProfile(contract) {
   }
 
   const recipeById = new Map(recipes.map((recipe) => [recipe.id, recipe]));
+  const propNamesByComponent = new Map();
+  for (const recipe of recipes) {
+    for (const component of recipe.components) {
+      const propNames = propNamesByComponent.get(component) || new Set();
+      Object.keys(recipe.props).forEach((prop) => propNames.add(prop));
+      propNamesByComponent.set(component, propNames);
+    }
+  }
   return {
     available: recipes.length > 0,
     version: 1,
@@ -190,6 +205,7 @@ function buildResolvedMotionProfile(contract) {
     recipes: Object.freeze(recipes),
     recipeById,
     propNames: new Set(recipes.flatMap((recipe) => Object.keys(recipe.props))),
+    propNamesByComponent,
     rejectedRecipes,
   };
 }
@@ -212,15 +228,38 @@ function orderedNodeIds(nodeMap) {
 }
 
 function recipeForNode(profile, component, props) {
+  const componentProps = profile.propNamesByComponent?.get(component) || new Set();
   const matches = profile.recipes.filter((recipe) => (
     recipe.components.includes(component)
-    && Object.entries(recipe.props).every(([prop, value]) => Object.hasOwn(props, prop) && props[prop] === value)
+    && Object.entries(recipe.props).every(([prop, value]) => (
+      Object.hasOwn(props, prop) && props[prop] === value
+    ))
+    && Object.entries(props).every(([prop, value]) => (
+      !componentProps.has(prop)
+      || Object.hasOwn(recipe.props, prop)
+      || motionPropIsInactive(value)
+    ))
   ));
   return matches.length === 1 ? matches[0] : null;
 }
 
-function hasMotionProps(profile, props) {
-  return Object.keys(props || {}).some((prop) => profile.propNames.has(prop));
+function motionPropIsInactive(value) {
+  return value === undefined
+    || value === null
+    || value === false
+    || value === 0
+    || value === ''
+    || value === 'none'
+    || value === 'off'
+    || value === 'auto'
+    || (Array.isArray(value) && value.length === 0);
+}
+
+function hasMotionProps(profile, component, props) {
+  const componentProps = profile.propNamesByComponent?.get(component) || new Set();
+  return Object.entries(props || {}).some(([prop, value]) => (
+    componentProps.has(prop) && !motionPropIsInactive(value)
+  ));
 }
 
 function firstViewportNodeIds(nodeMap) {
@@ -244,6 +283,91 @@ function motionGroupSize(node) {
   return 0;
 }
 
+function hasAuthoredValue(value) {
+  return (typeof value === 'string' && value.trim() !== '')
+    || (Number.isSafeInteger(value) && value > 0);
+}
+
+function hasAuthoredAction(value) {
+  if (Number.isSafeInteger(value)) return value > 0;
+  if (typeof value !== 'string' || value.trim() !== value || value === '' || value === '#') return false;
+  return !/^(?:javascript|data|vbscript):/iu.test(value);
+}
+
+function hasCompositeBackgroundMedia(props, imageOnly) {
+  const image = hasAuthoredValue(props.backgroundImage) || hasAuthoredValue(props.dynamicBackgroundImage);
+  const video = hasAuthoredValue(props.backgroundVideo);
+  if (props.backgroundMedia === 'image') return image;
+  if (props.backgroundMedia === 'video') return imageOnly ? false : video;
+  return false;
+}
+
+function hasFixedBackground(props) {
+  return props.backgroundAttachment === 'fixed'
+    || (Array.isArray(props.backgroundLayers) && props.backgroundLayers.some((layer) => (
+      isRecord(layer) && layer.attachment === 'fixed'
+    )));
+}
+
+function meaningfulDirectChildCount(nodeMap, node) {
+  return (Array.isArray(node?.nodes) ? node.nodes : []).filter((childId) => {
+    const child = nodeMap?.[childId];
+    return isRecord(child) && !NON_CONTENT_COMPONENTS.has(nodeType(child));
+  }).length;
+}
+
+function stateCollectionCount(component, props) {
+  const collection = STATE_COLLECTIONS[component];
+  if (!collection || !Array.isArray(props[collection])) return 0;
+  return props[collection].filter((item) => isRecord(item)).length;
+}
+
+function cardActionIsProven(component, props) {
+  if (component === 'Container') {
+    return hasAuthoredAction(props.href) || hasAuthoredAction(props.dynamicHref);
+  }
+  if (component === 'PricingTable' && Array.isArray(props.plans) && props.plans.length === 1) {
+    const plan = props.plans[0];
+    return isRecord(plan) && (hasAuthoredAction(plan.ctaHref) || hasAuthoredAction(plan.dynamicCtaHref));
+  }
+  return false;
+}
+
+function motionPrerequisiteErrors(nodeMap, nodeId, node, component, props, recipe) {
+  const errors = [];
+  const error = (code, message) => errors.push({ code, nodeId, component, message: `${nodeId} (${component}) ${message}` });
+  if (Object.hasOwn(recipe.props, 'backgroundMotion') && !hasCompositeBackgroundMedia(props, true)) {
+    error('motion_background_media_missing', 'requires an authored composite image background for this motion recipe.');
+  }
+  if (Object.hasOwn(recipe.props, 'backgroundParallax')) {
+    if (!hasCompositeBackgroundMedia(props, false)) {
+      error('motion_background_media_missing', 'requires an authored composite image or video background for this motion recipe.');
+    }
+    if (hasFixedBackground(props)) {
+      error('motion_fixed_background_conflict', 'cannot combine scroll depth with fixed background attachment.');
+    }
+  }
+  if (Object.hasOwn(recipe.props, 'sectionStickyScene')) {
+    const childCount = meaningfulDirectChildCount(nodeMap, node);
+    if (childCount < 3 || childCount > 6) {
+      error('motion_pinned_story_structure', `requires three to six meaningful direct children; found ${childCount}.`);
+    }
+    if (hasFixedBackground(props)) {
+      error('motion_fixed_background_conflict', 'cannot combine a pinned story with fixed background attachment.');
+    }
+  }
+  if (Object.hasOwn(recipe.props, 'transitionPreset')) {
+    const stateCount = stateCollectionCount(component, props);
+    if (stateCount < 2) {
+      error('motion_state_owner_structure', 'requires an explicit authorable collection with at least two states or slides.');
+    }
+  }
+  if (Object.hasOwn(recipe.props, 'hoverPreset') && !cardActionIsProven(component, props)) {
+    error('motion_card_action_unproven', 'requires one authorable, unambiguous card action.');
+  }
+  return errors;
+}
+
 function auditMotionLayout(nodeMap, profile) {
   const errors = [];
   const claims = [];
@@ -259,16 +383,26 @@ function auditMotionLayout(nodeMap, profile) {
     const node = nodeMap[nodeId];
     const component = nodeType(node);
     const props = isRecord(node.props) ? node.props : {};
-    if (!hasMotionProps(profile, props)) continue;
-    if (forbidden.has(component)) {
+    const hasComponentMotion = hasMotionProps(profile, component, props);
+    const hasPublishedMotion = Object.entries(props).some(([prop, value]) => (
+      profile.propNames.has(prop) && !motionPropIsInactive(value)
+    ));
+    if (forbidden.has(component) && hasPublishedMotion) {
       errors.push({ code: 'motion_forbidden_component', nodeId, component, message: `${nodeId} (${component}) is forbidden by the live motion policy.` });
+      continue;
+    }
+    if (!hasComponentMotion) {
+      if (hasPublishedMotion) {
+        errors.push({ code: 'motion_recipe_unmatched', nodeId, component, message: `${nodeId} (${component}) uses published motion props without one compatible live recipe.` });
+      }
       continue;
     }
     const recipe = recipeForNode(profile, component, props);
     if (!recipe) {
-      errors.push({ code: 'motion_recipe_unmatched', nodeId, component, message: `${nodeId} (${component}) has typed motion props that do not exactly include one live recipe.` });
+      errors.push({ code: 'motion_recipe_unmatched', nodeId, component, message: `${nodeId} (${component}) must have exactly one complete live recipe signature and no additional typed motion props.` });
       continue;
     }
+    errors.push(...motionPrerequisiteErrors(nodeMap, nodeId, node, component, props, recipe));
     if (props.autoplay === true) {
       errors.push({ code: 'motion_autoplay_enabled', nodeId, component, message: `${nodeId} (${component}) enables autoplay while claiming a live motion recipe; generated motion must remain user-controlled.` });
     }
@@ -304,7 +438,7 @@ function auditMotionLayout(nodeMap, profile) {
       for (const childId of Array.isArray(node.nodes) ? node.nodes : []) {
         const child = nodeMap[childId];
         const childProps = isRecord(child?.props) ? child.props : {};
-        if (hasMotionProps(profile, childProps)) {
+        if (hasMotionProps(profile, nodeType(child), childProps)) {
           errors.push({ code: 'motion_parent_child_conflict', nodeId: childId, component: nodeType(child), message: `${nodeId} owns a stagger while direct child ${childId} owns motion.` });
         }
       }
@@ -413,7 +547,13 @@ function motionSignature(nodeMap, profile) {
   return orderedNodeIds(nodeMap).flatMap((nodeId) => {
     const node = nodeMap[nodeId];
     const props = isRecord(node?.props) ? node.props : {};
-    const selected = Object.fromEntries(Object.entries(props).filter(([prop]) => profile.propNames.has(prop)));
+    const componentProps = profile.propNamesByComponent?.get(nodeType(node)) || new Set();
+    const recipe = recipeForNode(profile, nodeType(node), props);
+    const selected = recipe
+      ? Object.fromEntries(Object.keys(recipe.props).map((prop) => [prop, props[prop]]))
+      : Object.fromEntries(Object.entries(props).filter(([prop, value]) => (
+        componentProps.has(prop) && !motionPropIsInactive(value)
+      )));
     return Object.keys(selected).length > 0 ? [{ nodeId, component: nodeType(node), props: selected }] : [];
   });
 }

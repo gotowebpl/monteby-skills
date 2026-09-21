@@ -3588,6 +3588,7 @@ function captureRenderedLayout(
   const motionOwners = Array.from(new Set([...attributedMotionOwners, ...hoverMotionOwners])).slice(0, 200).map((element) => {
     const style = window.getComputedStyle(element);
     const rect = readRect(element);
+    const annotatedOwner = element.closest('[data-monteby-node-id]') || element;
     const pointer = element.hasAttribute('data-monteby-pointer-effect');
     const pinned = element.hasAttribute('data-gw-section-sticky');
     const scroll = element.hasAttribute('data-monteby-background-parallax')
@@ -3598,11 +3599,17 @@ function captureRenderedLayout(
       || String(style.getPropertyValue('--gw-active-transform') || '').trim() !== '';
     const kind = pointer ? 'pointer' : pinned ? 'pinned' : scroll ? 'scroll' : stateChange ? 'state-change'
       : element.hasAttribute('data-monteby-background-motion') ? 'ambient' : 'entrance';
-    const recipeId = String(element.getAttribute('data-monteby-motion-recipe') || '').trim();
+    const nodeId = String(annotatedOwner.getAttribute('data-monteby-node-id') || '').trim();
+    const recipeId = String(
+      element.getAttribute('data-monteby-motion-recipe')
+      || annotatedOwner.getAttribute('data-monteby-motion-recipe')
+      || ''
+    ).trim();
     return {
       structureKey: elementPathKey(element),
       tag: String(element.tagName || '').toLowerCase(),
       kind,
+      ...(nodeId ? { nodeId } : {}),
       ...(recipeId ? { recipeId } : {}),
       firstViewport: rect.top < viewport.height && rect.bottom > 0,
       rect,
@@ -4371,9 +4378,16 @@ async function probeMotionEnvironment(browser, url, viewport, options = {}) {
       const states = owners.map((element, index) => {
         const style = window.getComputedStyle(element);
         const id = String(index + 1);
+        const annotatedOwner = element.closest('[data-monteby-node-id]') || element;
         element.setAttribute('data-monteby-motion-probe-id', id);
         return {
           id,
+          nodeId: String(annotatedOwner.getAttribute('data-monteby-node-id') || '').trim(),
+          recipeId: String(
+            element.getAttribute('data-monteby-motion-recipe')
+            || annotatedOwner.getAttribute('data-monteby-motion-recipe')
+            || ''
+          ).trim(),
           kind: kindFor(element, style),
           hoverCandidate: String(style.getPropertyValue('--gw-hover-transform') || '').trim() !== ''
             || String(style.getPropertyValue('--gw-hover-shadow') || '').trim() !== '',
@@ -4388,12 +4402,32 @@ async function probeMotionEnvironment(browser, url, viewport, options = {}) {
         passed: false,
         samples: [],
       }]));
+      const positiveByOwner = states.map((state) => ({
+        probeId: state.id,
+        nodeId: state.nodeId,
+        recipeId: state.recipeId,
+        kind: state.kind,
+        attemptedCount: 0,
+        passedCount: 0,
+        passed: false,
+        samples: [],
+      }));
       const record = (kind, id, mechanism, passed, details = {}) => {
         const evidence = positiveByKind[kind];
+        const ownerEvidence = positiveByOwner.find((owner) => owner.probeId === id && owner.kind === kind);
+        const identity = ownerEvidence
+          ? { nodeId: ownerEvidence.nodeId, recipeId: ownerEvidence.recipeId, kind: ownerEvidence.kind }
+          : { nodeId: '', recipeId: '', kind };
         evidence.attemptedCount += 1;
         if (passed) evidence.passedCount += 1;
-        evidence.samples.push({ id, mechanism, passed, ...details });
+        evidence.samples.push({ id, ...identity, mechanism, passed, ...details });
         evidence.passed = evidence.passedCount > 0;
+        if (ownerEvidence) {
+          ownerEvidence.attemptedCount += 1;
+          if (passed) ownerEvidence.passedCount += 1;
+          ownerEvidence.samples.push({ id, ...identity, mechanism, passed, ...details });
+          ownerEvidence.passed = ownerEvidence.passedCount > 0;
+        }
       };
       const numericChanged = (left, right) => {
         const before = Number.parseFloat(String(left || ''));
@@ -4568,7 +4602,10 @@ async function probeMotionEnvironment(browser, url, viewport, options = {}) {
         keyboardIntercepted: keyboardEvent.defaultPrevented,
         wheelIntercepted: wheelEvent.defaultPrevented,
         positiveByKind,
-        owners: states.map(({ id, kind, hoverCandidate }) => ({ id, kind, hoverCandidate })),
+        positiveByOwner,
+        owners: states.map(({ id, nodeId, recipeId, kind, hoverCandidate }) => ({
+          id, nodeId, recipeId, kind, hoverCandidate,
+        })),
       };
     }, {
       javaScript: options.javaScript !== false,
@@ -4584,7 +4621,11 @@ async function probeMotionEnvironment(browser, url, viewport, options = {}) {
       for (const owner of hoverOwners) {
         const locator = page.locator(`[data-monteby-motion-probe-id="${owner.id}"]`).first();
         const evidence = result.positiveByKind['state-change'];
+        const ownerEvidence = result.positiveByOwner.find((entry) => (
+          entry.probeId === owner.id && entry.kind === 'state-change'
+        ));
         evidence.attemptedCount += 1;
+        if (ownerEvidence) ownerEvidence.attemptedCount += 1;
         let before = null;
         let after = null;
         let passed = false;
@@ -4606,13 +4647,22 @@ async function probeMotionEnvironment(browser, url, viewport, options = {}) {
         }
         if (passed) evidence.passedCount += 1;
         evidence.passed = evidence.passedCount > 0;
-        evidence.samples.push({
+        if (passed && ownerEvidence) ownerEvidence.passedCount += 1;
+        const sample = {
           id: owner.id,
+          nodeId: owner.nodeId,
+          recipeId: owner.recipeId,
+          kind: owner.kind,
           mechanism: 'hover-computed-style',
           passed,
           transformChanged: Boolean(before && after && before.transform !== after.transform),
           shadowChanged: Boolean(before && after && before.boxShadow !== after.boxShadow),
-        });
+        };
+        evidence.samples.push(sample);
+        if (ownerEvidence) {
+          ownerEvidence.passed = ownerEvidence.passedCount > 0;
+          ownerEvidence.samples.push(sample);
+        }
         await page.mouse.move(0, 0).catch(() => {});
       }
     }
@@ -4746,6 +4796,7 @@ const warmLazyMedia = ${warmLazyMedia.toString()};
       keyboardIntercepted: true,
       wheelIntercepted: true,
       positiveByKind: {},
+      positiveByOwner: [],
     };
     const hasMotionOwners = Array.isArray(capturedLayout.motionEvidence?.owners)
       && capturedLayout.motionEvidence.owners.length > 0;

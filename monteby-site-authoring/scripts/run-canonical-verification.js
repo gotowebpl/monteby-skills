@@ -639,7 +639,6 @@ function validateCanonicalMotionEvidence(iteration, candidateManifest) {
   const viewports = Array.isArray(evidence?.viewports) ? evidence.viewports : [];
   const byLabel = new Map(viewports.map((viewport) => [viewport?.label, viewport]));
   const blockers = [];
-  const claimedKinds = new Set(audit.claims.map((claim) => claim.kind));
   for (const viewport of CANONICAL_VIEWPORTS) {
     const captured = byLabel.get(viewport.split(':')[0]);
     if (!captured || captured.schemaVersion !== 1 || captured.normalized !== true || !Array.isArray(captured.owners)) {
@@ -671,26 +670,44 @@ function validateCanonicalMotionEvidence(iteration, candidateManifest) {
         message: `${viewport} must prove motion in a normal JavaScript-enabled fine-pointer environment without keyboard or wheel interception.`,
       });
     }
-    const capturedKinds = new Set(captured.owners.map((owner) => owner?.kind).filter(Boolean));
-    for (const kind of claimedKinds) {
-      if (!capturedKinds.has(kind)) {
-        blockers.push({ code: 'canonical_motion_claim_not_observed', message: `${viewport} did not observe the authored ${kind} motion owner.` });
+    for (const claim of audit.claims) {
+      const observed = captured.owners.some((owner) => (
+        owner?.nodeId === claim.nodeId
+        && owner?.recipeId === claim.recipeId
+        && owner?.kind === claim.kind
+      ));
+      if (!observed) {
+        blockers.push({
+          code: 'canonical_motion_owner_not_observed',
+          message: `${viewport} did not observe ${claim.nodeId} with recipe ${claim.recipeId} as a ${claim.kind} motion owner.`,
+        });
       }
-      const proof = normalEnvironment?.positiveByKind?.[kind];
+      const proof = Array.isArray(normalEnvironment?.positiveByOwner)
+        ? normalEnvironment.positiveByOwner.find((entry) => (
+          entry?.nodeId === claim.nodeId
+          && entry?.recipeId === claim.recipeId
+          && entry?.kind === claim.kind
+        ))
+        : null;
       const positiveOperation = proof?.passed === true
-        && Number.isInteger(proof.ownerCount)
-        && proof.ownerCount > 0
         && Number.isInteger(proof.attemptedCount)
         && proof.attemptedCount > 0
         && Number.isInteger(proof.passedCount)
         && proof.passedCount > 0
         && proof.passedCount <= proof.attemptedCount
         && Array.isArray(proof.samples)
-        && proof.samples.some((sample) => sample?.passed === true && typeof sample?.mechanism === 'string' && sample.mechanism !== '');
+        && proof.samples.some((sample) => (
+          sample?.passed === true
+          && sample?.nodeId === claim.nodeId
+          && sample?.recipeId === claim.recipeId
+          && sample?.kind === claim.kind
+          && typeof sample?.mechanism === 'string'
+          && sample.mechanism !== ''
+        ));
       if (!positiveOperation) {
         blockers.push({
-          code: `canonical_motion_${kind.replace(/[^a-z0-9]+/gu, '_')}_positive_operation_failed`,
-          message: `${viewport} did not prove a positive ${kind} runtime operation in the normal JavaScript-enabled fine-pointer environment.`,
+          code: 'canonical_motion_owner_positive_operation_failed',
+          message: `${viewport} did not prove a positive runtime operation for ${claim.nodeId}, recipe ${claim.recipeId}, kind ${claim.kind}.`,
         });
       }
     }

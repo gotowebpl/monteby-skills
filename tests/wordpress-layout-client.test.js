@@ -2,6 +2,7 @@
 
 const assert = require('node:assert/strict');
 const { spawn } = require('node:child_process');
+const { createHash } = require('node:crypto');
 const fs = require('node:fs');
 const http = require('node:http');
 const os = require('node:os');
@@ -19,6 +20,7 @@ const {
   canonicalSha256,
   nodeMapSha256,
   operationsSha256,
+  portableDigestBytes,
   pruneNoopOperations,
 } = require(CLIENT);
 const AUTH = 'Basic dGVzdDpzZWNyZXQ=';
@@ -38,6 +40,31 @@ const NODE_MAP = {
   },
 };
 const LAYOUT_SHA256 = nodeMapSha256(NODE_MAP);
+const COMPOSITION_SECTION = {
+  type: { resolvedName: 'Section' },
+  displayName: 'Section',
+  custom: {},
+  isCanvas: true,
+  props: {},
+  parent: 'ROOT',
+  hidden: false,
+  nodes: [],
+  linkedNodes: {},
+};
+const COMPOSITION_PLAN_MAP = {
+  ROOT: {
+    type: { resolvedName: 'RootCanvas' },
+    displayName: 'RootCanvas',
+    custom: {},
+    isCanvas: true,
+    props: {},
+    parent: null,
+    hidden: false,
+    nodes: ['hero-1'],
+    linkedNodes: {},
+  },
+  'hero-1': COMPOSITION_SECTION,
+};
 const OPERATIONS = [{
   type: 'update_props',
   nodeId: 'section-1',
@@ -90,6 +117,8 @@ function capabilityContract() {
   const contract = layoutContract();
   return {
     ...contract,
+    mode: 'full',
+    componentsMode: 'full',
     authoring: {
       capabilities: {
         providerRenderedWidgetSave: true,
@@ -100,7 +129,9 @@ function capabilityContract() {
       },
       compositions: {
         version: 1,
-        recipes: [{ id: 'hero', label: 'Hero', slots: {}, tree: {} }],
+        recipes: [{
+          id: 'hero', label: 'Hero', slots: { title: { type: 'text', required: true } }, tree: {},
+        }],
         resources: {
           instantiate: {
             method: 'POST', path: '/monteby/v1/compositions/instantiate', carrier: 'slots',
@@ -180,10 +211,12 @@ function capabilityContract() {
           method: 'POST', path: '/monteby/v1/pages/{postId}/layout/restore',
           carrier: 'revisionId', revisionField: 'revisionId',
           writePreconditionField: 'expectedModifiedGmt',
+          writeDigestPreconditionField: 'expectedLayoutSha256',
         },
         pageSeo: {
           readMethod: 'GET', writeMethod: 'PUT',
           path: '/monteby/v1/pages/{postId}/seo', carrier: 'seo',
+          digestField: 'seoSha256', writeDigestPreconditionField: 'expectedSeoSha256',
         },
         bulkCreate: {
           method: 'POST', path: '/monteby/v1/site/pages/bulk', carrier: 'items',
@@ -197,6 +230,46 @@ function capabilityContract() {
         },
       },
     },
+  };
+}
+
+function documentSummary(overrides = {}) {
+  return {
+    id: 17,
+    title: 'Example',
+    slug: 'example',
+    postType: 'page',
+    documentType: 'page',
+    status: 'publish',
+    url: 'https://example.test/example/',
+    editUrl: 'https://example.test/wp-admin/post.php?post=17&action=monteby',
+    hasLayout: true,
+    layoutState: 'stored',
+    postModifiedGmt: '2026-09-21 12:00:00',
+    ...overrides,
+  };
+}
+
+function pageContext(overrides = {}) {
+  const summary = documentSummary();
+  return {
+    postId: summary.id,
+    postType: summary.postType,
+    documentType: summary.documentType,
+    title: summary.title,
+    slug: summary.slug,
+    status: summary.status,
+    viewUrl: summary.url,
+    editUrl: summary.editUrl,
+    hasLayout: summary.hasLayout,
+    layoutState: summary.layoutState,
+    nodeCount: 1,
+    postModifiedGmt: summary.postModifiedGmt,
+    presentation: { layout: 'default', disableGlobalTemplates: false },
+    effectiveLayout: 'default',
+    headerPostId: 0,
+    footerPostId: 0,
+    ...overrides,
   };
 }
 
@@ -217,6 +290,30 @@ test('operation generation prunes empty update_props entries without changing me
     nodeId: 'section-1',
     props: { alt: '', background: '#111111' },
   }]);
+});
+
+test('portable digest v1 has cross-runtime numeric and UTF-8 ordering vectors', () => {
+  const vectors = [
+    [{}, 'o0:', '7cc07e7f12d86069de37261464c00b94179a600304e3eb3fcf4c8dc7e5e2f94f'],
+    [[], 'a0:', '8e332b40cb62c4b575f1ea4c006f6ca0fc09ae3bf2c88bf06b4042ac61084097'],
+    [-0, 'd0000000000000000', '045197659b25ff2231f213dc12c371c9cc55d498d4c07d39270098efe16bf19e'],
+    [1e-7, 'd3e7ad7f29abcaf48', '08f9ce571f69ced340e69c57257c478e82c67c4e9497ba8c058755c088db3ed7'],
+    [1e21, 'd444b1ae4d6e2ef50', '352ac32582b45e2eb5059dd766c3fb4c4fa45e80fc71a99649c0c2ea2741f666'],
+  ];
+  for (const [value, encoded, digest] of vectors) {
+    assert.equal(portableDigestBytes(value).toString('utf8'), encoded);
+    assert.equal(canonicalSha256(value), digest);
+  }
+  const unicode = { '😀': 'face', 'é': 'accent', z: 'latin', aa: 'pair' };
+  assert.equal(
+    portableDigestBytes(unicode).toString('hex'),
+    '6f343a73323a616173343a7061697273313a7a73353a6c6174696e73323ac3a973363a616363656e7473343af09f988073343a66616365'
+  );
+  assert.equal(canonicalSha256(unicode), 'a41bbc6ac82a48d5bde9d6a60dc42b66e84eecf5dd4335bef766e5a36c11edec');
+  assert.equal(canonicalSha256(-0), canonicalSha256(0));
+  assert.equal(canonicalSha256({ z: 1, aa: 2 }), canonicalSha256({ aa: 2, z: 1 }));
+  assert.throws(() => portableDigestBytes(Number.NaN), /must be finite/u);
+  assert.throws(() => portableDigestBytes('\uD800'), /valid Unicode scalar values/u);
 });
 
 function brandingContract(overrides = {}) {
@@ -2535,6 +2632,7 @@ test('contract-fetch caches projections by ETag and hydrates components from the
     version: 1,
     productVersion: '1.6.0',
     mode: 'authoring',
+    componentsMode: 'summary',
     components: [{ name: 'Section' }],
   };
   const server = await startServer(t, (request, response) => {
@@ -2595,6 +2693,54 @@ test('contract-fetch caches projections by ETag and hydrates components from the
   assert.deepEqual(server.errors, []);
 });
 
+test('contract-fetch rejects mismatched scopes and unavailable features before writing cache', async (t) => {
+  const directory = tempDir(t);
+  const scopeCache = path.join(directory, 'scope-cache.json');
+  const featureCache = path.join(directory, 'feature-cache.json');
+  let projectionRequests = 0;
+  const server = await startServer(t, (request, response) => {
+    if (!request.url.startsWith('/wp-json/monteby/v1/contract?')) {
+      return sendJson(response, 404, { code: 'not_found' });
+    }
+    projectionRequests += 1;
+    if (projectionRequests === 1) {
+      return sendJson(response, 200, {
+        version: 1,
+        productVersion: '1.6.0',
+        mode: 'authoring',
+        componentsMode: 'full',
+        components: [],
+      });
+    }
+    return sendJson(response, 200, {
+      version: 1,
+      productVersion: '1.5.7',
+      mode: 'authoring',
+      componentsMode: 'summary',
+      components: [],
+    });
+  });
+
+  const wrongScope = await runClient([
+    'contract-fetch', '--site', server.site, '--mode', 'authoring',
+    '--components', 'summary', '--cache', scopeCache, '--out', path.join(directory, 'scope.json'),
+  ]);
+  const unavailable = await runClient([
+    'contract-fetch', '--site', server.site, '--mode', 'authoring',
+    '--components', 'summary', '--cache', featureCache, '--out', path.join(directory, 'feature.json'),
+  ]);
+
+  assertEnvelope(wrongScope.result, {
+    ok: false, stage: 'contract-fetch', code: 'CONTRACT_SCOPE_MISMATCH',
+  });
+  assertEnvelope(unavailable.result, {
+    ok: false, stage: 'contract-fetch', code: 'blocked_plugin_version',
+  });
+  assert.equal(fs.existsSync(scopeCache), false);
+  assert.equal(fs.existsSync(featureCache), false);
+  assert.deepEqual(server.errors, []);
+});
+
 test('page-context and documents-list follow their descriptors and enforce exact scope', async (t) => {
   const directory = tempDir(t);
   const queryFile = path.join(directory, 'query.json');
@@ -2604,14 +2750,11 @@ test('page-context and documents-list follow their descriptors and enforce exact
     requests.push(request.url);
     if (request.url === '/wp-json/monteby/v1/contract') return sendJson(response, 200, capabilityContract());
     if (request.url === '/wp-json/monteby/v1/pages/17/context') {
-      return sendJson(response, 200, {
-        postId: 17, postType: 'page', documentType: 'page', hasLayout: true,
-        layoutState: 'stored', postModifiedGmt: 'v1',
-      });
+      return sendJson(response, 200, pageContext());
     }
     if (request.url.startsWith('/wp-json/monteby/v1/site/pages?')) {
       return sendJson(response, 200, {
-        items: [{ id: 17, postType: 'page' }], page: 2, perPage: 10, total: 11, totalPages: 2,
+        items: [documentSummary()], page: 2, perPage: 10, total: 11, totalPages: 2,
       });
     }
     return sendJson(response, 404, { code: 'not_found' });
@@ -2632,6 +2775,47 @@ test('page-context and documents-list follow their descriptors and enforce exact
   assert.equal(documents.result.response.items[0].id, 17);
   assert.ok(requests.some((url) => url.includes('hasLayout=true')));
   assert.ok(requests.some((url) => url.includes('perPage=10')));
+  assert.deepEqual(server.errors, []);
+});
+
+test('page-context and documents-list reject shallow or internally inconsistent responses', async (t) => {
+  const directory = tempDir(t);
+  const queryFile = path.join(directory, 'query.json');
+  writeJson(queryFile, { page: 1, perPage: 10 });
+  const server = await startServer(t, (request, response) => {
+    if (request.url === '/wp-json/monteby/v1/contract') {
+      return sendJson(response, 200, capabilityContract());
+    }
+    if (request.url === '/wp-json/monteby/v1/pages/17/context') {
+      const invalid = pageContext();
+      delete invalid.presentation;
+      return sendJson(response, 200, invalid);
+    }
+    if (request.url.startsWith('/wp-json/monteby/v1/site/pages?')) {
+      const invalid = documentSummary();
+      delete invalid.editUrl;
+      return sendJson(response, 200, {
+        items: [invalid], page: 1, perPage: 10, total: 1, totalPages: 1,
+      });
+    }
+    return sendJson(response, 404, { code: 'not_found' });
+  });
+
+  const context = await runClient([
+    'page-context', '--site', server.site, '--page-id', '17',
+    '--out', path.join(directory, 'context.json'),
+  ]);
+  const documents = await runClient([
+    'documents-list', '--site', server.site, '--input', queryFile,
+    '--out', path.join(directory, 'documents.json'),
+  ]);
+
+  assertEnvelope(context.result, {
+    ok: false, stage: 'page-context', code: 'CAPABILITY_RESPONSE_INVALID',
+  });
+  assertEnvelope(documents.result, {
+    ok: false, stage: 'documents-list', code: 'CAPABILITY_RESPONSE_INVALID',
+  });
   assert.deepEqual(server.errors, []);
 });
 
@@ -2670,6 +2854,7 @@ test('revision-list follows the page-scoped descriptor and returns bounded resto
         total: 12,
         totalPages: 2,
         currentPostModifiedGmt: '2026-09-21 08:05:00',
+        currentLayoutSha256: LAYOUT_SHA256,
       });
     }
     return sendJson(response, 404, { code: 'not_found' });
@@ -2688,32 +2873,47 @@ test('revision-list follows the page-scoped descriptor and returns bounded resto
   assert.ok(collectionRequest.includes('page=2'));
   assert.ok(collectionRequest.includes('perPage=10'));
   assert.equal(execution.result.evidence.currentPostModifiedGmt, '2026-09-21 08:05:00');
+  assert.equal(execution.result.evidence.currentLayoutSha256, LAYOUT_SHA256);
   assert.deepEqual(server.errors, []);
 });
 
 test('revision-restore proves the scoped write through canonical layout readback', async (t) => {
   const directory = tempDir(t);
   const inputFile = path.join(directory, 'restore.json');
-  writeJson(inputFile, { revisionId: 91, expectedModifiedGmt: 'v1' });
+  writeJson(inputFile, {
+    revisionId: 91,
+    expectedModifiedGmt: 'v1',
+    expectedLayoutSha256: LAYOUT_SHA256,
+  });
   const restored = {
     ...NODE_MAP,
     'section-1': { ...NODE_MAP['section-1'], props: { background: '#000000' } },
   };
   const methods = [];
+  let restoredApplied = false;
   const server = await startServer(t, async (request, response) => {
     methods.push(`${request.method} ${request.url}`);
     if (request.url === '/wp-json/monteby/v1/contract') return sendJson(response, 200, capabilityContract());
-    if (request.url === '/wp-json/monteby/v1/pages/17/context') {
-      return sendJson(response, 200, { postId: 17, postModifiedGmt: 'v1' });
-    }
     if (request.method === 'POST' && request.url === '/wp-json/monteby/v1/pages/17/layout/restore') {
-      assert.deepEqual(await readBody(request), { revisionId: 91, expectedModifiedGmt: 'v1' });
+      assert.deepEqual(await readBody(request), {
+        revisionId: 91,
+        expectedModifiedGmt: 'v1',
+        expectedLayoutSha256: LAYOUT_SHA256,
+      });
+      restoredApplied = true;
       return sendJson(response, 200, {
-        id: 17, restored: true, revisionId: 91, layout: restored, postModifiedGmt: 'v2',
+        id: 17,
+        restored: true,
+        revisionId: 91,
+        layout: restored,
+        layoutSha256: nodeMapSha256(restored),
+        postModifiedGmt: 'v2',
       });
     }
     if (request.method === 'GET' && request.url === '/wp-json/monteby/v1/pages/17/layout') {
-      return sendJson(response, 200, layoutResponse(server.site, 17, 'v2', restored));
+      return sendJson(response, 200, restoredApplied
+        ? layoutResponse(server.site, 17, 'v2', restored)
+        : layoutResponse(server.site, 17, 'v1', NODE_MAP));
     }
     return sendJson(response, 404, { code: 'not_found' });
   });
@@ -2725,7 +2925,44 @@ test('revision-restore proves the scoped write through canonical layout readback
 
   assertEnvelope(execution.result, { ok: true, stage: 'revision-restore', code: 'REVISION_RESTORE_OK' });
   assert.equal(execution.result.evidence.revisionId, 91);
+  assert.equal(execution.result.evidence.previousLayoutSha256, LAYOUT_SHA256);
+  assert.equal(execution.result.evidence.layoutSha256, nodeMapSha256(restored));
   assert.equal(methods.filter((entry) => entry.startsWith('POST ')).length, 1);
+  assert.deepEqual(server.errors, []);
+});
+
+test('revision and SEO writes fail closed without their advertised digest preconditions', async (t) => {
+  const directory = tempDir(t);
+  const restoreFile = path.join(directory, 'restore-without-digest.json');
+  const seoFile = path.join(directory, 'seo-without-digest.json');
+  writeJson(restoreFile, { revisionId: 91, expectedModifiedGmt: 'v1' });
+  writeJson(seoFile, {
+    seo: { title: 'Updated title', description: 'Updated description' },
+    expectedModifiedGmt: 'v1',
+  });
+  const mutations = [];
+  const server = await startServer(t, (request, response) => {
+    if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method)) mutations.push(request.url);
+    if (request.url === '/wp-json/monteby/v1/contract') {
+      return sendJson(response, 200, capabilityContract());
+    }
+    return sendJson(response, 500, { code: 'unexpected_request' });
+  });
+
+  const restore = await runClient([
+    'revision-restore', '--site', server.site, '--page-id', '17',
+    '--input', restoreFile, '--out', path.join(directory, 'restore-report.json'),
+  ]);
+  const seo = await runClient([
+    'seo-put', '--site', server.site, '--page-id', '17',
+    '--input', seoFile, '--out', path.join(directory, 'seo-report.json'),
+  ]);
+
+  assertEnvelope(restore.result, {
+    ok: false, stage: 'revision-restore', code: 'CAPABILITY_INPUT_INVALID',
+  });
+  assertEnvelope(seo.result, { ok: false, stage: 'seo-put', code: 'CAPABILITY_INPUT_INVALID' });
+  assert.deepEqual(mutations, []);
   assert.deepEqual(server.errors, []);
 });
 
@@ -2749,10 +2986,18 @@ test('preview-resource supports annotated subtree and virtual chrome without lea
     if (request.url === '/wp-json/monteby/v1/contract') return sendJson(response, 200, capabilityContract());
     if (request.url === '/wp-json/monteby/v1/preview') {
       previewBody = await readBody(request);
+      const html = '<main>preview</main>';
       return sendJson(response, 200, {
         valid: true,
-        html: '<!doctype html><html><body>preview</body></html>',
-        assets: { styles: [] },
+        html,
+        document: `<!doctype html><html><body>${html}</body></html>`,
+        assets: { styles: [], inlineCss: '', scripts: [] },
+        globalTemplates: {
+          header: 0,
+          footer: 0,
+          candidateRoles: ['header'],
+          disabledByPresentation: false,
+        },
       });
     }
     return sendJson(response, 404, { code: 'not_found' });
@@ -2767,7 +3012,58 @@ test('preview-resource supports annotated subtree and virtual chrome without lea
   assert.equal(previewBody.templateCandidates.header.ROOT.type.resolvedName, 'RootCanvas');
   assert.equal(previewBody.globalStyles.colors.primary, '#334455');
   assert.equal(Object.hasOwn(execution.result.response, 'html'), false);
+  assert.equal(Object.hasOwn(execution.result.response, 'document'), false);
   assert.equal(fs.readFileSync(execution.result.artifacts.preview, 'utf8').includes('preview'), true);
+  assert.equal(fs.readFileSync(execution.result.artifacts.document, 'utf8').includes('preview'), true);
+  assert.equal(execution.result.evidence.inputLayoutSha256, nodeMapSha256(NODE_MAP));
+  assert.equal(execution.result.evidence.inputSha256, canonicalSha256(previewBody));
+  assert.equal(
+    execution.result.evidence.outputHtmlSha256,
+    createHash('sha256').update('<main>preview</main>', 'utf8').digest('hex')
+  );
+  assert.match(execution.result.evidence.documentSha256, /^[a-f0-9]{64}$/u);
+  assert.match(execution.result.evidence.globalStylesSha256, /^[a-f0-9]{64}$/u);
+  assert.match(execution.result.evidence.templateCandidatesSha256, /^[a-f0-9]{64}$/u);
+  assert.deepEqual(server.errors, []);
+});
+
+test('preview-resource requires valid output and the requested standalone document proof', async (t) => {
+  const directory = tempDir(t);
+  const invalidFile = path.join(directory, 'invalid.json');
+  const missingDocumentFile = path.join(directory, 'missing-document.json');
+  writeJson(invalidFile, { layout: NODE_MAP });
+  writeJson(missingDocumentFile, { layout: NODE_MAP, document: true });
+  let previews = 0;
+  const server = await startServer(t, (request, response) => {
+    if (request.url === '/wp-json/monteby/v1/contract') {
+      return sendJson(response, 200, capabilityContract());
+    }
+    if (request.url === '/wp-json/monteby/v1/preview') {
+      previews += 1;
+      return previews === 1
+        ? sendJson(response, 200, { valid: false, html: '<main>invalid</main>' })
+        : sendJson(response, 200, { valid: true, html: '<main>missing document</main>' });
+    }
+    return sendJson(response, 404, { code: 'not_found' });
+  });
+
+  const invalid = await runClient([
+    'preview-resource', '--site', server.site, '--input', invalidFile,
+    '--out', path.join(directory, 'invalid-report.json'),
+  ]);
+  const missingDocument = await runClient([
+    'preview-resource', '--site', server.site, '--input', missingDocumentFile,
+    '--out', path.join(directory, 'missing-document-report.json'),
+  ]);
+
+  assertEnvelope(invalid.result, {
+    ok: false, stage: 'preview-resource', code: 'CAPABILITY_RESPONSE_INVALID',
+  });
+  assertEnvelope(missingDocument.result, {
+    ok: false, stage: 'preview-resource', code: 'CAPABILITY_RESPONSE_INVALID',
+  });
+  assert.equal(fs.existsSync(path.join(directory, 'invalid-report-preview.html')), false);
+  assert.equal(fs.existsSync(path.join(directory, 'missing-document-report-document.html')), false);
   assert.deepEqual(server.errors, []);
 });
 
@@ -2889,20 +3185,54 @@ test('composition commands use embedded recipes and their declared carriers', as
   const instantiateFile = path.join(directory, 'instantiate.json');
   const planFile = path.join(directory, 'plan.json');
   writeJson(instantiateFile, { recipeId: 'hero', slots: { title: 'Hello' }, parentId: 'ROOT' });
-  writeJson(planFile, { plan: { sections: [{ recipeId: 'hero', slots: {} }] } });
+  writeJson(planFile, {
+    plan: { version: 1, sections: [{ compositionId: 'hero', content: { title: 'Hello' } }] },
+  });
   const bodies = [];
   const server = await startServer(t, async (request, response) => {
     if (request.url === '/wp-json/monteby/v1/contract') return sendJson(response, 200, capabilityContract());
     if (request.url === '/wp-json/monteby/v1/compositions/instantiate') {
       bodies.push(await readBody(request));
+      const nodes = { 'hero-1': COMPOSITION_SECTION };
       return sendJson(response, 200, {
-        valid: true, recipeId: 'hero', rootNodeId: 'hero-1', nodes: {}, operation: {}, errors: [], lint: [], decisions: [],
+        valid: true,
+        recipeId: 'hero',
+        rootNodeId: 'hero-1',
+        nodes,
+        operation: {
+          type: 'insert_tree',
+          parentId: 'ROOT',
+          tree: { rootNodeId: 'hero-1', nodes },
+        },
+        errors: [],
+        lint: [],
+        decisions: {
+          idPrefix: 'hero',
+          idStart: 1,
+          nodeCount: 1,
+          omittedOptional: [],
+          levelOneHeadings: 0,
+          placementVerified: false,
+          anchorsVerified: false,
+        },
       });
     }
     if (request.url === '/wp-json/monteby/v1/compositions/plan') {
       bodies.push(await readBody(request));
       return sendJson(response, 200, {
-        valid: true, layout: NODE_MAP, sections: [], errors: [], lint: [], decisions: [],
+        valid: true,
+        layout: { version: 1, nodeMap: COMPOSITION_PLAN_MAP },
+        sections: [{ index: 0, compositionId: 'hero', rootNodeId: 'hero-1', nodeCount: 1 }],
+        errors: [],
+        lint: [],
+        decisions: [{
+          section: 0,
+          compositionId: 'hero',
+          rootNodeId: 'hero-1',
+          idStart: 1,
+          nodeCount: 1,
+          omittedOptional: [],
+        }],
       });
     }
     return sendJson(response, 404, { code: 'not_found' });
@@ -2924,10 +3254,78 @@ test('composition commands use embedded recipes and their declared carriers', as
   assert.equal(list.result.response.recipes[0].id, 'hero');
   assertEnvelope(instantiate.result, { ok: true, stage: 'composition-instantiate', code: 'COMPOSITION_INSTANTIATE_OK' });
   assertEnvelope(plan.result, { ok: true, stage: 'composition-plan', code: 'COMPOSITION_PLAN_OK' });
+  assert.match(instantiate.result.evidence.inputSha256, /^[a-f0-9]{64}$/u);
+  assert.match(instantiate.result.evidence.outputSha256, /^[a-f0-9]{64}$/u);
+  assert.match(instantiate.result.evidence.nodeTreeSha256, /^[a-f0-9]{64}$/u);
+  assert.match(plan.result.evidence.inputSha256, /^[a-f0-9]{64}$/u);
+  assert.equal(plan.result.evidence.layoutSha256, nodeMapSha256(COMPOSITION_PLAN_MAP));
   assert.deepEqual(bodies, [
     { recipeId: 'hero', slots: { title: 'Hello' }, parentId: 'ROOT' },
-    { plan: { sections: [{ recipeId: 'hero', slots: {} }] } },
+    { plan: { version: 1, sections: [{ compositionId: 'hero', content: { title: 'Hello' } }] } },
   ]);
+  assert.deepEqual(server.errors, []);
+});
+
+test('composition commands reject mismatched node operations and incomplete plan evidence', async (t) => {
+  const directory = tempDir(t);
+  const instantiateFile = path.join(directory, 'instantiate.json');
+  const planFile = path.join(directory, 'plan.json');
+  writeJson(instantiateFile, { recipeId: 'hero', slots: { title: 'Hello' }, parentId: 'ROOT' });
+  writeJson(planFile, {
+    plan: { version: 1, sections: [{ compositionId: 'hero', content: { title: 'Hello' } }] },
+  });
+  const server = await startServer(t, (request, response) => {
+    if (request.url === '/wp-json/monteby/v1/contract') {
+      return sendJson(response, 200, capabilityContract());
+    }
+    if (request.url === '/wp-json/monteby/v1/compositions/instantiate') {
+      const nodes = { 'hero-1': COMPOSITION_SECTION };
+      return sendJson(response, 200, {
+        valid: true,
+        recipeId: 'hero',
+        rootNodeId: 'hero-1',
+        nodes,
+        operation: {
+          type: 'insert_tree',
+          parentId: 'another-parent',
+          tree: { rootNodeId: 'hero-1', nodes },
+        },
+        errors: [],
+        lint: [],
+        decisions: {
+          idPrefix: 'hero', idStart: 1, nodeCount: 1, omittedOptional: [],
+          levelOneHeadings: 0, placementVerified: false, anchorsVerified: false,
+        },
+      });
+    }
+    if (request.url === '/wp-json/monteby/v1/compositions/plan') {
+      return sendJson(response, 200, {
+        valid: true,
+        layout: { version: 1, nodeMap: COMPOSITION_PLAN_MAP },
+        sections: [],
+        errors: [],
+        lint: [],
+        decisions: [],
+      });
+    }
+    return sendJson(response, 404, { code: 'not_found' });
+  });
+
+  const instantiate = await runClient([
+    'composition-instantiate', '--site', server.site, '--input', instantiateFile,
+    '--out', path.join(directory, 'instantiate-report.json'),
+  ]);
+  const plan = await runClient([
+    'composition-plan', '--site', server.site, '--input', planFile,
+    '--out', path.join(directory, 'plan-report.json'),
+  ]);
+
+  assertEnvelope(instantiate.result, {
+    ok: false, stage: 'composition-instantiate', code: 'CAPABILITY_RESPONSE_INVALID',
+  });
+  assertEnvelope(plan.result, {
+    ok: false, stage: 'composition-plan', code: 'CAPABILITY_RESPONSE_INVALID',
+  });
   assert.deepEqual(server.errors, []);
 });
 
@@ -2949,7 +3347,7 @@ test('global styles read, compose and patch stay on the safe projection and prov
     if (request.url === '/wp-json/monteby/v1/global-styles/compose') {
       return sendJson(response, 200, {
         profileId: 'editorial',
-        styles: { colors: { primary: '#445566' }, typography: {}, customCSS: '.private{}' },
+        styles: { colors: { primary: '#445566' }, typography: {} },
         revision,
         apply: {},
       });
@@ -2961,7 +3359,7 @@ test('global styles read, compose and patch stay on the safe projection and prov
       revision = 'c'.repeat(64);
       return sendJson(response, 200, {
         success: true,
-        styles: { colors: { primary }, typography: {}, customCSS: '.private{}' },
+        styles: { colors: { primary }, typography: {} },
         revision,
       });
     }
@@ -2986,7 +3384,44 @@ test('global styles read, compose and patch stay on the safe projection and prov
   assert.equal(Object.hasOwn(compose.result.response.styles, 'customCSS'), false);
   assertEnvelope(patch.result, { ok: true, stage: 'global-styles-patch', code: 'GLOBAL_STYLES_PATCH_OK' });
   assert.equal(patch.result.evidence.revision, 'c'.repeat(64));
-  assert.equal(JSON.stringify(patch.result).includes('.private{}'), false);
+  assert.deepEqual(server.errors, []);
+});
+
+test('capability responses fail closed instead of masking private fields', async (t) => {
+  const directory = tempDir(t);
+  const composeFile = path.join(directory, 'compose.json');
+  writeJson(composeFile, { profileId: 'editorial' });
+  const server = await startServer(t, (request, response) => {
+    if (request.url === '/wp-json/monteby/v1/contract') {
+      return sendJson(response, 200, capabilityContract());
+    }
+    if (request.url === '/wp-json/monteby/v1/global-styles/compose') {
+      return sendJson(response, 200, {
+        profileId: 'editorial',
+        styles: {
+          colors: { primary: '#445566' },
+          typography: {},
+          integration: { clientSecret: 'must-not-be-reported' },
+        },
+        revision: 'b'.repeat(64),
+        apply: {},
+      });
+    }
+    return sendJson(response, 404, { code: 'not_found' });
+  });
+
+  const execution = await runClient([
+    'global-styles-compose', '--site', server.site, '--input', composeFile,
+    '--out', path.join(directory, 'compose-report.json'),
+  ]);
+
+  assertEnvelope(execution.result, {
+    ok: false,
+    stage: 'global-styles-compose',
+    code: 'CAPABILITY_PRIVACY_VIOLATION',
+  });
+  assert.equal(JSON.stringify(execution.result).includes('must-not-be-reported'), false);
+  assert.match(execution.result.message, /\$\.integration\.clientSecret/u);
   assert.deepEqual(server.errors, []);
 });
 
@@ -3071,9 +3506,14 @@ test('page SEO read and write use the dedicated resource and exact canonical rea
   const directory = tempDir(t);
   const inputFile = path.join(directory, 'seo.json');
   const submittedSeo = { title: 'Updated title', description: 'Updated description' };
-  writeJson(inputFile, { seo: submittedSeo, expectedModifiedGmt: 'v1' });
   let version = 'v1';
   let seo = { title: 'Original title', description: 'Original description' };
+  const originalSeoSha256 = canonicalSha256(seo);
+  writeJson(inputFile, {
+    seo: submittedSeo,
+    expectedModifiedGmt: 'v1',
+    expectedSeoSha256: originalSeoSha256,
+  });
   let writeBody;
   const server = await startServer(t, async (request, response) => {
     if (request.url === '/wp-json/monteby/v1/contract') {
@@ -3086,6 +3526,7 @@ test('page SEO read and write use the dedicated resource and exact canonical rea
         postType: 'page',
         viewUrl: `${server.site}/page/`,
         postModifiedGmt: version,
+        seoSha256: canonicalSha256(seo),
         seo,
         seoOwnership: {},
         seoGraph: {},
@@ -3095,7 +3536,13 @@ test('page SEO read and write use the dedicated resource and exact canonical rea
       writeBody = await readBody(request);
       seo = writeBody.seo;
       version = 'v2';
-      return sendJson(response, 200, { id: 17, saved: true, seo, postModifiedGmt: version });
+      return sendJson(response, 200, {
+        id: 17,
+        saved: true,
+        seo,
+        seoSha256: canonicalSha256(seo),
+        postModifiedGmt: version,
+      });
     }
     return sendJson(response, 404, { code: 'not_found' });
   });
@@ -3114,8 +3561,14 @@ test('page SEO read and write use the dedicated resource and exact canonical rea
     title: 'Original title', description: 'Original description',
   });
   assertEnvelope(write.result, { ok: true, stage: 'seo-put', code: 'SEO_PUT_OK' });
-  assert.deepEqual(writeBody, { seo: submittedSeo, expectedModifiedGmt: 'v1' });
+  assert.deepEqual(writeBody, {
+    seo: submittedSeo,
+    expectedModifiedGmt: 'v1',
+    expectedSeoSha256: originalSeoSha256,
+  });
   assert.equal(write.result.evidence.versionToken, 'v2');
+  assert.equal(write.result.evidence.previousSeoSha256, originalSeoSha256);
+  assert.equal(write.result.evidence.seoSha256, canonicalSha256(submittedSeo));
   assert.equal(write.result.evidence.canonicalReadback, true);
   assert.deepEqual(server.errors, []);
 });
@@ -3124,16 +3577,18 @@ test('Abilities discovery executes only schema-valid read-only abilities', async
   const directory = tempDir(t);
   const inputFile = path.join(directory, 'ability-input.json');
   const invalidOutputInputFile = path.join(directory, 'ability-invalid-output.json');
+  const privateOutputInputFile = path.join(directory, 'ability-private-output.json');
   const mutationInputFile = path.join(directory, 'mutation-input.json');
   writeJson(inputFile, { mode: 'light' });
   writeJson(invalidOutputInputFile, { mode: 'full' });
+  writeJson(privateOutputInputFile, { mode: 'private' });
   writeJson(mutationInputFile, {});
   const abilities = [{
     name: 'monteby/get-contract',
     input_schema: {
       type: 'object',
       additionalProperties: false,
-      properties: { mode: { type: 'string', enum: ['light', 'full'] } },
+      properties: { mode: { type: 'string', enum: ['light', 'full', 'private'] } },
     },
     output_schema: {
       type: 'object',
@@ -3173,6 +3628,16 @@ test('Abilities discovery executes only schema-valid read-only abilities', async
       if (request.url.includes('input%5Bmode%5D=full')) {
         return sendJson(response, 200, { mode: 'full' });
       }
+      if (request.url.includes('input%5Bmode%5D=private')) {
+        return sendJson(response, 200, {
+          version: 1,
+          product: 'Monteby Builder',
+          productVersion: '1.6.0',
+          source: 'live-site',
+          mode: 'private',
+          integration: { apiKey: 'must-not-be-reported' },
+        });
+      }
       return sendJson(response, 200, {
         version: 1,
         product: 'Monteby Builder',
@@ -3199,6 +3664,10 @@ test('Abilities discovery executes only schema-valid read-only abilities', async
     'ability-run', '--site', server.site, '--name', 'monteby/get-contract',
     '--input', invalidOutputInputFile, '--out', path.join(directory, 'ability-invalid-result.json'),
   ]);
+  const privateOutput = await runClient([
+    'ability-run', '--site', server.site, '--name', 'monteby/get-contract',
+    '--input', privateOutputInputFile, '--out', path.join(directory, 'ability-private-result.json'),
+  ]);
 
   assertEnvelope(list.result, { ok: true, stage: 'abilities-list', code: 'ABILITIES_LIST_OK' });
   assert.deepEqual(list.result.evidence.names, ['monteby/get-contract', 'monteby/save-layout']);
@@ -3210,6 +3679,10 @@ test('Abilities discovery executes only schema-valid read-only abilities', async
   assertEnvelope(invalidOutput.result, {
     ok: false, stage: 'ability-run', code: 'CAPABILITY_RESPONSE_INVALID',
   });
+  assertEnvelope(privateOutput.result, {
+    ok: false, stage: 'ability-run', code: 'CAPABILITY_PRIVACY_VIOLATION',
+  });
+  assert.equal(JSON.stringify(privateOutput.result).includes('must-not-be-reported'), false);
   assert.equal(requests.some((entry) => entry.includes('monteby/save-layout/run')), false);
   assert.ok(requests.some((entry) => entry.includes('input%5Bmode%5D=light')));
   assert.deepEqual(server.errors, []);

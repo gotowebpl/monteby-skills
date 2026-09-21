@@ -1356,7 +1356,7 @@ function httpFailureResult(stage, response, artifacts = {}) {
       message: `The write returned HTTP ${response.status}, but its commit outcome cannot be proven.`,
       httpStatus: response.status,
       response: CAPABILITY_COMMANDS.has(stage)
-        ? safeCapabilityOutput(response.reportResponse)
+        ? safeCapabilityOutput(response.reportResponse, stage)
         : response.reportResponse,
     });
   }
@@ -1412,7 +1412,7 @@ function httpFailureResult(stage, response, artifacts = {}) {
     message: `REST request failed with HTTP ${status}.`,
     httpStatus: status,
     response: CAPABILITY_COMMANDS.has(stage)
-      ? safeCapabilityOutput(response.reportResponse)
+      ? safeCapabilityOutput(response.reportResponse, stage)
       : response.reportResponse,
   });
 }
@@ -1704,7 +1704,7 @@ function canonicalJson(value) {
 }
 
 function operationsSha256(operations) {
-  return createHash('sha256').update(canonicalJson(operations), 'utf8').digest('hex');
+  return canonicalSha256(operations);
 }
 
 function pruneNoopOperations(operations) {
@@ -1721,8 +1721,48 @@ function pruneNoopOperations(operations) {
   });
 }
 
+const PORTABLE_DIGEST_PREFIX = Buffer.from('monteby-digest-v1\0', 'ascii');
+
+function portableDigestBytes(value) {
+  if (value === null) return Buffer.from('n', 'ascii');
+  if (value === false) return Buffer.from('f', 'ascii');
+  if (value === true) return Buffer.from('t', 'ascii');
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) throw new TypeError('Portable digest numbers must be finite.');
+    const bytes = Buffer.allocUnsafe(8);
+    bytes.writeDoubleBE(Object.is(value, -0) ? 0 : value);
+    return Buffer.from(`d${bytes.toString('hex')}`, 'ascii');
+  }
+  if (typeof value === 'string') {
+    if (/(?:[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?:^|[^\uD800-\uDBFF])[\uDC00-\uDFFF])/u.test(value)) {
+      throw new TypeError('Portable digest strings must contain valid Unicode scalar values.');
+    }
+    const bytes = Buffer.from(value, 'utf8');
+    return Buffer.concat([Buffer.from(`s${bytes.length}:`, 'ascii'), bytes]);
+  }
+  if (Array.isArray(value)) {
+    return Buffer.concat([
+      Buffer.from(`a${value.length}:`, 'ascii'),
+      ...value.map((item) => portableDigestBytes(item)),
+    ]);
+  }
+  if (isObject(value)) {
+    const entries = Object.entries(value).sort(([left], [right]) => (
+      Buffer.compare(Buffer.from(left, 'utf8'), Buffer.from(right, 'utf8'))
+    ));
+    return Buffer.concat([
+      Buffer.from(`o${entries.length}:`, 'ascii'),
+      ...entries.flatMap(([key, item]) => [portableDigestBytes(key), portableDigestBytes(item)]),
+    ]);
+  }
+  throw new TypeError(`Portable digest cannot encode ${typeof value}.`);
+}
+
 function canonicalSha256(value) {
-  return createHash('sha256').update(canonicalJson(value), 'utf8').digest('hex');
+  return createHash('sha256')
+    .update(PORTABLE_DIGEST_PREFIX)
+    .update(portableDigestBytes(value))
+    .digest('hex');
 }
 
 function operationSchemaErrors(value, schema, pathName = '$') {
@@ -2018,28 +2058,47 @@ function assertSafeCapabilityInput(value, stage, pathName = '$') {
   }
 }
 
-function safeCapabilityOutput(value) {
-  if (Array.isArray(value)) return value.map(safeCapabilityOutput);
+function safeCapabilityOutput(value, stage, pathName = '$') {
+  if (Array.isArray(value)) {
+    return value.map((item, index) => safeCapabilityOutput(item, stage, `${pathName}[${index}]`));
+  }
   if (!isObject(value)) return value;
-  return Object.fromEntries(Object.entries(value).flatMap(([key, item]) => {
-    return isPrivateCapabilityKey(key) ? [] : [[key, safeCapabilityOutput(item)]];
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => {
+    if (isPrivateCapabilityKey(key)) {
+      throw new ClientError(`The capability response exposed the private field ${pathName}.${key}.`, {
+        code: 'CAPABILITY_PRIVACY_VIOLATION',
+        stage,
+        nextAction: 'Repair the Builder response projection before using this capability. Do not treat a redacted response as successful evidence.',
+      });
+    }
+    return [key, safeCapabilityOutput(item, stage, `${pathName}.${key}`)];
   }));
 }
 
-function assertExactFields(value, allowedFields, stage, label = 'input') {
+function assertExactFields(
+  value,
+  allowedFields,
+  stage,
+  label = 'input',
+  code = 'CAPABILITY_INPUT_INVALID'
+) {
   if (!isObject(value)) {
     throw new ClientError(`${label} must be a JSON object.`, {
-      code: 'CAPABILITY_INPUT_INVALID',
+      code,
       stage,
-      nextAction: `Provide one ${label} object using only fields published by the live descriptor.`,
+      nextAction: code === 'CAPABILITY_RESPONSE_INVALID'
+        ? 'Repair the Builder response before using it as authoring evidence.'
+        : `Provide one ${label} object using only fields published by the live descriptor.`,
     });
   }
   const extra = Object.keys(value).filter((key) => !allowedFields.includes(key));
   if (extra.length > 0) {
     throw new ClientError(`${label} contains undeclared fields: ${extra.join(', ')}.`, {
-      code: 'CAPABILITY_INPUT_INVALID',
+      code,
       stage,
-      nextAction: 'Remove undeclared fields and run the command again.',
+      nextAction: code === 'CAPABILITY_RESPONSE_INVALID'
+        ? 'Repair the Builder response projection before using it as authoring evidence.'
+        : 'Remove undeclared fields and run the command again.',
     });
   }
 }
@@ -3467,7 +3526,7 @@ function capabilitySuccess(options, code, {
     artifacts,
     nextAction: 'Review the response artifact before starting another authoring operation.',
     message,
-    response: response === undefined ? undefined : safeCapabilityOutput(response),
+    response: response === undefined ? undefined : safeCapabilityOutput(response, options.command),
     evidence,
   });
 }
@@ -3583,7 +3642,6 @@ async function conditionalContractRequest(options, authHeader, endpoint) {
       },
     },
   };
-  if (options.cache) await atomicWriteJson(options.cache, nextCache, options.command);
   return {
     document: response.data,
     etag: response.etag,
@@ -3593,10 +3651,63 @@ async function conditionalContractRequest(options, authHeader, endpoint) {
   };
 }
 
+async function persistValidatedContractCache(options, fetched) {
+  if (options.cache && !fetched.notModified) {
+    await atomicWriteJson(options.cache, fetched.cache, options.command);
+  }
+}
+
+function requireContractFeature(contract, featureName, stage) {
+  const gate = evaluateFeatureGate(contract, featureName, compatibilityManifest);
+  if (!gate.ok) {
+    throw new ClientError(gate.message || `The live contract does not advertise ${featureName}.`, {
+      code: gate.code,
+      stage,
+      nextAction: gate.code === 'blocked_plugin_version'
+        ? 'Upgrade Monteby Builder before requesting this contract capability.'
+        : 'Discard the response and repair the advertised Site Contract capability.',
+    });
+  }
+}
+
+function validateContractProjection(document, options) {
+  const declaredMode = document.mode || 'full';
+  if (declaredMode !== options.mode) {
+    throw new ClientError('The returned contract projection does not match the requested mode.', {
+      code: 'CONTRACT_SCOPE_MISMATCH',
+      stage: options.command,
+      nextAction: 'Repair the projection response and discard the mismatched contract.',
+    });
+  }
+
+  const projectionFeatures = {
+    light: 'contractLightProjection',
+    design: 'contractDesignProjection',
+    authoring: 'contractAuthoringProjection',
+    catalogs: 'contractCatalogsProjection',
+  };
+  const projectionFeature = projectionFeatures[options.mode];
+  if (projectionFeature) requireContractFeature(document, projectionFeature, options.command);
+
+  if (options.mode === 'authoring' || options.components === 'summary') {
+    if (document.componentsMode !== options.components) {
+      throw new ClientError('The returned component projection does not match the requested components mode.', {
+        code: 'CONTRACT_SCOPE_MISMATCH',
+        stage: options.command,
+        nextAction: 'Discard the response and request the exact full or summary component projection again.',
+      });
+    }
+    if (options.components === 'summary') {
+      requireContractFeature(document, 'contractComponentsSummary', options.command);
+    }
+  }
+}
+
 async function runContractFetch(options, authHeader) {
   if (options.component) {
     const discovered = await fetchLiveContract(options, authHeader);
     if (discovered.failure) return discovered.failure;
+    requireContractFeature(discovered.contract, 'contractComponent', options.command);
     const resource = persistenceResource(discovered.contract, 'contractComponent', options.command);
     if (resource.method !== 'GET' || resource.nameField !== 'name') {
       throw new ClientError('The component resource descriptor is unsupported.', {
@@ -3615,6 +3726,8 @@ async function runContractFetch(options, authHeader) {
         nextAction: 'Repair the component resource and discard this response.',
       });
     }
+    safeCapabilityOutput(fetched.document, options.command);
+    await persistValidatedContractCache(options, fetched);
     return capabilitySuccess(options, 'CONTRACT_COMPONENT_OK', {
       artifacts: options.cache ? { cache: options.cache } : {},
       response: fetched.document,
@@ -3630,14 +3743,9 @@ async function runContractFetch(options, authHeader) {
     `${REST_NAMESPACE}${CONTRACT_ENDPOINT}?${parameters.toString()}`
   );
   if (fetched.failure) return fetched.failure;
-  const declaredMode = fetched.document.mode || 'full';
-  if (declaredMode !== options.mode && options.mode !== 'full') {
-    throw new ClientError('The returned contract projection does not match the requested mode.', {
-      code: 'CONTRACT_SCOPE_MISMATCH',
-      stage: options.command,
-      nextAction: 'Repair the projection response and discard the mismatched contract.',
-    });
-  }
+  validateContractProjection(fetched.document, options);
+  safeCapabilityOutput(fetched.document, options.command);
+  await persistValidatedContractCache(options, fetched);
   return capabilitySuccess(options, 'CONTRACT_FETCH_OK', {
     artifacts: options.cache ? { cache: options.cache } : {},
     response: fetched.document,
@@ -3664,6 +3772,89 @@ async function fullContractForCapability(options, authHeader) {
   return fetched;
 }
 
+const DOCUMENT_TYPES = new Set(['page', 'header', 'footer', 'template']);
+const LAYOUT_STATES = new Set(['stored', 'corrupt', 'classic', 'empty']);
+const PAGE_PRESENTATION_LAYOUTS = new Set(['', ...PRESENTATION_LAYOUTS]);
+
+function validateDocumentSummary(document, stage, label) {
+  const fields = [
+    'id', 'title', 'slug', 'postType', 'documentType', 'status', 'url', 'editUrl',
+    'hasLayout', 'layoutState', 'postModifiedGmt',
+  ];
+  assertExactFields(document, fields, stage, label, 'CAPABILITY_RESPONSE_INVALID');
+  const layoutOwnsJson = document.layoutState === 'stored' || document.layoutState === 'corrupt';
+  if (
+    !fields.every((field) => Object.hasOwn(document, field))
+    || !Number.isSafeInteger(document.id) || document.id < 1
+    || typeof document.title !== 'string'
+    || typeof document.slug !== 'string'
+    || typeof document.postType !== 'string' || !/^[a-z][a-z0-9_-]{0,63}$/u.test(document.postType)
+    || !DOCUMENT_TYPES.has(document.documentType)
+    || typeof document.status !== 'string' || document.status === ''
+    || typeof document.url !== 'string'
+    || typeof document.editUrl !== 'string' || document.editUrl === ''
+    || typeof document.hasLayout !== 'boolean'
+    || !LAYOUT_STATES.has(document.layoutState)
+    || document.hasLayout !== layoutOwnsJson
+    || typeof document.postModifiedGmt !== 'string' || document.postModifiedGmt === ''
+  ) {
+    throw new ClientError(`${label} does not match the published document summary.`, {
+      code: 'CAPABILITY_RESPONSE_INVALID',
+      stage,
+      nextAction: 'Repair the Builder document projection before using it for authoring.',
+    });
+  }
+}
+
+function validatePageContextDocument(document, pageId, stage) {
+  const fields = [
+    'postId', 'postType', 'documentType', 'title', 'slug', 'status', 'viewUrl',
+    'editUrl', 'hasLayout', 'layoutState', 'nodeCount', 'postModifiedGmt',
+    'presentation', 'effectiveLayout', 'headerPostId', 'footerPostId',
+  ];
+  assertExactFields(document, fields, stage, 'page-context response', 'CAPABILITY_RESPONSE_INVALID');
+  const summary = {
+    id: document.postId,
+    title: document.title,
+    slug: document.slug,
+    postType: document.postType,
+    documentType: document.documentType,
+    status: document.status,
+    url: document.viewUrl,
+    editUrl: document.editUrl,
+    hasLayout: document.hasLayout,
+    layoutState: document.layoutState,
+    postModifiedGmt: document.postModifiedGmt,
+  };
+  validateDocumentSummary(summary, stage, 'page-context document');
+  assertExactFields(
+    document.presentation,
+    ['layout', 'disableGlobalTemplates'],
+    stage,
+    'page-context presentation',
+    'CAPABILITY_RESPONSE_INVALID'
+  );
+  if (
+    !fields.every((field) => Object.hasOwn(document, field))
+    || document.postId !== pageId
+    || !Number.isSafeInteger(document.nodeCount) || document.nodeCount < 0
+    || (!document.hasLayout && document.nodeCount !== 0)
+    || !Object.hasOwn(document.presentation, 'layout')
+    || !Object.hasOwn(document.presentation, 'disableGlobalTemplates')
+    || !PAGE_PRESENTATION_LAYOUTS.has(document.presentation.layout)
+    || typeof document.presentation.disableGlobalTemplates !== 'boolean'
+    || typeof document.effectiveLayout !== 'string' || document.effectiveLayout === ''
+    || !Number.isSafeInteger(document.headerPostId) || document.headerPostId < 0
+    || !Number.isSafeInteger(document.footerPostId) || document.footerPostId < 0
+  ) {
+    throw new ClientError('The page-context response is incomplete or internally inconsistent.', {
+      code: 'CAPABILITY_RESPONSE_INVALID',
+      stage,
+      nextAction: 'Discard the response and repair the Builder page-context projection.',
+    });
+  }
+}
+
 async function fetchPageContext(options, authHeader, contract, pageId) {
   const resource = persistenceResource(contract, 'pageContext', options.command);
   if (resource.method !== 'GET' || resource.postIdField !== 'postId') {
@@ -3676,13 +3867,7 @@ async function fetchPageContext(options, authHeader, contract, pageId) {
   const endpoint = declaredResourcePath(resource.path, { postId: pageId }, options.command);
   const response = await requestDeclared(options, authHeader, { method: resource.method, endpoint });
   if (!response.ok) return { failure: httpFailureResult(options.command, response, {}) };
-  if (!isObject(response.data) || response.data.postId !== pageId) {
-    throw new ClientError('The page-context response does not match the requested page.', {
-      code: 'CAPABILITY_SCOPE_MISMATCH',
-      stage: options.command,
-      nextAction: 'Discard the response and repair the Builder page-context resource.',
-    });
-  }
+  validatePageContextDocument(response.data, pageId, options.command);
   return { document: response.data };
 }
 
@@ -3736,20 +3921,57 @@ async function runDocumentsList(options, authHeader) {
   const endpoint = queryEndpoint(resource.path, query, resource.queryFields, options.command);
   const response = await requestDeclared(options, authHeader, { method: resource.method, endpoint });
   if (!response.ok) return httpFailureResult(options.command, response, { input: options.input });
-  if (!isObject(response.data) || !Array.isArray(response.data.items)) {
+  const document = response.data;
+  if (
+    !isObject(document)
+    || !Array.isArray(document.items)
+    || !Number.isSafeInteger(document.page) || document.page < 1
+    || !Number.isSafeInteger(document.perPage) || document.perPage < 1 || document.perPage > 100
+    || !Number.isSafeInteger(document.total) || document.total < 0
+    || !Number.isSafeInteger(document.totalPages) || document.totalPages < 0
+  ) {
     throw new ClientError('The documents resource returned an invalid collection.', {
       code: 'CAPABILITY_RESPONSE_INVALID',
       stage: options.command,
       nextAction: 'Repair the Builder response before using it for authoring.',
     });
   }
+  assertExactFields(
+    document,
+    ['items', 'page', 'perPage', 'total', 'totalPages'],
+    options.command,
+    'documents response',
+    'CAPABILITY_RESPONSE_INVALID'
+  );
+  document.items.forEach((item, index) => (
+    validateDocumentSummary(item, options.command, `documents.items[${index}]`)
+  ));
+  const expectedPage = Object.hasOwn(query, 'page') ? query.page : 1;
+  const expectedPerPage = Object.hasOwn(query, 'perPage') ? query.perPage : 50;
+  const expectedTotalPages = document.total === 0 ? 0 : Math.ceil(document.total / document.perPage);
+  const ids = document.items.map((item) => item.id);
+  if (
+    document.page !== expectedPage
+    || document.perPage !== expectedPerPage
+    || document.totalPages !== expectedTotalPages
+    || document.items.length > document.perPage
+    || new Set(ids).size !== ids.length
+    || Object.hasOwn(query, 'postType') && document.items.some((item) => item.postType !== query.postType)
+    || query.hasLayout === true && document.items.some((item) => item.hasLayout !== true)
+  ) {
+    throw new ClientError('The documents collection does not match its requested scope or pagination.', {
+      code: 'CAPABILITY_SCOPE_MISMATCH',
+      stage: options.command,
+      nextAction: 'Discard the collection and repair the Builder document-list resource.',
+    });
+  }
   return capabilitySuccess(options, 'DOCUMENTS_LIST_OK', {
     artifacts: { input: options.input },
     response: response.data,
     evidence: {
-      count: response.data.items.length,
-      page: response.data.page,
-      total: response.data.total,
+      count: document.items.length,
+      page: document.page,
+      total: document.total,
     },
     message: 'The authorable document collection was read successfully.',
   });
@@ -3807,6 +4029,7 @@ async function runRevisionList(options, authHeader) {
     || !Number.isSafeInteger(document.totalPages) || document.totalPages < 0
     || typeof document.currentPostModifiedGmt !== 'string'
     || document.currentPostModifiedGmt === ''
+    || !validSha(document.currentLayoutSha256)
   ) {
     throw new ClientError('The revisions resource returned an invalid collection.', {
       code: 'CAPABILITY_RESPONSE_INVALID',
@@ -3823,6 +4046,7 @@ async function runRevisionList(options, authHeader) {
       page: document.page,
       total: document.total,
       currentPostModifiedGmt: document.currentPostModifiedGmt,
+      currentLayoutSha256: document.currentLayoutSha256,
     },
     message: 'The exact revision inventory was read without exposing revision content.',
   });
@@ -3838,6 +4062,8 @@ async function runRevisionRestore(options, authHeader) {
     || !isFieldName(resource.revisionField)
     || resource.carrier !== resource.revisionField
     || !isFieldName(resource.writePreconditionField)
+    || !isFieldName(resource.writeDigestPreconditionField)
+    || resource.writeDigestPreconditionField === resource.writePreconditionField
   ) {
     throw new ClientError('The revision-restore descriptor is unsupported.', {
       code: 'CAPABILITY_RESOURCE_INVALID',
@@ -3847,7 +4073,11 @@ async function runRevisionRestore(options, authHeader) {
   }
   assertExactFields(
     input,
-    [resource.revisionField, resource.writePreconditionField],
+    [
+      resource.revisionField,
+      resource.writePreconditionField,
+      resource.writeDigestPreconditionField,
+    ],
     options.command,
     'restore input'
   );
@@ -3856,20 +4086,38 @@ async function runRevisionRestore(options, authHeader) {
     || input[resource.revisionField] < 1
     || typeof input[resource.writePreconditionField] !== 'string'
     || input[resource.writePreconditionField].trim() === ''
+    || !validSha(input[resource.writeDigestPreconditionField])
   ) {
-    throw new ClientError('Revision restore requires a positive revision ID and a version precondition.', {
+    throw new ClientError('Revision restore requires a positive revision ID plus version and layout-digest preconditions.', {
       code: 'CAPABILITY_INPUT_INVALID',
       stage: options.command,
-      nextAction: 'Use a revisionId previously reported by Builder and the fresh postModifiedGmt token.',
+      nextAction: 'Use a revisionId previously reported by Builder plus fresh postModifiedGmt and currentLayoutSha256 values.',
     });
   }
-  const context = await fetchPageContext(options, authHeader, fetched.contract, options.pageId);
-  if (context.failure) return context.failure;
-  if (context.document.postModifiedGmt !== input[resource.writePreconditionField]) {
+  const page = pageLayoutCapability(fetched.contract, options.pageId, options.command);
+  const currentResponse = await request(options, authHeader, {
+    method: page.readMethod,
+    endpoint: page.endpoint,
+  });
+  if (!currentResponse.ok) {
+    return httpFailureResult(options.command, currentResponse, { input: options.input });
+  }
+  const current = layoutResourceEvidence(currentResponse.data, page, options.pageId);
+  if (!current.validIdentity || !current.validRepresentation || !current.versionToken) {
+    throw new ClientError('The current layout cannot prove the restore preconditions.', {
+      code: 'CAPABILITY_RESPONSE_INVALID',
+      stage: options.command,
+      nextAction: 'Repair the canonical page-layout response before restoring a revision.',
+    });
+  }
+  if (
+    current.versionToken !== input[resource.writePreconditionField]
+    || current.declaredDigest !== input[resource.writeDigestPreconditionField]
+  ) {
     return capabilityFailure(
       options,
       'REST_CONFLICT',
-      'The restore precondition is stale before the write.',
+      'A restore precondition is stale before the write.',
       'Fetch the current document context, reconcile the revision choice, and issue one new explicit restore.',
       { input: options.input }
     );
@@ -3888,6 +4136,7 @@ async function runRevisionRestore(options, authHeader) {
     || response.data.id !== options.pageId
     || response.data.restored !== true
     || response.data.revisionId !== input[resource.revisionField]
+    || !validSha(response.data.layoutSha256)
   ) {
     throw new ClientError('The revision write returned incomplete or mismatched evidence.', {
       code: 'CAPABILITY_WRITE_UNPROVEN',
@@ -3896,7 +4145,6 @@ async function runRevisionRestore(options, authHeader) {
     });
   }
 
-  const page = pageLayoutCapability(fetched.contract, options.pageId, options.command);
   const readback = await request(options, authHeader, { method: page.readMethod, endpoint: page.endpoint });
   if (!readback.ok) {
     return capabilityFailure(
@@ -3908,10 +4156,13 @@ async function runRevisionRestore(options, authHeader) {
     );
   }
   const restoredLayout = extractNodeMap(response.data.layout);
-  const readbackLayout = extractNodeMap(readback.data, page.carrier);
+  const restoredLayoutSha256 = nodeMapSha256(restoredLayout);
+  const readbackEvidence = layoutResourceEvidence(readback.data, page, options.pageId);
   if (
-    readback.data?.id !== options.pageId
-    || canonicalSha256(restoredLayout) !== canonicalSha256(readbackLayout)
+    response.data.layoutSha256 !== restoredLayoutSha256
+    || !readbackEvidence.validIdentity
+    || !readbackEvidence.validRepresentation
+    || readbackEvidence.declaredDigest !== restoredLayoutSha256
   ) {
     return capabilityFailure(
       options,
@@ -3927,8 +4178,9 @@ async function runRevisionRestore(options, authHeader) {
     evidence: {
       pageId: options.pageId,
       revisionId: input[resource.revisionField],
-      layoutSha256: canonicalSha256(readbackLayout),
-      postModifiedGmt: readback.data[page.versionField],
+      previousLayoutSha256: current.declaredDigest,
+      layoutSha256: readbackEvidence.declaredDigest,
+      postModifiedGmt: readbackEvidence.versionToken,
     },
     message: 'The selected revision was restored and its canonical layout read back successfully.',
   });
@@ -4057,25 +4309,89 @@ async function runPreviewResource(options, authHeader) {
     body,
   });
   if (!response.ok) return httpFailureResult(options.command, response, { input: options.input });
-  if (!isObject(response.data) || typeof response.data.html !== 'string' || response.data.html === '') {
-    throw new ClientError('The preview resource did not return rendered HTML.', {
+  if (
+    !isObject(response.data)
+    || response.data.valid !== true
+    || typeof response.data.html !== 'string'
+    || response.data.html === ''
+    || input.document === true && (
+      typeof response.data.document !== 'string'
+      || response.data.document === ''
+      || !response.data.document.includes(response.data.html)
+    )
+  ) {
+    throw new ClientError('The preview resource did not return a valid candidate-bound render.', {
       code: 'CAPABILITY_RESPONSE_INVALID', stage: options.command,
-      nextAction: 'Repair the preview response before treating it as render evidence.',
+      nextAction: 'Repair the preview response so it proves valid, fragment and requested document output before treating it as render evidence.',
+    });
+  }
+  if (input.assets === true && (
+    !isObject(response.data.assets)
+    || !Array.isArray(response.data.assets.styles)
+    || typeof response.data.assets.inlineCss !== 'string'
+    || !Array.isArray(response.data.assets.scripts)
+  )) {
+    throw new ClientError('The preview resource omitted the requested asset profile.', {
+      code: 'CAPABILITY_RESPONSE_INVALID', stage: options.command,
+      nextAction: 'Repair the Builder preview response before using its render as canonical evidence.',
+    });
+  }
+  if (input.globalTemplates === true && (
+    !isObject(response.data.globalTemplates)
+    || !Number.isSafeInteger(response.data.globalTemplates.header)
+    || response.data.globalTemplates.header < 0
+    || !Number.isSafeInteger(response.data.globalTemplates.footer)
+    || response.data.globalTemplates.footer < 0
+    || typeof response.data.globalTemplates.disabledByPresentation !== 'boolean'
+    || Object.hasOwn(input, 'templateCandidates') && (
+      !Array.isArray(response.data.globalTemplates.candidateRoles)
+      || response.data.globalTemplates.candidateRoles.some((role) => !Object.hasOwn(input.templateCandidates, role))
+    )
+  )) {
+    throw new ClientError('The preview resource omitted or mismatched the requested global-template proof.', {
+      code: 'CAPABILITY_RESPONSE_INVALID', stage: options.command,
+      nextAction: 'Repair the Builder preview response before using its site-chrome render as evidence.',
     });
   }
   const extension = path.extname(options.out);
+  const previewBase = path.join(path.dirname(options.out), path.basename(options.out, extension));
   const previewFile = path.join(
-    path.dirname(options.out),
-    `${path.basename(options.out, extension)}-preview.html`
+    path.dirname(options.out), `${path.basename(options.out, extension)}-preview.html`
   );
-  await atomicWriteMany([{ target: previewFile, content: redact(response.data.html, authHeader) }], options.command);
+  const documentFile = input.document === true ? `${previewBase}-document.html` : '';
+  const outputWrites = [{ target: previewFile, content: redact(response.data.html, authHeader) }];
+  if (documentFile) {
+    outputWrites.push({ target: documentFile, content: redact(response.data.document, authHeader) });
+  }
+  await atomicWriteMany(outputWrites, options.command);
   const responseWithoutHtml = { ...response.data };
   delete responseWithoutHtml.html;
+  delete responseWithoutHtml.document;
+  const inputLayoutSha256 = nodeMapSha256(body[resource.carrier]);
+  const inputSha256 = canonicalSha256(body);
+  const outputHtmlSha256 = createHash('sha256').update(response.data.html, 'utf8').digest('hex');
+  const documentSha256 = documentFile
+    ? createHash('sha256').update(response.data.document, 'utf8').digest('hex')
+    : '';
   return capabilitySuccess(options, 'PREVIEW_RESOURCE_OK', {
-    artifacts: { input: options.input, preview: previewFile },
+    artifacts: {
+      input: options.input,
+      preview: previewFile,
+      ...(documentFile ? { document: documentFile } : {}),
+    },
     response: responseWithoutHtml,
     evidence: {
-      htmlSha256: createHash('sha256').update(response.data.html, 'utf8').digest('hex'),
+      inputSha256,
+      inputLayoutSha256,
+      htmlSha256: outputHtmlSha256,
+      outputHtmlSha256,
+      ...(documentSha256 ? { documentSha256 } : {}),
+      ...(isObject(body.globalStyles)
+        ? { globalStylesSha256: canonicalSha256(body.globalStyles) }
+        : {}),
+      ...(isObject(body.templateCandidates)
+        ? { templateCandidatesSha256: canonicalSha256(body.templateCandidates) }
+        : {}),
       htmlBytes: Buffer.byteLength(response.data.html, 'utf8'),
       postId: input.postId || 0,
       nodeId: input.nodeId || '',
@@ -4235,16 +4551,55 @@ function compositionRequest(resource, input, recipes, stage, kind) {
   assertExactFields(input, allowed, stage, `${kind} input`);
   if (kind === 'instantiate') {
     const recipeIds = new Set(recipes.map((recipe) => recipe?.id).filter((id) => typeof id === 'string'));
-    if (typeof input.recipeId !== 'string' || !recipeIds.has(input.recipeId) || !isObject(input[resource.carrier])) {
+    if (
+      typeof input.recipeId !== 'string'
+      || !recipeIds.has(input.recipeId)
+      || !isObject(input[resource.carrier])
+      || Object.hasOwn(input, 'parentId') && (typeof input.parentId !== 'string' || input.parentId === '')
+      || Object.hasOwn(input, 'index') && (!Number.isSafeInteger(input.index) || input.index < 0)
+      || Object.hasOwn(input, 'idPrefix') && (
+        typeof input.idPrefix !== 'string'
+        || !/^[a-z][a-z0-9-]{0,63}$/u.test(input.idPrefix)
+      )
+    ) {
       throw new ClientError('Composition instantiation requires a published recipeId and a slot object.', {
         code: 'CAPABILITY_INPUT_INVALID', stage,
         nextAction: 'Choose an exact recipe from compositions-list and satisfy its published slots.',
       });
     }
-  } else if (!isObject(input[resource.carrier])) {
-    throw new ClientError('Composition planning requires a plan object.', {
-      code: 'CAPABILITY_INPUT_INVALID', stage,
-      nextAction: 'Provide the complete plan object described by the live composition contract.',
+  } else {
+    const plan = input[resource.carrier];
+    if (!isObject(plan)) {
+      throw new ClientError('Composition planning requires a plan object.', {
+        code: 'CAPABILITY_INPUT_INVALID', stage,
+        nextAction: 'Provide the complete plan object described by the live composition contract.',
+      });
+    }
+    assertExactFields(plan, ['version', 'sections'], stage, 'composition plan');
+    const recipeIds = new Set(recipes.map((recipe) => recipe?.id).filter((id) => typeof id === 'string'));
+    if (
+      plan.version !== 1
+      || !Array.isArray(plan.sections)
+      || plan.sections.length < 1
+      || plan.sections.length > 20
+    ) {
+      throw new ClientError('Composition planning requires version 1 and 1-20 sections.', {
+        code: 'CAPABILITY_INPUT_INVALID', stage,
+        nextAction: 'Provide the complete bounded plan described by the live composition contract.',
+      });
+    }
+    plan.sections.forEach((section, index) => {
+      assertExactFields(section, ['compositionId', 'content'], stage, `plan.sections[${index}]`);
+      if (
+        typeof section.compositionId !== 'string'
+        || !recipeIds.has(section.compositionId)
+        || !isObject(section.content)
+      ) {
+        throw new ClientError(`plan.sections[${index}] does not use a published composition and content object.`, {
+          code: 'CAPABILITY_INPUT_INVALID', stage,
+          nextAction: 'Choose exact recipe IDs from compositions-list and provide one content object per section.',
+        });
+      }
     });
   }
   if (Object.hasOwn(input, 'postId') && (!Number.isSafeInteger(input.postId) || input.postId < 1)) {
@@ -4254,6 +4609,255 @@ function compositionRequest(resource, input, recipes, stage, kind) {
     });
   }
   return input;
+}
+
+function validateCanonicalNodeGraph(nodeMap, rootNodeId, externalParentId, stage, label) {
+  if (!isObject(nodeMap) || Object.keys(nodeMap).length === 0 || !isObject(nodeMap[rootNodeId])) {
+    throw new ClientError(`${label} does not contain its declared root node.`, {
+      code: 'CAPABILITY_RESPONSE_INVALID', stage,
+      nextAction: 'Repair the composition response before using its node tree.',
+    });
+  }
+  const owners = new Map();
+  for (const [nodeId, node] of Object.entries(nodeMap)) {
+    const required = [
+      'type', 'displayName', 'custom', 'isCanvas', 'props', 'parent', 'hidden', 'nodes', 'linkedNodes',
+    ];
+    const linkedChildren = isObject(node?.linkedNodes) ? Object.values(node.linkedNodes) : [];
+    if (
+      !isObject(node)
+      || !required.every((field) => Object.hasOwn(node, field))
+      || !isObject(node.type)
+      || typeof node.type.resolvedName !== 'string' || node.type.resolvedName === ''
+      || typeof node.displayName !== 'string' || node.displayName === ''
+      || !isObject(node.custom)
+      || typeof node.isCanvas !== 'boolean'
+      || !isObject(node.props)
+      || typeof node.hidden !== 'boolean'
+      || !Array.isArray(node.nodes)
+      || !isObject(node.linkedNodes)
+      || !node.nodes.every((childId) => typeof childId === 'string' && childId !== '')
+      || !linkedChildren.every((childId) => typeof childId === 'string' && childId !== '')
+      || typeof node.parent !== 'string' && node.parent !== null
+    ) {
+      throw new ClientError(`${label}.${nodeId} is not a canonical Monteby node.`, {
+        code: 'CAPABILITY_RESPONSE_INVALID', stage,
+        nextAction: 'Repair the composition response before using its node tree.',
+      });
+    }
+    const childIds = [...node.nodes, ...linkedChildren];
+    if (new Set(childIds).size !== childIds.length) {
+      throw new ClientError(`${label}.${nodeId} owns one child more than once.`, {
+        code: 'CAPABILITY_RESPONSE_INVALID', stage,
+        nextAction: 'Repair the composition tree ownership before using the response.',
+      });
+    }
+    for (const childId of childIds) {
+      if (!isObject(nodeMap[childId]) || nodeMap[childId].parent !== nodeId || owners.has(childId)) {
+        throw new ClientError(`${label} has an invalid or duplicate child owner.`, {
+          code: 'CAPABILITY_RESPONSE_INVALID', stage,
+          nextAction: 'Repair the composition tree ownership before using the response.',
+        });
+      }
+      owners.set(childId, nodeId);
+    }
+  }
+  if (nodeMap[rootNodeId].parent !== externalParentId || owners.has(rootNodeId)) {
+    throw new ClientError(`${label} root ownership does not match the requested parent.`, {
+      code: 'CAPABILITY_RESPONSE_INVALID', stage,
+      nextAction: 'Repair the composition root ownership before using the response.',
+    });
+  }
+  const visited = new Set();
+  const active = new Set();
+  const visit = (nodeId) => {
+    if (active.has(nodeId)) {
+      throw new ClientError(`${label} contains a cycle.`, {
+        code: 'CAPABILITY_RESPONSE_INVALID', stage,
+        nextAction: 'Repair the composition tree before using the response.',
+      });
+    }
+    if (visited.has(nodeId)) return;
+    active.add(nodeId);
+    const node = nodeMap[nodeId];
+    [...node.nodes, ...Object.values(node.linkedNodes)].forEach(visit);
+    active.delete(nodeId);
+    visited.add(nodeId);
+  };
+  visit(rootNodeId);
+  if (visited.size !== Object.keys(nodeMap).length) {
+    throw new ClientError(`${label} contains unreachable nodes.`, {
+      code: 'CAPABILITY_RESPONSE_INVALID', stage,
+      nextAction: 'Repair the composition tree reachability before using the response.',
+    });
+  }
+}
+
+function validateCompositionResponse(response, input, kind, stage) {
+  const responseFields = kind === 'instantiate'
+    ? ['valid', 'recipeId', 'rootNodeId', 'nodes', 'operation', 'errors', 'lint', 'decisions']
+    : ['valid', 'layout', 'sections', 'errors', 'lint', 'decisions'];
+  assertExactFields(response, responseFields, stage, `${kind} response`, 'CAPABILITY_RESPONSE_INVALID');
+  if (
+    !responseFields.every((field) => Object.hasOwn(response, field))
+    || response.valid !== true
+    || !Array.isArray(response.errors) || response.errors.length !== 0
+    || !Array.isArray(response.lint) || response.lint.some((finding) => !isObject(finding))
+  ) {
+    throw new ClientError('The composition resource did not return a complete valid candidate.', {
+      code: 'CAPABILITY_RESPONSE_INVALID', stage,
+      response: safeCapabilityOutput(response, stage),
+      nextAction: 'Correct the recipe slots or plan using the returned errors and run the command again.',
+    });
+  }
+
+  if (kind === 'instantiate') {
+    const expectedParent = input.parentId || 'ROOT';
+    const expectedPrefix = input.idPrefix || input.recipeId;
+    if (
+      response.recipeId !== input.recipeId
+      || typeof response.rootNodeId !== 'string' || response.rootNodeId === ''
+      || !isObject(response.nodes)
+      || !isObject(response.operation)
+      || !isObject(response.decisions)
+    ) {
+      throw new ClientError('The composition instantiation identity is incomplete or mismatched.', {
+        code: 'CAPABILITY_RESPONSE_INVALID', stage,
+        nextAction: 'Discard the response and repair the Builder composition resource.',
+      });
+    }
+    validateCanonicalNodeGraph(
+      response.nodes,
+      response.rootNodeId,
+      expectedParent,
+      stage,
+      'instantiate.nodes'
+    );
+    assertExactFields(
+      response.operation,
+      ['type', 'parentId', 'index', 'tree'],
+      stage,
+      'instantiate operation',
+      'CAPABILITY_RESPONSE_INVALID'
+    );
+    assertExactFields(
+      response.operation.tree,
+      ['rootNodeId', 'nodes'],
+      stage,
+      'instantiate operation tree',
+      'CAPABILITY_RESPONSE_INVALID'
+    );
+    const indexMatches = Object.hasOwn(input, 'index')
+      ? response.operation.index === input.index
+      : !Object.hasOwn(response.operation, 'index');
+    if (
+      response.operation.type !== 'insert_tree'
+      || response.operation.parentId !== expectedParent
+      || !indexMatches
+      || response.operation.tree.rootNodeId !== response.rootNodeId
+      || canonicalSha256(response.operation.tree.nodes) !== canonicalSha256(response.nodes)
+    ) {
+      throw new ClientError('The composition operation does not reproduce the returned node tree.', {
+        code: 'CAPABILITY_RESPONSE_INVALID', stage,
+        nextAction: 'Discard the response and repair the Builder composition operation.',
+      });
+    }
+    const decisionFields = [
+      'idPrefix', 'idStart', 'nodeCount', 'omittedOptional', 'levelOneHeadings',
+      'placementVerified', 'anchorsVerified',
+    ];
+    assertExactFields(
+      response.decisions,
+      decisionFields,
+      stage,
+      'instantiate decisions',
+      'CAPABILITY_RESPONSE_INVALID'
+    );
+    if (
+      !decisionFields.every((field) => Object.hasOwn(response.decisions, field))
+      || response.decisions.idPrefix !== expectedPrefix
+      || !Number.isSafeInteger(response.decisions.idStart) || response.decisions.idStart < 1
+      || response.decisions.nodeCount !== Object.keys(response.nodes).length
+      || !Array.isArray(response.decisions.omittedOptional)
+      || !response.decisions.omittedOptional.every((value) => typeof value === 'string')
+      || !Number.isSafeInteger(response.decisions.levelOneHeadings)
+      || response.decisions.levelOneHeadings < 0
+      || typeof response.decisions.placementVerified !== 'boolean'
+      || typeof response.decisions.anchorsVerified !== 'boolean'
+    ) {
+      throw new ClientError('The composition instantiation decisions are incomplete or inconsistent.', {
+        code: 'CAPABILITY_RESPONSE_INVALID', stage,
+        nextAction: 'Discard the response and repair the Builder composition decisions.',
+      });
+    }
+    return;
+  }
+
+  if (!Array.isArray(response.sections) || !Array.isArray(response.decisions)) {
+    throw new ClientError('The composition plan omitted its section evidence.', {
+      code: 'CAPABILITY_RESPONSE_INVALID', stage,
+      nextAction: 'Discard the response and repair the Builder composition plan.',
+    });
+  }
+  const nodeMap = extractNodeMap(response.layout);
+  validateCanonicalNodeGraph(nodeMap, 'ROOT', null, stage, 'plan.layout');
+  const requestedSections = input.plan.sections;
+  if (
+    !Array.isArray(requestedSections)
+    || response.sections.length !== requestedSections.length
+    || response.decisions.length !== requestedSections.length
+    || nodeMap.ROOT.nodes.length !== requestedSections.length
+  ) {
+    throw new ClientError('The composition plan section count does not match the request.', {
+      code: 'CAPABILITY_RESPONSE_INVALID', stage,
+      nextAction: 'Discard the response and repair the Builder composition plan.',
+    });
+  }
+  response.sections.forEach((section, index) => {
+    const decision = response.decisions[index];
+    assertExactFields(
+      section,
+      ['index', 'compositionId', 'rootNodeId', 'nodeCount'],
+      stage,
+      `plan.sections[${index}]`,
+      'CAPABILITY_RESPONSE_INVALID'
+    );
+    assertExactFields(
+      decision,
+      ['section', 'compositionId', 'rootNodeId', 'idStart', 'nodeCount', 'omittedOptional'],
+      stage,
+      `plan.decisions[${index}]`,
+      'CAPABILITY_RESPONSE_INVALID'
+    );
+    const rootNodeId = nodeMap.ROOT.nodes[index];
+    const stack = [rootNodeId];
+    const subtree = new Set();
+    while (stack.length > 0) {
+      const nodeId = stack.pop();
+      if (subtree.has(nodeId)) continue;
+      subtree.add(nodeId);
+      const node = nodeMap[nodeId];
+      stack.push(...node.nodes, ...Object.values(node.linkedNodes));
+    }
+    if (
+      section.index !== index
+      || section.compositionId !== requestedSections[index]?.compositionId
+      || section.rootNodeId !== rootNodeId
+      || section.nodeCount !== subtree.size
+      || decision.section !== index
+      || decision.compositionId !== section.compositionId
+      || decision.rootNodeId !== section.rootNodeId
+      || decision.nodeCount !== section.nodeCount
+      || !Number.isSafeInteger(decision.idStart) || decision.idStart < 1
+      || !Array.isArray(decision.omittedOptional)
+      || !decision.omittedOptional.every((value) => typeof value === 'string')
+    ) {
+      throw new ClientError('The composition plan section evidence is incomplete or inconsistent.', {
+        code: 'CAPABILITY_RESPONSE_INVALID', stage,
+        nextAction: 'Discard the response and repair the Builder composition plan.',
+      });
+    }
+  });
 }
 
 async function runComposition(options, authHeader, kind) {
@@ -4270,13 +4874,9 @@ async function runComposition(options, authHeader, kind) {
     body,
   });
   if (!response.ok) return httpFailureResult(options.command, response, { input: options.input });
-  if (!isObject(response.data) || response.data.valid !== true) {
-    throw new ClientError('The composition resource did not return a valid candidate.', {
-      code: 'CAPABILITY_RESPONSE_INVALID', stage: options.command,
-      response: safeCapabilityOutput(response.data),
-      nextAction: 'Correct the recipe slots or plan using the returned errors and run the command again.',
-    });
-  }
+  validateCompositionResponse(response.data, input, kind, options.command);
+  const inputSha256 = canonicalSha256(body);
+  const outputSha256 = canonicalSha256(response.data);
   return capabilitySuccess(options, kind === 'instantiate' ? 'COMPOSITION_INSTANTIATE_OK' : 'COMPOSITION_PLAN_OK', {
     artifacts: { input: options.input },
     response: response.data,
@@ -4284,6 +4884,11 @@ async function runComposition(options, authHeader, kind) {
       kind,
       recipeId: kind === 'instantiate' ? input.recipeId : undefined,
       postId: input.postId || 0,
+      inputSha256,
+      outputSha256,
+      ...(kind === 'instantiate'
+        ? { nodeTreeSha256: canonicalSha256(response.data.nodes) }
+        : { layoutSha256: nodeMapSha256(extractNodeMap(response.data.layout)) }),
     },
     message: kind === 'instantiate'
       ? 'The published composition was instantiated and validated without writing.'
@@ -4479,7 +5084,7 @@ async function runGlobalStylesCompose(options, authHeader) {
       nextAction: 'Repair the Builder composition response before previewing or applying it.',
     });
   }
-  const safeStyles = safeCapabilityOutput(response.data.styles);
+  const safeStyles = safeCapabilityOutput(response.data.styles, options.command);
   return capabilitySuccess(options, 'GLOBAL_STYLES_COMPOSE_OK', {
     artifacts: { input: options.input },
     response: { ...response.data, styles: safeStyles },
@@ -4500,6 +5105,14 @@ function pageSeoCapability(contract, pageId, stage) {
     || resource.writeMethod !== 'PUT'
     || !isFieldName(resource.carrier)
     || !isFieldName(persistence.writePreconditionField)
+    || !isFieldName(resource.digestField)
+    || !isFieldName(resource.writeDigestPreconditionField)
+    || new Set([
+      resource.carrier,
+      persistence.writePreconditionField,
+      resource.digestField,
+      resource.writeDigestPreconditionField,
+    ]).size !== 4
     || !isObject(persistence.seo?.schema)
   ) {
     throw new ClientError('The page SEO resource descriptor is unsupported.', {
@@ -4513,6 +5126,8 @@ function pageSeoCapability(contract, pageId, stage) {
     writeMethod: resource.writeMethod,
     carrier: resource.carrier,
     preconditionField: persistence.writePreconditionField,
+    digestField: resource.digestField,
+    digestPreconditionField: resource.writeDigestPreconditionField,
     schema: persistence.seo.schema,
   };
 }
@@ -4523,7 +5138,13 @@ async function fetchPageSeo(options, authHeader, capability) {
     endpoint: capability.endpoint,
   });
   if (!response.ok) return { failure: httpFailureResult(options.command, response, {}) };
-  if (!isObject(response.data) || response.data.id !== options.pageId || !isObject(response.data.seo)) {
+  if (
+    !isObject(response.data)
+    || response.data.id !== options.pageId
+    || !isObject(response.data.seo)
+    || !validSha(response.data[capability.digestField])
+    || response.data[capability.digestField] !== canonicalSha256(response.data.seo)
+  ) {
     throw new ClientError('The page SEO response does not match the requested document.', {
       code: 'CAPABILITY_SCOPE_MISMATCH', stage: options.command,
       nextAction: 'Discard the response and repair the Builder SEO resource.',
@@ -4543,7 +5164,7 @@ async function runSeoGet(options, authHeader) {
     evidence: {
       pageId: options.pageId,
       postModifiedGmt: seo.document.postModifiedGmt,
-      seoSha256: canonicalSha256(seo.document.seo),
+      seoSha256: seo.document[capability.digestField],
     },
     message: 'The complete page SEO profile was read without loading or converting its layout.',
   });
@@ -4556,14 +5177,18 @@ async function runSeoPut(options, authHeader) {
   const capability = pageSeoCapability(fetched.contract, options.pageId, options.command);
   assertExactFields(
     input,
-    [capability.carrier, capability.preconditionField],
+    [capability.carrier, capability.preconditionField, capability.digestPreconditionField],
     options.command,
     'SEO input'
   );
-  if (!isObject(input[capability.carrier]) || typeof input[capability.preconditionField] !== 'string') {
-    throw new ClientError('SEO save requires the complete SEO block and a version precondition.', {
+  if (
+    !isObject(input[capability.carrier])
+    || typeof input[capability.preconditionField] !== 'string'
+    || !validSha(input[capability.digestPreconditionField])
+  ) {
+    throw new ClientError('SEO save requires the complete SEO block plus version and digest preconditions.', {
       code: 'CAPABILITY_INPUT_INVALID', stage: options.command,
-      nextAction: 'Start from seo-get, change the complete seo block, and preserve its postModifiedGmt token.',
+      nextAction: 'Start from seo-get, change the complete seo block, and preserve its postModifiedGmt and seoSha256 values.',
     });
   }
   const schemaErrors = operationSchemaErrors(input[capability.carrier], capability.schema);
@@ -4575,7 +5200,10 @@ async function runSeoPut(options, authHeader) {
   }
   const before = await fetchPageSeo(options, authHeader, capability);
   if (before.failure) return before.failure;
-  if (before.document.postModifiedGmt !== input[capability.preconditionField]) {
+  if (
+    before.document.postModifiedGmt !== input[capability.preconditionField]
+    || before.document[capability.digestField] !== input[capability.digestPreconditionField]
+  ) {
     return capabilityFailure(
       options,
       'REST_CONFLICT',
@@ -4591,7 +5219,13 @@ async function runSeoPut(options, authHeader) {
     mutation: true,
   });
   if (!response.ok) return httpFailureResult(options.command, response, { input: options.input });
-  if (!isObject(response.data) || response.data.id !== options.pageId) {
+  if (
+    !isObject(response.data)
+    || response.data.id !== options.pageId
+    || !isObject(response.data.seo)
+    || !validSha(response.data[capability.digestField])
+    || response.data[capability.digestField] !== canonicalSha256(response.data.seo)
+  ) {
     throw new ClientError('The SEO write response has the wrong document identity.', {
       code: 'CAPABILITY_WRITE_UNPROVEN', stage: options.command,
       nextAction: 'Do not repeat the write. Read the current SEO profile and reconcile it manually.',
@@ -4614,7 +5248,8 @@ async function runSeoPut(options, authHeader) {
       pageId: options.pageId,
       previousVersionToken: before.document.postModifiedGmt,
       versionToken: readback.document.postModifiedGmt,
-      seoSha256: canonicalSha256(readback.document.seo),
+      previousSeoSha256: before.document[capability.digestField],
+      seoSha256: readback.document[capability.digestField],
       canonicalReadback: true,
     },
     message: 'The complete SEO profile was saved and proved by canonical readback.',
@@ -4966,5 +5601,6 @@ module.exports = {
   nodeMapSha256,
   operationsSha256,
   parseArgs,
+  portableDigestBytes,
   pruneNoopOperations,
 };

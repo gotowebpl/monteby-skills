@@ -104,16 +104,16 @@ function layout() {
 
 function canonicalMotionFixture(kind) {
   const definitions = {
-    entrance: { intent: 'reveal', prop: 'motionPreset', value: 'slide', options: ['none', 'slide'] },
-    pointer: { intent: 'pointer', prop: 'pointerEffect', value: 'magnetic', options: ['none', 'magnetic'] },
-    scroll: { intent: 'background', prop: 'backgroundParallax', value: 'subtle', options: ['none', 'subtle'] },
-    pinned: { intent: 'story', prop: 'sectionStickyScene', value: 'progress', options: ['off', 'progress'] },
-    'state-change': { intent: 'component', prop: 'transitionPreset', value: 'fade', options: ['none', 'fade'] },
-    ambient: { intent: 'background', prop: 'backgroundMotion', value: 'zoom-in', options: ['none', 'zoom-in'] },
+    entrance: { component: 'MotionOwner', intent: 'reveal', prop: 'motionPreset', value: 'slide', options: ['none', 'slide'] },
+    pointer: { component: 'MotionOwner', intent: 'pointer', prop: 'pointerEffect', value: 'magnetic', options: ['none', 'magnetic'] },
+    scroll: { component: 'Section', intent: 'background', prop: 'backgroundParallax', value: 'subtle', options: ['none', 'subtle'] },
+    pinned: { component: 'Section', intent: 'story', prop: 'sectionStickyScene', value: 'progress', options: ['off', 'progress'] },
+    'state-change': { component: 'TabsBlock', intent: 'component', prop: 'transitionPreset', value: 'fade', options: ['none', 'fade'] },
+    ambient: { component: 'Section', intent: 'background', prop: 'backgroundMotion', value: 'zoom-in', options: ['none', 'zoom-in'] },
   };
   const definition = definitions[kind];
   const liveContract = {
-    components: [component('MotionOwner', [control(definition.prop, 'select', { options: definition.options })])],
+    components: [component(definition.component, [control(definition.prop, 'select', { options: definition.options })])],
     authoring: {
       capabilities: { motionRecipes: true },
       motion: {
@@ -136,7 +136,7 @@ function canonicalMotionFixture(kind) {
         recipes: [{
           id: `proof-${kind}`,
           intent: definition.intent,
-          components: ['MotionOwner'],
+          components: [definition.component],
           props: { [definition.prop]: definition.value },
         }],
       },
@@ -144,25 +144,47 @@ function canonicalMotionFixture(kind) {
   };
   return {
     contract: liveContract,
-    layout: {
-      ROOT: { type: { resolvedName: 'RootCanvas' }, isCanvas: true, props: {}, nodes: ['motion-owner'] },
-      'motion-owner': {
-        type: { resolvedName: 'MotionOwner' },
-        isCanvas: false,
-        props: { [definition.prop]: definition.value },
-        parent: 'ROOT',
-        nodes: [],
-      },
-    },
+    layout: (() => {
+      const children = kind === 'pinned' ? ['story-1', 'story-2', 'story-3'] : [];
+      const props = {
+        [definition.prop]: definition.value,
+        ...(['ambient', 'scroll'].includes(kind)
+          ? { backgroundMedia: 'image', backgroundImage: '/media/background.jpg' }
+          : {}),
+        ...(kind === 'state-change'
+          ? { tabs: [{ label: 'One' }, { label: 'Two' }] }
+          : {}),
+      };
+      return {
+        ROOT: { type: { resolvedName: 'RootCanvas' }, isCanvas: true, props: {}, nodes: ['motion-owner'] },
+        'motion-owner': {
+          type: { resolvedName: definition.component },
+          isCanvas: children.length > 0,
+          props,
+          parent: 'ROOT',
+          nodes: children,
+        },
+        ...Object.fromEntries(children.map((nodeId) => [nodeId, {
+          type: { resolvedName: 'Text' }, isCanvas: false, props: { text: nodeId }, parent: 'motion-owner', nodes: [],
+        }])),
+      };
+    })(),
   };
 }
 
-function canonicalMotionViewportEvidence(label, kind) {
+function canonicalMotionViewportEvidence(label, kind, owners = [{
+  nodeId: 'motion-owner', recipeId: `proof-${kind}`, passed: true,
+}]) {
   return {
     label,
     schemaVersion: 1,
     normalized: true,
-    owners: [{ kind, firstViewport: true }],
+    owners: owners.map((owner) => ({
+      nodeId: owner.nodeId,
+      recipeId: owner.recipeId,
+      kind,
+      firstViewport: true,
+    })),
     environments: {
       normalFinePointer: {
         status: 'passed',
@@ -173,13 +195,37 @@ function canonicalMotionViewportEvidence(label, kind) {
         wheelIntercepted: false,
         positiveByKind: {
           [kind]: {
-            ownerCount: 1,
-            attemptedCount: 1,
-            passedCount: 1,
-            passed: true,
-            samples: [{ id: '1', mechanism: `${kind}-proof`, passed: true }],
+            ownerCount: owners.length,
+            attemptedCount: owners.length,
+            passedCount: owners.filter((owner) => owner.passed).length,
+            passed: owners.some((owner) => owner.passed),
+            samples: owners.map((owner, index) => ({
+              id: String(index + 1),
+              nodeId: owner.nodeId,
+              recipeId: owner.recipeId,
+              kind,
+              mechanism: `${kind}-proof`,
+              passed: owner.passed,
+            })),
           },
         },
+        positiveByOwner: owners.map((owner, index) => ({
+          probeId: String(index + 1),
+          nodeId: owner.nodeId,
+          recipeId: owner.recipeId,
+          kind,
+          attemptedCount: 1,
+          passedCount: owner.passed ? 1 : 0,
+          passed: owner.passed,
+          samples: [{
+            id: String(index + 1),
+            nodeId: owner.nodeId,
+            recipeId: owner.recipeId,
+            kind,
+            mechanism: `${kind}-proof`,
+            passed: owner.passed,
+          }],
+        })),
       },
     },
     checks: {
@@ -327,6 +373,124 @@ test('motion audit enforces stagger ownership, budgets, forbidden components, an
   assert.equal(codes.has('motion_forbidden_component'), true);
 });
 
+test('motion audit requires one exact active recipe signature while tolerating neutral defaults', () => {
+  const live = contract();
+  live.components[0].props.push('backgroundMotion');
+  live.components[0].aiProps.push('backgroundMotion');
+  live.components[0].controls.push(control('backgroundMotion', 'select', { options: ['none', 'zoom-in'] }));
+  live.authoring.motion.recipes.push({
+    id: 'background-zoom',
+    intent: 'background',
+    components: ['Section'],
+    props: { backgroundMotion: 'zoom-in' },
+  });
+  const profile = buildResolvedMotionProfile(live);
+  const neutral = layout();
+  Object.assign(neutral['section-1'].props, profile.recipeById.get('hero-reveal').props, {
+    backgroundMotion: 'none',
+  });
+  assert.equal(
+    auditMotionLayout(neutral, profile).errors.some((entry) => entry.code === 'motion_recipe_unmatched'),
+    false
+  );
+
+  const mixed = layout();
+  Object.assign(
+    mixed['section-1'].props,
+    profile.recipeById.get('hero-reveal').props,
+    profile.recipeById.get('background-zoom').props,
+    { backgroundMedia: 'image', backgroundImage: '/media/background.jpg' }
+  );
+  assert.equal(
+    auditMotionLayout(mixed, profile).errors.some((entry) => entry.code === 'motion_recipe_unmatched'),
+    true
+  );
+
+  const wrongOwner = layout();
+  wrongOwner['section-1'].nodes.push('text-motion');
+  wrongOwner['text-motion'] = {
+    type: { resolvedName: 'Text' },
+    isCanvas: false,
+    props: { pointerEffect: 'magnetic', pointerStrength: 12 },
+    parent: 'section-1',
+    nodes: [],
+  };
+  assert.equal(
+    auditMotionLayout(wrongOwner, profile).errors.some((entry) => entry.code === 'motion_recipe_unmatched'),
+    true
+  );
+});
+
+test('motion audit fails closed when published recipe prerequisites are absent', () => {
+  const ambient = canonicalMotionFixture('ambient');
+  delete ambient.layout['motion-owner'].props.backgroundImage;
+  assert.equal(
+    auditMotionLayout(ambient.layout, buildResolvedMotionProfile(ambient.contract)).errors
+      .some((entry) => entry.code === 'motion_background_media_missing'),
+    true
+  );
+
+  const scroll = canonicalMotionFixture('scroll');
+  scroll.layout['motion-owner'].props.backgroundAttachment = 'fixed';
+  assert.equal(
+    auditMotionLayout(scroll.layout, buildResolvedMotionProfile(scroll.contract)).errors
+      .some((entry) => entry.code === 'motion_fixed_background_conflict'),
+    true
+  );
+
+  const pinned = canonicalMotionFixture('pinned');
+  pinned.layout['motion-owner'].nodes = ['story-1', 'story-2'];
+  assert.equal(
+    auditMotionLayout(pinned.layout, buildResolvedMotionProfile(pinned.contract)).errors
+      .some((entry) => entry.code === 'motion_pinned_story_structure'),
+    true
+  );
+
+  const tabs = canonicalMotionFixture('state-change');
+  tabs.layout['motion-owner'].props.tabs = [{ label: 'Only state' }];
+  assert.equal(
+    auditMotionLayout(tabs.layout, buildResolvedMotionProfile(tabs.contract)).errors
+      .some((entry) => entry.code === 'motion_state_owner_structure'),
+    true
+  );
+
+  const cardContract = canonicalMotionFixture('entrance').contract;
+  cardContract.components = [component('Container', [
+    control('hoverPreset', 'select', { options: ['none', 'lift'] }),
+    control('activePreset', 'select', { options: ['none', 'press'] }),
+  ])];
+  cardContract.authoring.motion.recipes = [{
+    id: 'card-hover',
+    intent: 'component',
+    components: ['Container'],
+    props: { hoverPreset: 'lift', activePreset: 'press' },
+  }];
+  const cardProfile = buildResolvedMotionProfile(cardContract);
+  const cardLayout = {
+    ROOT: { type: { resolvedName: 'RootCanvas' }, isCanvas: true, props: {}, nodes: ['card'] },
+    card: {
+      type: { resolvedName: 'Container' },
+      isCanvas: true,
+      props: { hoverPreset: 'lift', activePreset: 'press' },
+      parent: 'ROOT',
+      nodes: [],
+    },
+  };
+  assert.equal(
+    auditMotionLayout(cardLayout, cardProfile).errors
+      .some((entry) => entry.code === 'motion_card_action_unproven'),
+    true
+  );
+  cardLayout.card.props.href = '#';
+  assert.equal(
+    auditMotionLayout(cardLayout, cardProfile).errors
+      .some((entry) => entry.code === 'motion_card_action_unproven'),
+    true
+  );
+  cardLayout.card.props.href = '/contact/';
+  assert.equal(auditMotionLayout(cardLayout, cardProfile).ok, true);
+});
+
 test('legacy autoplay without a claimed motion recipe remains compatible and unmodified', () => {
   const profile = buildResolvedMotionProfile(contract());
   const nodeMap = layout();
@@ -449,7 +613,11 @@ test('canonical verifier requires normalized normal/reduced/no-JS/coarse/input e
   const iteration = { files: { contract: contractFile, layout: layoutFile } };
   const manifest = {
     motionEvidence: {
-      viewports: ['desktop', 'tablet', 'mobile'].map((label) => canonicalMotionViewportEvidence(label, 'pointer')),
+      viewports: ['desktop', 'tablet', 'mobile'].map((label) => canonicalMotionViewportEvidence(
+        label,
+        'pointer',
+        [{ nodeId: 'button-1', recipeId: 'magnetic-cta', passed: true }]
+      )),
     },
   };
   assert.deepEqual(validateCanonicalMotionEvidence(iteration, manifest), []);
@@ -476,17 +644,55 @@ test('canonical verifier requires positive normal-runtime proof for every claime
     };
     assert.deepEqual(validateCanonicalMotionEvidence(iteration, manifest), [], `${kind} positive proof`);
 
-    const failedProof = manifest.motionEvidence.viewports[1].environments.normalFinePointer.positiveByKind[kind];
+    const failedProof = manifest.motionEvidence.viewports[1].environments.normalFinePointer.positiveByOwner[0];
     failedProof.passed = false;
     failedProof.passedCount = 0;
     failedProof.samples[0].passed = false;
-    const expectedCode = `canonical_motion_${kind.replace(/[^a-z0-9]+/gu, '_')}_positive_operation_failed`;
     assert.equal(
-      validateCanonicalMotionEvidence(iteration, manifest).some((entry) => entry.code === expectedCode),
+      validateCanonicalMotionEvidence(iteration, manifest)
+        .some((entry) => entry.code === 'canonical_motion_owner_positive_operation_failed'),
       true,
       `${kind} failed proof`
     );
   }
+});
+
+test('canonical motion proof is bound to each exact owner even when kinds match', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'monteby-motion-owner-proof-'));
+  const contractFile = path.join(directory, 'contract.json');
+  const layoutFile = path.join(directory, 'layout.json');
+  const fixture = canonicalMotionFixture('entrance');
+  fixture.layout.ROOT.nodes.push('motion-owner-2');
+  fixture.layout['motion-owner-2'] = {
+    ...fixture.layout['motion-owner'],
+    props: { ...fixture.layout['motion-owner'].props },
+    parent: 'ROOT',
+    nodes: [],
+  };
+  fs.writeFileSync(contractFile, JSON.stringify(fixture.contract));
+  fs.writeFileSync(layoutFile, JSON.stringify(fixture.layout));
+  const owners = [
+    { nodeId: 'motion-owner', recipeId: 'proof-entrance', passed: true },
+    { nodeId: 'motion-owner-2', recipeId: 'proof-entrance', passed: false },
+  ];
+  const blockers = validateCanonicalMotionEvidence(
+    { files: { contract: contractFile, layout: layoutFile } },
+    {
+      motionEvidence: {
+        viewports: ['desktop', 'tablet', 'mobile'].map((label) => (
+          canonicalMotionViewportEvidence(label, 'entrance', owners)
+        )),
+      },
+    }
+  );
+  assert.equal(blockers.some((entry) => (
+    entry.code === 'canonical_motion_owner_positive_operation_failed'
+    && entry.message.includes('motion-owner-2')
+  )), true);
+  assert.equal(blockers.some((entry) => (
+    entry.code === 'canonical_motion_owner_positive_operation_failed'
+    && entry.message.includes('motion-owner,')
+  )), false);
 });
 
 test('browser capture records normalized motion owners and explicit fallback/input probes', () => {
@@ -503,6 +709,9 @@ test('browser capture records normalized motion owners and explicit fallback/inp
     'wheelInterception',
     'normalFinePointer',
     'positiveByKind',
+    'positiveByOwner',
+    'data-monteby-node-id',
+    'data-monteby-motion-recipe',
     'pointer-css-variable',
     'scroll-progress',
     'pinned-progress',
