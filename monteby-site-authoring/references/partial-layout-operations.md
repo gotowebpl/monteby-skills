@@ -39,16 +39,19 @@ node "$SKILL/scripts/wordpress-layout-client.js" patch-validate \
 ```
 
 Require `PATCH_VALIDATION_OK`. The report must bind the exact site/page,
-snapshot `postModifiedGmt`, canonical `operationsSha256`, returned candidate
-layout, `candidateLayoutSha256`, and `compiledHtmlSha256`. Execute only its
+snapshot version plus canonical layout digest, canonical `operationsSha256`,
+returned candidate layout, `candidateLayoutSha256`, and `compiledHtmlSha256`.
+Execute only its
 `save_validated_patch` action; do not rebuild its arguments.
 
 ## Apply and verify
 
 `patch-save` rereads the same operation file, snapshot, preflight report, and
-live contract; checks the remote version again; then sends
-`expectedModifiedGmt` and `expectedCandidateSha256` to the discovered apply
-resource. It fails closed if any digest or scope differs.
+live contract; checks the remote version and layout digest again; then sends
+the descriptor-named version, layout, candidate, and compiled-output
+preconditions to the discovered apply resource. It fails closed if any digest,
+page identity, or scope differs. An unchanged response token is valid only when
+the readback proves that the operation batch was a no-op.
 
 On `409` or `428`, stop. Snapshot again, reconcile the newer page manually,
 rebuild the operations, and run a new preflight. Never automatically retry an

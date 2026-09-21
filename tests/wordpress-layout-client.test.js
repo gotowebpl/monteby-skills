@@ -57,6 +57,10 @@ function layoutContract({
   previewContextField = 'postId',
   versionField = 'postModifiedGmt',
   writePreconditionField = 'expectedModifiedGmt',
+  layoutDigestField = 'layoutSha256',
+  writeDigestPreconditionField = 'expectedLayoutSha256',
+  candidateDigestField = 'candidateLayoutSha256',
+  writeCandidatePreconditionField = 'expectedCandidateSha256',
 } = {}) {
   return {
     version: 1,
@@ -65,6 +69,10 @@ function layoutContract({
     layoutPersistence: {
       versionField,
       writePreconditionField,
+      layoutDigestField,
+      writeDigestPreconditionField,
+      candidateDigestField,
+      writeCandidatePreconditionField,
       validationContextField,
       previewContextField,
       resources: {
@@ -133,6 +141,8 @@ function patchContract(layoutOptions = {}) {
     layoutPersistence: {
       ...baseContract.layoutPersistence,
       operations: {
+        compiledDigestField: 'compiledHtmlSha256',
+        writeCompiledPreconditionField: 'expectedCompiledHtmlSha256',
         limits: { maxBatchItems: 100, maxPayloadBytes: 2097152 },
         operationSchemas: {
           update_props: {
@@ -172,6 +182,13 @@ function writeJson(file, value) {
 }
 
 function pageSnapshot(site, pageId, data) {
+  const nodeMap = (() => {
+    try {
+      return data?.ROOT ? data : (data?.nodeMap || data?.layout || NODE_MAP);
+    } catch {
+      return NODE_MAP;
+    }
+  })();
   return {
     schemaVersion: 1,
     artifact: 'monteby-page-snapshot',
@@ -179,11 +196,32 @@ function pageSnapshot(site, pageId, data) {
     pageId,
     publicPageUrl: `${site}/page-${pageId}/`,
     capturedAt: '2026-07-26T08:00:00.000Z',
-    data,
+    data: {
+      id: pageId,
+      postType: 'page',
+      viewUrl: `${site}/page-${pageId}/`,
+      nodeMap,
+      postModifiedGmt: 'v1',
+      layoutSha256: nodeMapSha256(nodeMap),
+      ...data,
+    },
   };
 }
 
-function saveReport(site, pageId, layoutSha256 = LAYOUT_SHA256) {
+function layoutResponse(site, pageId, versionToken, nodeMap = NODE_MAP, extra = {}) {
+  return {
+    id: pageId,
+    postType: 'page',
+    viewUrl: `${site}/page-${pageId}/`,
+    postModifiedGmt: versionToken,
+    nodeMap,
+    layoutSha256: nodeMapSha256(nodeMap),
+    ...extra,
+  };
+}
+
+function saveReport(site, pageId, layoutSha256 = LAYOUT_SHA256, readbackLayout = NODE_MAP) {
+  const readbackLayoutSha256 = nodeMapSha256(readbackLayout);
   return {
     schemaVersion: 1,
     ok: true,
@@ -205,11 +243,16 @@ function saveReport(site, pageId, layoutSha256 = LAYOUT_SHA256) {
       pageId,
       publicPageUrl: `${site}/page-${pageId}/`,
       layoutSha256,
-      savedLayoutSha256: layoutSha256,
-      readbackLayoutSha256: layoutSha256,
+      candidateLayoutSha256: readbackLayoutSha256,
+      savedLayoutSha256: readbackLayoutSha256,
+      readbackLayoutSha256,
+      readbackLayout,
       versionField: 'postModifiedGmt',
       previousVersionToken: 'v1',
+      previousLayoutSha256: LAYOUT_SHA256,
       versionToken: 'v2',
+      versionAdvanced: true,
+      layoutChanged: readbackLayoutSha256 !== LAYOUT_SHA256,
       validation: { valid: true, lint: [] },
     },
   };
@@ -332,6 +375,7 @@ test('snapshot fetches contract before the page and atomically records both arti
     viewUrl: '',
     postModifiedGmt: '2026-07-26 08:00:00',
     nodeMap: NODE_MAP,
+    layoutSha256: LAYOUT_SHA256,
     presentation: { layout: 'default', disableGlobalTemplates: false },
   };
   const server = await startServer(t, (request, response) => {
@@ -388,6 +432,7 @@ test('snapshot fetches contract before the page and atomically records both arti
     viewUrl: `${server.site}/page-17/`,
     renderContextUrl: '',
     productVersion: '1.4.0',
+    layoutSha256: LAYOUT_SHA256,
   });
   assert.equal(execution.result.nextAction.id, 'validate_candidate');
   assert.deepEqual(
@@ -420,6 +465,7 @@ test('template snapshot uses only the layout resource and accepts an explicit re
       viewUrl: `${server.site}/?gotoweb_template=global-header`,
       postModifiedGmt: '2026-08-20 09:00:00',
       nodeMap: NODE_MAP,
+      layoutSha256: LAYOUT_SHA256,
     });
   });
   const outDir = tempDir(t);
@@ -545,9 +591,26 @@ test('layout workflows fail closed when their live descriptor is absent or unsaf
       code: 'VALIDATION_RESOURCE_MISSING',
     },
     {
+      command: ['validate', '--layout', layoutFile],
+      mutate(contract) {
+        contract.layoutPersistence.validationContextField = contract.layoutPersistence.resources.validate.carrier;
+      },
+      code: 'VALIDATION_RESOURCE_MISSING',
+    },
+    {
       command: ['snapshot', '--page-id', '17', '--out-dir', path.join(directory, 'snapshot')],
       mutate(contract) { contract.layoutPersistence.resources.pageLayout.path = 'https://attacker.example/layout'; },
-      code: 'LAYOUT_RESOURCE_INVALID',
+      code: 'PAGE_LAYOUT_RESOURCE_MISSING',
+    },
+    {
+      command: ['snapshot', '--page-id', '17', '--out-dir', path.join(directory, 'missing-placeholder')],
+      mutate(contract) { contract.layoutPersistence.resources.pageLayout.path = '/monteby/v1/pages/layout'; },
+      code: 'PAGE_LAYOUT_RESOURCE_MISSING',
+    },
+    {
+      command: ['snapshot', '--page-id', '17', '--out-dir', path.join(directory, 'duplicate-placeholder')],
+      mutate(contract) { contract.layoutPersistence.resources.pageLayout.path = '/monteby/v1/pages/{postId}/copy/{postId}/layout'; },
+      code: 'PAGE_LAYOUT_RESOURCE_MISSING',
     },
   ];
 
@@ -582,8 +645,7 @@ test('save stops before validation and PUT when postModifiedGmt differs from the
       return;
     }
     sendJson(response, 200, {
-      postModifiedGmt: '2026-07-26 08:05:00',
-      nodeMap: NODE_MAP,
+      ...layoutResponse(server.site, 17, '2026-07-26 08:05:00'),
       presentation: { layout: 'default' },
     });
   });
@@ -720,22 +782,27 @@ test('save validates before PUT and preserves fresh presentation while overridin
         : '2026-07-26 08:00:00';
       expectReadback = false;
       sendJson(response, 200, {
-        postModifiedGmt,
-        nodeMap: postModifiedGmt.endsWith('01')
-          ? NODE_MAP
-          : { ROOT: { props: { remote: true } } },
+        ...layoutResponse(server.site, 17, postModifiedGmt),
         presentation: freshPresentation,
       });
     } else if (request.url.endsWith('/validate')) {
       assert.deepEqual(await readBody(request), { nodeMap: NODE_MAP, postId: 17 });
-      sendJson(response, 200, { valid: true, lint: [] });
+      sendJson(response, 200, {
+        valid: true,
+        lint: [],
+        nodeMap: NODE_MAP,
+        candidateLayoutSha256: LAYOUT_SHA256,
+      });
     } else if (request.method === 'PUT') {
       putBodies.push(await readBody(request));
       expectReadback = true;
       sendJson(response, 200, {
+        id: 17,
         saved: true,
         postModifiedGmt: '2026-07-26 08:00:01',
         nodeMap: NODE_MAP,
+        layoutSha256: LAYOUT_SHA256,
+        candidateLayoutSha256: LAYOUT_SHA256,
       });
     } else {
       sendJson(response, 404, { code: 'not_found' });
@@ -800,11 +867,15 @@ test('save validates before PUT and preserves fresh presentation while overridin
   ]);
   assert.deepEqual(putBodies[0], {
     expectedModifiedGmt: '2026-07-26 08:00:00',
+    expectedLayoutSha256: LAYOUT_SHA256,
+    expectedCandidateSha256: LAYOUT_SHA256,
     nodeMap: NODE_MAP,
     presentation: freshPresentation,
   });
   assert.deepEqual(putBodies[1], {
     expectedModifiedGmt: '2026-07-26 08:00:00',
+    expectedLayoutSha256: LAYOUT_SHA256,
+    expectedCandidateSha256: LAYOUT_SHA256,
     nodeMap: NODE_MAP,
     presentation: {
       ...freshPresentation,
@@ -824,6 +895,8 @@ test('save and preview follow custom live resource paths, carriers, contexts, an
   const previewReportFile = path.join(directory, 'preview.json');
   const persistedNodeMap = { schemaVersion: 4, ...NODE_MAP };
   const persistedLayoutSha256 = nodeMapSha256(persistedNodeMap);
+  const previousNodeMap = { ROOT: { props: { old: true } } };
+  const previousLayoutSha256 = nodeMapSha256(previousNodeMap);
   writeJson(layoutFile, NODE_MAP);
   const contract = layoutContract({
     pagePath: '/monteby/v1/documents/{postId}/canvas',
@@ -834,6 +907,10 @@ test('save and preview follow custom live resource paths, carriers, contexts, an
     previewContextField: 'previewDocumentRef',
     versionField: 'revisionToken',
     writePreconditionField: 'expectedRevisionToken',
+    layoutDigestField: 'canvasDigest',
+    writeDigestPreconditionField: 'expectedCanvasDigest',
+    candidateDigestField: 'canonicalCandidateDigest',
+    writeCandidatePreconditionField: 'expectedCanonicalCandidateDigest',
   });
   const requests = [];
   let saved = false;
@@ -848,37 +925,49 @@ test('save and preview follow custom live resource paths, carriers, contexts, an
           postType: 'page',
           viewUrl: `${server.site}/page-37/`,
           revisionToken: saved ? 'revision-2' : 'revision-1',
-          layoutCandidate: saved ? persistedNodeMap : { ROOT: { props: { old: true } } },
+          layoutCandidate: saved ? persistedNodeMap : previousNodeMap,
+          canvasDigest: saved ? persistedLayoutSha256 : previousLayoutSha256,
           presentation: { layout: 'default', disableGlobalTemplates: false },
         },
       });
     }
     if (request.url.endsWith('/check-layout')) {
       assert.deepEqual(body, { layoutCandidate: NODE_MAP, documentRef: 37 });
-      return sendJson(response, 200, { valid: true, lint: [] });
+      return sendJson(response, 200, {
+        valid: true,
+        lint: [],
+        layoutCandidate: persistedNodeMap,
+        canonicalCandidateDigest: persistedLayoutSha256,
+      });
     }
     if (request.method === 'PUT' && request.url.endsWith('/documents/37/canvas')) {
       assert.deepEqual(body, {
         expectedRevisionToken: 'revision-1',
+        expectedCanvasDigest: previousLayoutSha256,
+        expectedCanonicalCandidateDigest: persistedLayoutSha256,
         layoutCandidate: NODE_MAP,
         presentation: { layout: 'default', disableGlobalTemplates: false },
       });
       saved = true;
       return sendJson(response, 200, { data: {
+        id: 37,
         saved: true,
         revisionToken: 'revision-2',
         layoutCandidate: persistedNodeMap,
+        canvasDigest: persistedLayoutSha256,
+        canonicalCandidateDigest: persistedLayoutSha256,
       } });
     }
     if (request.url.endsWith('/render-layout')) {
-      assert.deepEqual(body, { layoutCandidate: NODE_MAP, previewDocumentRef: 37 });
+      assert.deepEqual(body, { layoutCandidate: persistedNodeMap, previewDocumentRef: 37 });
       return sendJson(response, 200, { html: '<main>Custom descriptor preview</main>' });
     }
     return sendJson(response, 404, { code: 'unexpected_test_route' });
   });
   writeJson(snapshotFile, pageSnapshot(server.site, 37, {
     revisionToken: 'revision-1',
-    layoutCandidate: { ROOT: { props: { old: true } } },
+    layoutCandidate: previousNodeMap,
+    canvasDigest: previousLayoutSha256,
   }));
 
   const save = await runClient([
@@ -922,24 +1011,46 @@ test('save refuses incomplete write evidence and mismatched canonical readback',
     const server = await startServer(t, async (request, response) => {
       if (request.url.endsWith('/contract')) return sendJson(response, 200, layoutContract());
       if (request.url.endsWith('/validate')) {
-        return sendJson(response, 200, { valid: true, lint: [] });
+        return sendJson(response, 200, {
+          valid: true,
+          lint: [],
+          nodeMap: NODE_MAP,
+          candidateLayoutSha256: LAYOUT_SHA256,
+        });
       }
       if (request.method === 'PUT') {
         writeCompleted = true;
         await readBody(request);
-        if (scenario === 'missing-version') return sendJson(response, 200, { saved: true });
+        if (scenario === 'missing-version') return sendJson(response, 200, {
+          id: 17,
+          saved: true,
+          nodeMap: NODE_MAP,
+          layoutSha256: LAYOUT_SHA256,
+          candidateLayoutSha256: LAYOUT_SHA256,
+        });
         if (scenario === 'missing-representation') {
-          return sendJson(response, 200, { saved: true, postModifiedGmt: 'v2' });
+          return sendJson(response, 200, {
+            id: 17,
+            saved: true,
+            postModifiedGmt: 'v2',
+            layoutSha256: LAYOUT_SHA256,
+            candidateLayoutSha256: LAYOUT_SHA256,
+          });
         }
         return sendJson(response, 200, {
-          saved: true, postModifiedGmt: 'v2', nodeMap: NODE_MAP,
+          id: 17,
+          saved: true,
+          postModifiedGmt: 'v2',
+          nodeMap: NODE_MAP,
+          layoutSha256: LAYOUT_SHA256,
+          candidateLayoutSha256: LAYOUT_SHA256,
         });
       }
+      const responseNodeMap = writeCompleted && scenario === 'mismatched-readback'
+        ? { ROOT: { props: { unexpected: true } } }
+        : NODE_MAP;
       return sendJson(response, 200, {
-        postModifiedGmt: writeCompleted ? 'v2' : 'v1',
-        nodeMap: writeCompleted && scenario === 'mismatched-readback'
-          ? { ROOT: { props: { unexpected: true } } }
-          : NODE_MAP,
+        ...layoutResponse(server.site, 17, writeCompleted ? 'v2' : 'v1', responseNodeMap),
         presentation: { layout: 'default', disableGlobalTemplates: false },
       });
     });
@@ -954,12 +1065,206 @@ test('save refuses incomplete write evidence and mismatched canonical readback',
     ]);
     assert.equal(execution.exitCode, 1);
     const expectedCode = {
-      'missing-version': 'SAVE_VERSION_EVIDENCE_INVALID',
-      'missing-representation': 'SAVE_REPRESENTATION_EVIDENCE_INVALID',
+      'missing-version': 'SAVE_EVIDENCE_INVALID',
+      'missing-representation': 'SAVE_EVIDENCE_INVALID',
       'mismatched-readback': 'SAVE_READBACK_MISMATCH',
     }[scenario];
     assert.equal(execution.result.code, expectedCode);
     assert.equal(execution.result.retryable, false);
+    assert.deepEqual(server.errors, []);
+  }
+});
+
+test('save rejects page identity drift in fresh, write, and readback envelopes', async (t) => {
+  for (const scenario of ['fresh', 'string-id', 'write', 'readback']) {
+    const directory = tempDir(t);
+    const layoutFile = path.join(directory, 'layout.json');
+    const snapshotFile = path.join(directory, 'snapshot.json');
+    writeJson(layoutFile, NODE_MAP);
+    writeJson(snapshotFile, pageSnapshot('https://placeholder.invalid', 17, {
+      postModifiedGmt: 'v1', nodeMap: NODE_MAP,
+    }));
+    let writeCompleted = false;
+    const server = await startServer(t, async (request, response) => {
+      if (request.url.endsWith('/contract')) return sendJson(response, 200, layoutContract());
+      if (request.url.endsWith('/validate')) {
+        return sendJson(response, 200, {
+          valid: true,
+          lint: [],
+          nodeMap: NODE_MAP,
+          candidateLayoutSha256: LAYOUT_SHA256,
+        });
+      }
+      if (request.method === 'PUT') {
+        writeCompleted = true;
+        await readBody(request);
+        return sendJson(response, 200, {
+          ...layoutResponse(server.site, scenario === 'write' ? 18 : 17, 'v2'),
+          saved: true,
+          candidateLayoutSha256: LAYOUT_SHA256,
+        });
+      }
+      return sendJson(response, 200, layoutResponse(
+        server.site,
+        scenario === 'string-id'
+          ? '17'
+          : scenario === 'fresh' || (scenario === 'readback' && writeCompleted) ? 18 : 17,
+        writeCompleted ? 'v2' : 'v1'
+      ));
+    });
+    writeJson(snapshotFile, pageSnapshot(server.site, 17, {
+      postModifiedGmt: 'v1', nodeMap: NODE_MAP,
+    }));
+
+    const execution = await runClient([
+      'save', '--site', server.site, '--page-id', '17', '--layout', layoutFile,
+      '--snapshot', snapshotFile, '--expected-layout-sha256', LAYOUT_SHA256,
+      '--out', path.join(directory, `${scenario}.json`),
+    ]);
+
+    assert.equal(execution.exitCode, 1);
+    assert.equal(execution.result.code, {
+      fresh: 'REST_LAYOUT_EVIDENCE_INVALID',
+      'string-id': 'REST_LAYOUT_EVIDENCE_INVALID',
+      write: 'SAVE_EVIDENCE_INVALID',
+      readback: 'SAVE_READBACK_MISMATCH',
+    }[scenario]);
+    assert.deepEqual(server.errors, []);
+  }
+});
+
+test('save detects same-token layout drift before validation or write', async (t) => {
+  const directory = tempDir(t);
+  const layoutFile = path.join(directory, 'layout.json');
+  const snapshotFile = path.join(directory, 'snapshot.json');
+  const changedLayout = { ROOT: { props: { changedWithinSameSecond: true } } };
+  writeJson(layoutFile, NODE_MAP);
+  let writeCount = 0;
+  const server = await startServer(t, (request, response) => {
+    if (request.url.endsWith('/contract')) return sendJson(response, 200, layoutContract());
+    if (request.method !== 'GET') writeCount += 1;
+    return sendJson(response, 200, layoutResponse(server.site, 17, 'v1', changedLayout));
+  });
+  writeJson(snapshotFile, pageSnapshot(server.site, 17, {
+    postModifiedGmt: 'v1', nodeMap: NODE_MAP,
+  }));
+
+  const execution = await runClient([
+    'save', '--site', server.site, '--page-id', '17', '--layout', layoutFile,
+    '--snapshot', snapshotFile, '--expected-layout-sha256', LAYOUT_SHA256,
+    '--out', path.join(directory, 'same-token-conflict.json'),
+  ]);
+
+  assert.equal(execution.exitCode, 1);
+  assertEnvelope(execution.result, { ok: false, stage: 'save', code: 'REST_CONFLICT' });
+  assert.equal(execution.result.response.snapshotVersionToken, 'v1');
+  assert.equal(execution.result.response.currentVersionToken, 'v1');
+  assert.notEqual(execution.result.response.currentLayoutSha256, LAYOUT_SHA256);
+  assert.equal(writeCount, 0);
+  assert.deepEqual(server.errors, []);
+});
+
+test('save accepts a fully proven no-op without a version advance', async (t) => {
+  const directory = tempDir(t);
+  const layoutFile = path.join(directory, 'layout.json');
+  const snapshotFile = path.join(directory, 'snapshot.json');
+  writeJson(layoutFile, NODE_MAP);
+  const server = await startServer(t, async (request, response) => {
+    if (request.url.endsWith('/contract')) return sendJson(response, 200, layoutContract());
+    if (request.url.endsWith('/validate')) {
+      return sendJson(response, 200, {
+        valid: true,
+        lint: [],
+        nodeMap: NODE_MAP,
+        candidateLayoutSha256: LAYOUT_SHA256,
+      });
+    }
+    if (request.method === 'PUT') {
+      await readBody(request);
+      return sendJson(response, 200, {
+        ...layoutResponse(server.site, 17, 'v1'),
+        saved: true,
+        candidateLayoutSha256: LAYOUT_SHA256,
+      });
+    }
+    return sendJson(response, 200, {
+      ...layoutResponse(server.site, 17, 'v1'),
+      presentation: { layout: 'default', disableGlobalTemplates: false },
+    });
+  });
+  writeJson(snapshotFile, pageSnapshot(server.site, 17, {
+    postModifiedGmt: 'v1', nodeMap: NODE_MAP,
+  }));
+
+  const execution = await runClient([
+    'save', '--site', server.site, '--page-id', '17', '--layout', layoutFile,
+    '--snapshot', snapshotFile, '--expected-layout-sha256', LAYOUT_SHA256,
+    '--out', path.join(directory, 'no-op.json'),
+  ]);
+
+  assert.equal(execution.exitCode, 0, JSON.stringify(execution.result));
+  assertEnvelope(execution.result, { ok: true, stage: 'save', code: 'SAVE_OK' });
+  assert.equal(execution.result.evidence.versionAdvanced, false);
+  assert.equal(execution.result.evidence.layoutChanged, false);
+  assert.deepEqual(execution.result.evidence.readbackLayout, NODE_MAP);
+  assert.deepEqual(server.errors, []);
+});
+
+test('save rejects a changed representation without a version advance and mismatched candidate proof', async (t) => {
+  for (const scenario of ['same-token-change', 'candidate-mismatch']) {
+    const directory = tempDir(t);
+    const changedNodeMap = {
+      ...NODE_MAP,
+      'section-1': {
+        ...NODE_MAP['section-1'],
+        props: { background: '#111111' },
+      },
+    };
+    const changedSha256 = nodeMapSha256(changedNodeMap);
+    const layoutFile = path.join(directory, `${scenario}-layout.json`);
+    const snapshotFile = path.join(directory, `${scenario}-snapshot.json`);
+    writeJson(layoutFile, changedNodeMap);
+    let writeCompleted = false;
+    const server = await startServer(t, async (request, response) => {
+      if (request.url.endsWith('/contract')) return sendJson(response, 200, layoutContract());
+      if (request.url.endsWith('/validate')) {
+        return sendJson(response, 200, {
+          valid: true,
+          lint: [],
+          nodeMap: changedNodeMap,
+          candidateLayoutSha256: changedSha256,
+        });
+      }
+      if (request.method === 'PUT') {
+        writeCompleted = true;
+        await readBody(request);
+        return sendJson(response, 200, {
+          ...layoutResponse(server.site, 17, scenario === 'same-token-change' ? 'v1' : 'v2', changedNodeMap),
+          saved: true,
+          candidateLayoutSha256: scenario === 'candidate-mismatch'
+            ? '0'.repeat(64)
+            : changedSha256,
+        });
+      }
+      return sendJson(response, 200, layoutResponse(
+        server.site,
+        17,
+        writeCompleted ? 'v2' : 'v1',
+        writeCompleted ? changedNodeMap : NODE_MAP
+      ));
+    });
+    writeJson(snapshotFile, pageSnapshot(server.site, 17, {
+      postModifiedGmt: 'v1', nodeMap: NODE_MAP,
+    }));
+
+    const execution = await runClient([
+      'save', '--site', server.site, '--page-id', '17', '--layout', layoutFile,
+      '--snapshot', snapshotFile, '--expected-layout-sha256', changedSha256,
+      '--out', path.join(directory, `${scenario}.json`),
+    ]);
+
+    assert.equal(execution.exitCode, 1);
+    assertEnvelope(execution.result, { ok: false, stage: 'save', code: 'SAVE_EVIDENCE_INVALID' });
     assert.deepEqual(server.errors, []);
   }
 });
@@ -1004,10 +1309,7 @@ test('save blocks a presentation override when the live page exposes no presenta
       sendJson(response, 200, layoutContract());
       return;
     }
-    sendJson(response, 200, {
-      postModifiedGmt: 'v1',
-      nodeMap: NODE_MAP,
-    });
+    sendJson(response, 200, layoutResponse(server.site, 17, 'v1'));
   });
   writeJson(snapshotFile, pageSnapshot(server.site, 17, {
     postModifiedGmt: 'v1',
@@ -1057,12 +1359,17 @@ test('save maps PUT 428 and 409 to stable non-retryable codes without retrying',
         sendJson(response, 200, layoutContract());
       } else if (request.method === 'GET') {
         sendJson(response, 200, {
-          postModifiedGmt: 'v1',
+          ...layoutResponse(server.site, 21, 'v1'),
           presentation: { layout: 'default', disableGlobalTemplates: false },
         });
       } else if (request.url.endsWith('/validate')) {
         await readBody(request);
-        sendJson(response, 200, { valid: true, lint: [] });
+        sendJson(response, 200, {
+          valid: true,
+          lint: [],
+          nodeMap: NODE_MAP,
+          candidateLayoutSha256: LAYOUT_SHA256,
+        });
       } else {
         await readBody(request);
         response.writeHead(status, { 'Content-Type': 'text/plain' });
@@ -1112,6 +1419,7 @@ test('patch-validate discovers the live schemas and binds snapshot, operations, 
       valid: true,
       operationCount: 1,
       operationsSha256: OPERATIONS_SHA256,
+      currentLayoutSha256: LAYOUT_SHA256,
       candidateLayoutSha256: LAYOUT_SHA256,
       compiledHtmlSha256: 'a'.repeat(64),
       postModifiedGmt: 'v1',
@@ -1133,15 +1441,92 @@ test('patch-validate discovers the live schemas and binds snapshot, operations, 
     'GET /wp-json/monteby/v1/contract',
     'POST /wp-json/monteby/v1/pages/17/layout/operations/validate',
   ]);
-  assert.deepEqual(validateBody, { operations: OPERATIONS, expectedModifiedGmt: 'v1' });
+  assert.deepEqual(validateBody, {
+    operations: OPERATIONS,
+    expectedModifiedGmt: 'v1',
+    expectedLayoutSha256: LAYOUT_SHA256,
+  });
   assert.equal(execution.result.evidence.operationsSha256, OPERATIONS_SHA256);
+  assert.equal(execution.result.evidence.currentLayoutSha256, LAYOUT_SHA256);
   assert.equal(execution.result.evidence.snapshotSha256, canonicalSha256(snapshot));
   assert.equal(execution.result.evidence.candidateLayoutSha256, LAYOUT_SHA256);
   assert.equal(execution.result.nextAction.id, 'save_validated_patch');
   assert.ok(execution.result.nextAction.args.includes(OPERATIONS_SHA256));
   assert.ok(execution.result.nextAction.args.includes(LAYOUT_SHA256));
+  assert.ok(execution.result.nextAction.args.includes('a'.repeat(64)));
   assert.deepEqual(JSON.parse(fs.readFileSync(reportFile, 'utf8')), execution.result);
   assert.deepEqual(server.errors, []);
+});
+
+test('patch-validate rejects a source layout digest that is not the snapshotted representation', async (t) => {
+  const directory = tempDir(t);
+  const snapshotFile = path.join(directory, 'layout-before.json');
+  const operationsFile = path.join(directory, 'operations.json');
+  writeJson(operationsFile, OPERATIONS);
+  const server = await startServer(t, (request, response) => {
+    if (request.url.endsWith('/contract')) return sendJson(response, 200, patchContract());
+    return sendJson(response, 200, {
+      valid: true,
+      operationCount: 1,
+      operationsSha256: OPERATIONS_SHA256,
+      currentLayoutSha256: '0'.repeat(64),
+      candidateLayoutSha256: LAYOUT_SHA256,
+      compiledHtmlSha256: 'a'.repeat(64),
+      postModifiedGmt: 'v1',
+      layout: NODE_MAP,
+    });
+  });
+  writeJson(snapshotFile, pageSnapshot(server.site, 17, {
+    postModifiedGmt: 'v1', nodeMap: NODE_MAP,
+  }));
+
+  const execution = await runClient([
+    'patch-validate', '--site', server.site, '--page-id', '17',
+    '--operations', operationsFile, '--snapshot', snapshotFile,
+    '--out', path.join(directory, 'source-drift.json'),
+  ]);
+
+  assert.equal(execution.exitCode, 1);
+  assertEnvelope(execution.result, {
+    ok: false,
+    stage: 'patch-validate',
+    code: 'PATCH_VALIDATION_EVIDENCE_INVALID',
+  });
+  assert.deepEqual(server.errors, []);
+});
+
+test('patch workflows reject ambiguous routes and colliding proof fields before preflight', async (t) => {
+  for (const scenario of ['duplicate-route-placeholder', 'colliding-write-field']) {
+    const directory = tempDir(t);
+    const snapshotFile = path.join(directory, 'layout-before.json');
+    const operationsFile = path.join(directory, 'operations.json');
+    writeJson(operationsFile, OPERATIONS);
+    const contract = patchContract();
+    if (scenario === 'duplicate-route-placeholder') {
+      contract.layoutPersistence.operations.validate.endpoint = '/monteby/v1/pages/{postId}/copy/{postId}/validate';
+    } else {
+      contract.layoutPersistence.operations.writeCompiledPreconditionField = 'operations';
+    }
+    let requestCount = 0;
+    const server = await startServer(t, (_request, response) => {
+      requestCount += 1;
+      sendJson(response, 200, contract);
+    });
+    writeJson(snapshotFile, pageSnapshot(server.site, 17, {
+      postModifiedGmt: 'v1', nodeMap: NODE_MAP,
+    }));
+
+    const execution = await runClient([
+      'patch-validate', '--site', server.site, '--page-id', '17',
+      '--operations', operationsFile, '--snapshot', snapshotFile,
+      '--out', path.join(directory, `${scenario}.json`),
+    ]);
+
+    assert.equal(execution.exitCode, 1);
+    assert.equal(execution.result.code, 'PATCH_CAPABILITY_MISSING');
+    assert.equal(requestCount, 1);
+    assert.deepEqual(server.errors, []);
+  }
 });
 
 test('patch-save applies only the exact preflighted batch and sends both server preconditions', async (t) => {
@@ -1169,15 +1554,19 @@ test('patch-save applies only the exact preflighted batch and sends both server 
       id: 17, postType: 'page', viewUrl: `${server.site}/page-17/`,
       revisionToken: applyBody ? 'v2' : 'v1',
       documentTree: applyBody ? persistedNodeMap : NODE_MAP,
+      layoutSha256: applyBody ? persistedLayoutSha256 : LAYOUT_SHA256,
     } });
     applyBody = await readBody(request);
     return sendJson(response, 200, {
+      id: 17,
+      saved: true,
       operationCount: 1,
       operationsSha256: OPERATIONS_SHA256,
-      candidateLayoutSha256: LAYOUT_SHA256,
+      candidateLayoutSha256: persistedLayoutSha256,
       compiledHtmlSha256: 'a'.repeat(64),
       revisionToken: 'v2',
       layout: persistedNodeMap,
+      layoutSha256: persistedLayoutSha256,
     });
   });
   const snapshot = pageSnapshot(server.site, 17, {
@@ -1189,8 +1578,10 @@ test('patch-save applies only the exact preflighted batch and sends both server 
     scope: { site: server.site, pageId: 17 },
     evidence: {
       versionField: 'revisionToken', versionToken: 'v1', operationsSha256: OPERATIONS_SHA256,
+      layoutSha256: LAYOUT_SHA256,
       snapshotSha256: canonicalSha256(snapshot),
-      candidateLayoutSha256: LAYOUT_SHA256,
+      candidateLayoutSha256: persistedLayoutSha256,
+      compiledHtmlSha256: 'a'.repeat(64),
     },
   });
 
@@ -1199,7 +1590,8 @@ test('patch-save applies only the exact preflighted batch and sends both server 
     '--operations', operationsFile, '--snapshot', snapshotFile,
     '--patch-report', reportFile,
     '--expected-operations-sha256', OPERATIONS_SHA256,
-    '--expected-candidate-layout-sha256', LAYOUT_SHA256,
+    '--expected-candidate-layout-sha256', persistedLayoutSha256,
+    '--expected-compiled-html-sha256', 'a'.repeat(64),
     '--out', path.join(directory, 'patch-save-response.json'),
   ]);
 
@@ -1214,11 +1606,12 @@ test('patch-save applies only the exact preflighted batch and sends both server 
   assert.deepEqual(applyBody, {
     operations: OPERATIONS,
     ifRevision: 'v1',
-    expectedCandidateSha256: LAYOUT_SHA256,
+    expectedLayoutSha256: LAYOUT_SHA256,
+    expectedCandidateSha256: persistedLayoutSha256,
+    expectedCompiledHtmlSha256: 'a'.repeat(64),
   });
   assert.equal(execution.result.nextAction.id, 'verify_saved_patch');
-  assert.equal(execution.result.evidence.candidateLayoutSha256, LAYOUT_SHA256);
-  assert.notEqual(execution.result.evidence.candidateLayoutSha256, persistedLayoutSha256);
+  assert.equal(execution.result.evidence.candidateLayoutSha256, persistedLayoutSha256);
   assert.equal(execution.result.evidence.savedLayoutSha256, persistedLayoutSha256);
   assert.equal(execution.result.evidence.readbackLayoutSha256, persistedLayoutSha256);
   assert.equal(execution.result.evidence.versionField, 'revisionToken');
@@ -1245,14 +1638,22 @@ test('patch-save never applies or retries after a concurrent page change', async
   const server = await startServer(t, (request, response) => {
     if (request.url.endsWith('/contract')) return sendJson(response, 200, patchContract());
     if (request.method === 'POST') applyCount += 1;
-    return sendJson(response, 200, { postModifiedGmt: 'v2', nodeMap: NODE_MAP });
+    return sendJson(response, 200, layoutResponse(server.site, 17, 'v2'));
   });
   const snapshot = pageSnapshot(server.site, 17, { postModifiedGmt: 'v1', nodeMap: NODE_MAP });
   writeJson(snapshotFile, snapshot);
   writeJson(reportFile, {
     schemaVersion: 1, ok: true, stage: 'patch-validate', code: 'PATCH_VALIDATION_OK',
     scope: { site: server.site, pageId: 17 },
-    evidence: { versionField: 'postModifiedGmt', versionToken: 'v1', snapshotSha256: canonicalSha256(snapshot), operationsSha256: OPERATIONS_SHA256, candidateLayoutSha256: LAYOUT_SHA256 },
+    evidence: {
+      versionField: 'postModifiedGmt',
+      versionToken: 'v1',
+      layoutSha256: LAYOUT_SHA256,
+      snapshotSha256: canonicalSha256(snapshot),
+      operationsSha256: OPERATIONS_SHA256,
+      candidateLayoutSha256: LAYOUT_SHA256,
+      compiledHtmlSha256: 'a'.repeat(64),
+    },
   });
 
   const execution = await runClient([
@@ -1260,6 +1661,7 @@ test('patch-save never applies or retries after a concurrent page change', async
     '--operations', operationsFile, '--snapshot', snapshotFile, '--patch-report', reportFile,
     '--expected-operations-sha256', OPERATIONS_SHA256,
     '--expected-candidate-layout-sha256', LAYOUT_SHA256,
+    '--expected-compiled-html-sha256', 'a'.repeat(64),
     '--out', path.join(directory, 'conflict.json'),
   ]);
 
@@ -1290,7 +1692,10 @@ test('patch-save rejects an operation file changed after preflight before apply'
     scope: { site: server.site, pageId: 17 },
     evidence: {
       versionField: 'postModifiedGmt', versionToken: 'v1', snapshotSha256: canonicalSha256(snapshot),
-      operationsSha256: OPERATIONS_SHA256, candidateLayoutSha256: LAYOUT_SHA256,
+      layoutSha256: LAYOUT_SHA256,
+      operationsSha256: OPERATIONS_SHA256,
+      candidateLayoutSha256: LAYOUT_SHA256,
+      compiledHtmlSha256: 'a'.repeat(64),
     },
   });
 
@@ -1300,12 +1705,59 @@ test('patch-save rejects an operation file changed after preflight before apply'
     '--snapshot', snapshotFile, '--patch-report', reportFile,
     '--expected-operations-sha256', OPERATIONS_SHA256,
     '--expected-candidate-layout-sha256', LAYOUT_SHA256,
+    '--expected-compiled-html-sha256', 'a'.repeat(64),
     '--out', path.join(directory, 'changed.json'),
   ]);
   assert.equal(execution.exitCode, 1);
   assertEnvelope(execution.result, { ok: false, stage: 'patch-save', code: 'OPERATIONS_SHA256_MISMATCH' });
   assert.equal(execution.result.nextAction.id, 'restart_patch_preflight');
   assert.equal(requestCount, 1);
+  assert.deepEqual(server.errors, []);
+});
+
+test('patch-save rejects a compiled output digest not bound to preflight', async (t) => {
+  const directory = tempDir(t);
+  const snapshotFile = path.join(directory, 'layout-before.json');
+  const operationsFile = path.join(directory, 'operations.json');
+  const reportFile = path.join(directory, 'patch-validate-response.json');
+  writeJson(operationsFile, OPERATIONS);
+  let requestCount = 0;
+  const server = await startServer(t, (_request, response) => {
+    requestCount += 1;
+    sendJson(response, 200, patchContract());
+  });
+  const snapshot = pageSnapshot(server.site, 17, { postModifiedGmt: 'v1', nodeMap: NODE_MAP });
+  writeJson(snapshotFile, snapshot);
+  writeJson(reportFile, {
+    schemaVersion: 1, ok: true, stage: 'patch-validate', code: 'PATCH_VALIDATION_OK',
+    scope: { site: server.site, pageId: 17 },
+    evidence: {
+      versionField: 'postModifiedGmt',
+      versionToken: 'v1',
+      layoutSha256: LAYOUT_SHA256,
+      snapshotSha256: canonicalSha256(snapshot),
+      operationsSha256: OPERATIONS_SHA256,
+      candidateLayoutSha256: LAYOUT_SHA256,
+      compiledHtmlSha256: 'a'.repeat(64),
+    },
+  });
+
+  const execution = await runClient([
+    'patch-save', '--site', server.site, '--page-id', '17', '--operations', operationsFile,
+    '--snapshot', snapshotFile, '--patch-report', reportFile,
+    '--expected-operations-sha256', OPERATIONS_SHA256,
+    '--expected-candidate-layout-sha256', LAYOUT_SHA256,
+    '--expected-compiled-html-sha256', 'b'.repeat(64),
+    '--out', path.join(directory, 'compiled-mismatch.json'),
+  ]);
+
+  assert.equal(execution.exitCode, 1);
+  assertEnvelope(execution.result, {
+    ok: false,
+    stage: 'patch-save',
+    code: 'COMPILED_HTML_SHA256_MISMATCH',
+  });
+  assert.equal(requestCount, 1, 'only live contract discovery may precede the local proof mismatch');
   assert.deepEqual(server.errors, []);
 });
 
@@ -1350,11 +1802,15 @@ test('preview posts nodeMap and writes returned HTML atomically', async (t) => {
     pageId: 17,
     publicPageUrl: `${server.site}/page-17/`,
     layoutSha256: LAYOUT_SHA256,
+    candidateLayoutSha256: LAYOUT_SHA256,
     savedLayoutSha256: LAYOUT_SHA256,
     readbackLayoutSha256: LAYOUT_SHA256,
     versionField: 'postModifiedGmt',
     previousVersionToken: 'v1',
+    previousLayoutSha256: LAYOUT_SHA256,
     versionToken: 'v2',
+    versionAdvanced: true,
+    layoutChanged: false,
     validation: { valid: true, lint: [] },
     saveReport: saveReportFile,
   });
@@ -1398,6 +1854,32 @@ test('preview refuses a missing descriptor without calling a guessed endpoint', 
   assert.deepEqual(server.errors, []);
 });
 
+test('preview rejects a carrier colliding with its page context before rendering', async (t) => {
+  const directory = tempDir(t);
+  const layoutFile = path.join(directory, 'layout.json');
+  const saveReportFile = path.join(directory, 'save.json');
+  writeJson(layoutFile, NODE_MAP);
+  writeJson(saveReportFile, saveReport('https://placeholder.invalid', 17));
+  const contract = layoutContract({ previewContextField: 'nodeMap' });
+  let requestCount = 0;
+  const server = await startServer(t, (_request, response) => {
+    requestCount += 1;
+    sendJson(response, 200, contract);
+  });
+  writeJson(saveReportFile, saveReport(server.site, 17));
+
+  const execution = await runClient([
+    'preview', '--site', server.site, '--layout', layoutFile,
+    '--save-report', saveReportFile, '--out', path.join(directory, 'preview.html'),
+    '--report-out', path.join(directory, 'preview-report.json'),
+  ]);
+
+  assert.equal(execution.exitCode, 1);
+  assert.equal(execution.result.code, 'PREVIEW_RESOURCE_MISSING');
+  assert.equal(requestCount, 1, 'only contract discovery may run');
+  assert.deepEqual(server.errors, []);
+});
+
 test('preview rejects mismatched save scope and layout digest before POST', async (t) => {
   const directory = tempDir(t);
   const layoutFile = path.join(directory, 'layout.json');
@@ -1416,6 +1898,30 @@ test('preview rejects mismatched save scope and layout digest before POST', asyn
     {
       report: saveReport(server.site, 17, '0'.repeat(64)),
       code: 'LAYOUT_SHA256_MISMATCH',
+    },
+    {
+      report: (() => {
+        const report = saveReport(server.site, 17);
+        report.evidence.pageId = 18;
+        return report;
+      })(),
+      code: 'SAVE_REPORT_INVALID',
+    },
+    {
+      report: (() => {
+        const report = saveReport(server.site, 17);
+        report.evidence.site = 'https://different.example';
+        return report;
+      })(),
+      code: 'SAVE_REPORT_INVALID',
+    },
+    {
+      report: (() => {
+        const report = saveReport(server.site, 17);
+        report.evidence.layoutSha256 = '0'.repeat(64);
+        return report;
+      })(),
+      code: 'SAVE_REPORT_INVALID',
     },
   ];
 

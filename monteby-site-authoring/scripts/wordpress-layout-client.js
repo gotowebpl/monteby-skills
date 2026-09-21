@@ -99,6 +99,7 @@ function parseArgs(argv) {
     patchReport: '',
     expectedOperationsSha256: '',
     expectedCandidateLayoutSha256: '',
+    expectedCompiledHtmlSha256: '',
     authHeaderEnv: DEFAULT_AUTH_HEADER_ENV,
     timeoutMs: DEFAULT_TIMEOUT_MS,
     renderContextUrl: '',
@@ -153,6 +154,8 @@ function parseArgs(argv) {
       options.expectedOperationsSha256 = requiredValue(argv, index += 1, option).toLowerCase();
     } else if (option === '--expected-candidate-layout-sha256') {
       options.expectedCandidateLayoutSha256 = requiredValue(argv, index += 1, option).toLowerCase();
+    } else if (option === '--expected-compiled-html-sha256') {
+      options.expectedCompiledHtmlSha256 = requiredValue(argv, index += 1, option).toLowerCase();
     } else if (option === '--auth-header-env') {
       options.authHeaderEnv = requiredValue(argv, index += 1, option);
     } else if (option === '--timeout-ms') {
@@ -275,6 +278,7 @@ function validateOptions(options) {
   for (const [key, option] of [
     ['expectedOperationsSha256', '--expected-operations-sha256'],
     ['expectedCandidateLayoutSha256', '--expected-candidate-layout-sha256'],
+    ['expectedCompiledHtmlSha256', '--expected-compiled-html-sha256'],
   ]) {
     if (options[key] && !/^[a-f0-9]{64}$/.test(options[key])) {
       throw new ClientError(`${option} must be a 64-character SHA-256 digest.`, {
@@ -310,6 +314,9 @@ function validateOptions(options) {
   }
   if (options.command !== 'branding-save') {
     rejectOption(options, 'logoUrl', '--logo-url');
+  }
+  if (options.command !== 'patch-save') {
+    rejectOption(options, 'expectedCompiledHtmlSha256', '--expected-compiled-html-sha256');
   }
 
   if (options.command === 'snapshot') {
@@ -373,6 +380,7 @@ function validateOptions(options) {
     requireOption(options, 'patchReport', '--patch-report');
     requireOption(options, 'expectedOperationsSha256', '--expected-operations-sha256');
     requireOption(options, 'expectedCandidateLayoutSha256', '--expected-candidate-layout-sha256');
+    requireOption(options, 'expectedCompiledHtmlSha256', '--expected-compiled-html-sha256');
     requireOption(options, 'out', '--out');
     if (!options.snapshot && !options.outDir) {
       throw new ClientError('patch-save requires --snapshot or --out-dir.', {
@@ -424,7 +432,7 @@ function printHelp() {
   wordpress-layout-client.js save --site URL --page-id ID --layout LAYOUT.json (--out-dir DIR | --snapshot FILE) --expected-layout-sha256 SHA256 --out SAVE-REPORT.json [--presentation-layout NAME]
   wordpress-layout-client.js preview --site URL --layout LAYOUT.json --save-report SAVE-REPORT.json --out PREVIEW.html --report-out PREVIEW-REPORT.json
   wordpress-layout-client.js patch-validate --site URL --page-id ID --operations OPERATIONS.json (--out-dir DIR | --snapshot FILE) --out PATCH-VALIDATE-REPORT.json
-  wordpress-layout-client.js patch-save --site URL --page-id ID --operations OPERATIONS.json (--out-dir DIR | --snapshot FILE) --patch-report PATCH-VALIDATE-REPORT.json --expected-operations-sha256 SHA256 --expected-candidate-layout-sha256 SHA256 --out PATCH-SAVE-REPORT.json
+  wordpress-layout-client.js patch-save --site URL --page-id ID --operations OPERATIONS.json (--out-dir DIR | --snapshot FILE) --patch-report PATCH-VALIDATE-REPORT.json --expected-operations-sha256 SHA256 --expected-candidate-layout-sha256 SHA256 --expected-compiled-html-sha256 SHA256 --out PATCH-SAVE-REPORT.json
   wordpress-layout-client.js branding-snapshot --site URL --out-dir DIR [--out REPORT.json]
   wordpress-layout-client.js branding-save --site URL --logo-url URL (--out-dir DIR | --snapshot FILE) --out SAVE-REPORT.json
 
@@ -440,7 +448,8 @@ layoutSha256 required by save; preview requires the persisted scoped SAVE_OK
 report and writes a separate PREVIEW_OK report for canonical verification.
 patch-validate and patch-save discover their endpoints and operation schemas only
 from the live contract. patch-save binds the same snapshot, operations digest,
-candidate digest, and descriptor-named version token. Neither command retries 409/428.
+candidate digest, compiled-output digest, and descriptor-named version and layout
+preconditions. Neither command retries 409/428.
 branding-snapshot and branding-save discover the sole branding resource from the
 full live contract. branding-save writes only logoUrl with the snapshot revision;
 it never calls WordPress settings, theme mods, post meta, or layout-local props.
@@ -507,6 +516,9 @@ function commandArgs(options) {
   }
   if (options.expectedCandidateLayoutSha256) {
     args.push('--expected-candidate-layout-sha256', options.expectedCandidateLayoutSha256);
+  }
+  if (options.expectedCompiledHtmlSha256) {
+    args.push('--expected-compiled-html-sha256', options.expectedCompiledHtmlSha256);
   }
   if (options.out) args.push('--out', options.out);
   if (options.reportOut) args.push('--report-out', options.reportOut);
@@ -672,6 +684,7 @@ function materializeNextAction(report, options) {
         '--patch-report', options.out,
         '--expected-operations-sha256', report.evidence.operationsSha256,
         '--expected-candidate-layout-sha256', report.evidence.candidateLayoutSha256,
+        '--expected-compiled-html-sha256', report.evidence.compiledHtmlSha256,
         '--out', path.join(path.dirname(options.out), 'patch-save-response.json'),
       ], options),
       [authRequirement],
@@ -1187,13 +1200,25 @@ function layoutPersistence(contract, stage) {
 function pageLayoutCapability(contract, pageId, stage) {
   const persistence = layoutPersistence(contract, stage);
   const resource = persistence.resources.pageLayout;
+  const fieldNames = [
+    resource?.carrier,
+    persistence.versionField,
+    persistence.writePreconditionField,
+    persistence.layoutDigestField,
+    persistence.writeDigestPreconditionField,
+    persistence.candidateDigestField,
+    persistence.writeCandidatePreconditionField,
+  ];
+  const placeholders = typeof resource?.path === 'string'
+    ? [...resource.path.matchAll(/\{postId\}/gu)]
+    : [];
   if (
     !isObject(resource)
     || resource.readMethod !== 'GET'
     || resource.writeMethod !== 'PUT'
-    || !isFieldName(resource.carrier)
-    || !isFieldName(persistence.versionField)
-    || !isFieldName(persistence.writePreconditionField)
+    || fieldNames.some((fieldName) => !isFieldName(fieldName))
+    || new Set(fieldNames).size !== fieldNames.length
+    || placeholders.length !== 1
   ) {
     throw new ClientError('The live contract does not expose a supported versioned page-layout resource.', {
       code: 'PAGE_LAYOUT_RESOURCE_MISSING',
@@ -1208,6 +1233,10 @@ function pageLayoutCapability(contract, pageId, stage) {
     carrier: resource.carrier,
     versionField: persistence.versionField,
     writePreconditionField: persistence.writePreconditionField,
+    layoutDigestField: persistence.layoutDigestField,
+    writeDigestPreconditionField: persistence.writeDigestPreconditionField,
+    candidateDigestField: persistence.candidateDigestField,
+    writeCandidatePreconditionField: persistence.writeCandidatePreconditionField,
   };
 }
 
@@ -1219,6 +1248,7 @@ function validationCapability(contract, pageId, stage) {
     || resource.method !== 'POST'
     || !isFieldName(resource.carrier)
     || !isFieldName(persistence.validationContextField)
+    || resource.carrier === persistence.validationContextField
   ) {
     throw new ClientError('The live contract does not expose a supported layout-validation resource.', {
       code: 'VALIDATION_RESOURCE_MISSING',
@@ -1242,6 +1272,7 @@ function previewCapability(contract, pageId, stage) {
     || resource.method !== 'POST'
     || !isFieldName(resource.carrier)
     || !isFieldName(persistence.previewContextField)
+    || resource.carrier === persistence.previewContextField
   ) {
     throw new ClientError('The live contract does not expose a supported layout-preview resource.', {
       code: 'PREVIEW_RESOURCE_MISSING',
@@ -1387,12 +1418,14 @@ function operationsCapability(contract, pageId, stage) {
   const validResource = (resource) => isObject(resource)
     && resource.method === 'POST'
     && typeof resource.endpoint === 'string'
-    && resource.endpoint.includes('{postId}');
+    && [...resource.endpoint.matchAll(/\{postId\}/gu)].length === 1;
   if (
     !isObject(capability)
     || !isObject(capability.operationSchemas)
     || !validResource(capability.validate)
     || !validResource(capability.apply)
+    || !isFieldName(capability.compiledDigestField)
+    || !isFieldName(capability.writeCompiledPreconditionField)
   ) {
     throw new ClientError('The live contract does not expose self-contained patch resources and schemas.', {
       code: 'PATCH_CAPABILITY_MISSING', stage,
@@ -1506,6 +1539,31 @@ function layoutDocument(value, versionField, carrier) {
     return value.data;
   }
   return value;
+}
+
+function layoutResourceEvidence(value, capability, pageId) {
+  const document = layoutDocument(value, capability.versionField, capability.carrier);
+  let nodeMap = null;
+  try {
+    nodeMap = extractNodeMap(document, capability.carrier);
+  } catch {
+    nodeMap = null;
+  }
+  const declaredDigest = document?.[capability.layoutDigestField];
+  const representationDigest = nodeMap ? nodeMapSha256(nodeMap) : '';
+  return {
+    document,
+    nodeMap,
+    versionToken: versionToken(document, capability.versionField),
+    declaredDigest: validSha(declaredDigest) ? declaredDigest : '',
+    representationDigest,
+    validIdentity: document?.id === pageId,
+    validRepresentation: Boolean(
+      nodeMap
+      && validSha(declaredDigest)
+      && declaredDigest === representationDigest
+    ),
+  };
 }
 
 function extractNodeMap(value, carrier = '', depth = 0) {
@@ -1634,10 +1692,38 @@ async function fetchOperationsCapability(options, authHeader) {
   const discovered = await fetchLiveContract(options, authHeader);
   if (discovered.failure) return discovered;
   try {
+    const pageLayout = pageLayoutCapability(discovered.contract, options.pageId, options.command);
+    const capability = operationsCapability(discovered.contract, options.pageId, options.command);
+    const responseFields = [
+      'valid',
+      'operationCount',
+      'operationsSha256',
+      'currentLayoutSha256',
+      pageLayout.versionField,
+      pageLayout.candidateDigestField,
+      capability.compiledDigestField,
+    ];
+    const writeFields = [
+      'operations',
+      pageLayout.writePreconditionField,
+      pageLayout.writeDigestPreconditionField,
+      pageLayout.writeCandidatePreconditionField,
+      capability.writeCompiledPreconditionField,
+    ];
+    if (
+      new Set(responseFields).size !== responseFields.length
+      || new Set(writeFields).size !== writeFields.length
+    ) {
+      throw new ClientError('The patch descriptor contains colliding evidence or precondition field names.', {
+        code: 'PATCH_CAPABILITY_MISSING',
+        stage: options.command,
+        nextAction: 'Repair the live patch descriptor before preflight. Do not guess replacement field names.',
+      });
+    }
     return {
-      capability: operationsCapability(discovered.contract, options.pageId, options.command),
+      capability,
       contract: discovered.contract,
-      pageLayout: pageLayoutCapability(discovered.contract, options.pageId, options.command),
+      pageLayout,
     };
   } catch (error) {
     return { failure: resultFromError(error, options.command) };
@@ -1886,18 +1972,20 @@ async function runSnapshot(options, authHeader) {
     return httpFailureResult('snapshot', layoutResponse, artifacts);
   }
 
-  const layoutIdentity = layoutDocument(
+  const layoutEvidence = layoutResourceEvidence(
     layoutResponse.data,
-    layoutResource.versionField,
-    layoutResource.carrier
+    layoutResource,
+    options.pageId
   );
+  const layoutIdentity = layoutEvidence.document;
   const viewUrl = normalizePublicPageUrl(layoutIdentity?.viewUrl, options.site);
   const publicPageUrl = options.renderContextUrl || viewUrl;
   if (
-    Number(layoutIdentity?.id) !== options.pageId
+    !layoutEvidence.validIdentity
+    || !layoutEvidence.validRepresentation
     || typeof layoutIdentity?.postType !== 'string'
     || !layoutIdentity.postType.trim()
-    || !versionToken(layoutIdentity, layoutResource.versionField)
+    || !layoutEvidence.versionToken
     || !viewUrl
   ) {
     return createResult({
@@ -1905,8 +1993,8 @@ async function runSnapshot(options, authHeader) {
       stage: 'snapshot',
       code: 'LAYOUT_IDENTITY_INVALID',
       artifacts,
-      nextAction: `Repair the versioned layout resource so it returns id, postType, viewUrl, and ${layoutResource.versionField} for the requested document.`,
-      message: 'The layout resource did not bind the requested document to a complete same-site identity.',
+      nextAction: `Repair the versioned layout resource so it returns id, postType, viewUrl, ${layoutResource.versionField}, ${layoutResource.layoutDigestField}, and the exact saved representation for the requested document.`,
+      message: 'The layout resource did not bind the requested document to a complete same-site identity and verified representation.',
       response: layoutIdentity,
     });
   }
@@ -1950,6 +2038,7 @@ async function runSnapshot(options, authHeader) {
       viewUrl,
       renderContextUrl: options.renderContextUrl || '',
       productVersion: providerSaveGate.productVersion,
+      layoutSha256: layoutEvidence.declaredDigest,
     },
   });
 }
@@ -2123,20 +2212,20 @@ async function runSave(options, authHeader) {
   } catch (error) {
     return resultFromError(error, 'save');
   }
-  const snapshotDocument = layoutDocument(
-    snapshotValue,
-    pageResource.versionField,
-    pageResource.carrier
-  );
-  const snapshotVersion = versionToken(snapshotDocument, pageResource.versionField);
-  if (!snapshotVersion) {
+  const snapshotEvidence = layoutResourceEvidence(snapshotValue, pageResource, options.pageId);
+  const snapshotVersion = snapshotEvidence.versionToken;
+  if (
+    !snapshotVersion
+    || !snapshotEvidence.validIdentity
+    || !snapshotEvidence.validRepresentation
+  ) {
     return createResult({
       ok: false,
       stage: 'save',
-      code: 'SNAPSHOT_VERSION_MISSING',
+      code: 'SNAPSHOT_EVIDENCE_INVALID',
       artifacts,
       nextAction: 'Run snapshot again and keep its unmodified layout-before.json for save.',
-      message: `Snapshot does not contain ${pageResource.versionField}.`,
+      message: `Snapshot does not bind page identity, ${pageResource.versionField}, ${pageResource.layoutDigestField}, and the exact layout representation.`,
     });
   }
 
@@ -2147,25 +2236,26 @@ async function runSave(options, authHeader) {
   if (!freshResponse.ok) {
     return httpFailureResult('save', freshResponse, artifacts);
   }
-  const freshDocument = layoutDocument(
-    freshResponse.data,
-    pageResource.versionField,
-    pageResource.carrier
-  );
-  const freshVersion = versionToken(freshDocument, pageResource.versionField);
-  if (!freshVersion) {
+  const freshEvidence = layoutResourceEvidence(freshResponse.data, pageResource, options.pageId);
+  const freshDocument = freshEvidence.document;
+  const freshVersion = freshEvidence.versionToken;
+  if (!freshVersion || !freshEvidence.validIdentity || !freshEvidence.validRepresentation) {
     return createResult({
       ok: false,
       stage: 'save',
-      code: 'REST_VERSION_MISSING',
+      code: 'REST_LAYOUT_EVIDENCE_INVALID',
       artifacts,
-      nextAction: `Inspect the page layout endpoint; it must return ${pageResource.versionField} before save is safe.`,
-      message: `Current page layout does not contain ${pageResource.versionField}.`,
+      nextAction: `Inspect the page layout endpoint; it must return the requested id, ${pageResource.versionField}, ${pageResource.layoutDigestField}, and matching layout representation before save is safe.`,
+      message: 'Current page layout does not contain complete page-scoped version and representation evidence.',
       httpStatus: freshResponse.status,
+      response: freshResponse.data,
     });
   }
 
-  if (freshVersion !== snapshotVersion) {
+  if (
+    freshVersion !== snapshotVersion
+    || freshEvidence.declaredDigest !== snapshotEvidence.declaredDigest
+  ) {
     return createResult({
       ok: false,
       stage: 'save',
@@ -2177,6 +2267,8 @@ async function runSave(options, authHeader) {
       response: {
         snapshotVersionToken: snapshotVersion,
         currentVersionToken: freshVersion,
+        snapshotLayoutSha256: snapshotEvidence.declaredDigest,
+        currentLayoutSha256: freshEvidence.declaredDigest,
       },
     });
   }
@@ -2212,6 +2304,31 @@ async function runSave(options, authHeader) {
     };
   }
 
+  let validatedNodeMap = null;
+  try {
+    validatedNodeMap = extractNodeMap(validation.response, pageResource.carrier);
+  } catch {
+    validatedNodeMap = null;
+  }
+  const validatedCandidateSha256 = validation.response?.[pageResource.candidateDigestField];
+  if (
+    !validatedNodeMap
+    || !validSha(validatedCandidateSha256)
+    || nodeMapSha256(validatedNodeMap) !== validatedCandidateSha256
+  ) {
+    return createResult({
+      ok: false,
+      stage: 'save',
+      code: 'VALIDATION_CANDIDATE_EVIDENCE_INVALID',
+      artifacts,
+      nextAction: 'Repair the validation resource so it returns the exact canonical candidate and its matching digest before another save.',
+      message: 'Validation succeeded without proof of the canonical candidate that the server will persist.',
+      httpStatus: validation.httpStatus,
+      response: validation.response,
+      layoutSha256: candidateSha256,
+    });
+  }
+
   const presentation = isObject(freshDocument?.presentation)
     ? { ...freshDocument.presentation }
     : null;
@@ -2231,6 +2348,8 @@ async function runSave(options, authHeader) {
     : presentation;
   const payload = {
     [pageResource.writePreconditionField]: freshVersion,
+    [pageResource.writeDigestPreconditionField]: freshEvidence.declaredDigest,
+    [pageResource.writeCandidatePreconditionField]: validatedCandidateSha256,
     [pageResource.carrier]: candidate,
     ...(effectivePresentation ? { presentation: effectivePresentation } : {}),
   };
@@ -2243,45 +2362,34 @@ async function runSave(options, authHeader) {
     return httpFailureResult('save', saveResponse, artifacts);
   }
 
-  const savedDocument = layoutDocument(
-    saveResponse.data,
-    pageResource.versionField,
-    pageResource.carrier
-  );
-  const savedVersion = versionToken(savedDocument, pageResource.versionField);
-  if (!savedVersion || savedVersion === freshVersion) {
+  const savedEvidence = layoutResourceEvidence(saveResponse.data, pageResource, options.pageId);
+  const savedDocument = savedEvidence.document;
+  const savedVersion = savedEvidence.versionToken;
+  if (
+    savedDocument?.saved !== true
+    || !savedVersion
+    || !savedEvidence.validIdentity
+    || !savedEvidence.validRepresentation
+    || savedDocument?.[pageResource.candidateDigestField] !== validatedCandidateSha256
+    || savedEvidence.declaredDigest !== validatedCandidateSha256
+    || (
+      savedVersion === freshVersion
+      && savedEvidence.declaredDigest !== freshEvidence.declaredDigest
+    )
+  ) {
     return createResult({
       ok: false,
       stage: 'save',
-      code: 'SAVE_VERSION_EVIDENCE_INVALID',
+      code: 'SAVE_EVIDENCE_INVALID',
       artifacts,
-      nextAction: 'Inspect the saved page and Builder versioning. Do not repeat the write automatically.',
-      message: 'The write returned 2xx without a new version token.',
+      nextAction: 'Inspect the saved page and Builder proof fields. Do not repeat the write automatically.',
+      message: 'The write returned 2xx without complete page identity, candidate, version, and representation evidence.',
       httpStatus: saveResponse.status,
       response: saveResponse.data,
       layoutSha256: candidateSha256,
     });
   }
-  let savedNodeMap;
-  try {
-    savedNodeMap = extractNodeMap(savedDocument, pageResource.carrier);
-  } catch {
-    savedNodeMap = null;
-  }
-  if (!savedNodeMap) {
-    return createResult({
-      ok: false,
-      stage: 'save',
-      code: 'SAVE_REPRESENTATION_EVIDENCE_INVALID',
-      artifacts,
-      nextAction: 'Inspect the saved page and Builder response. Do not repeat the write automatically.',
-      message: 'The write returned a new version token without the saved layout representation.',
-      httpStatus: saveResponse.status,
-      response: saveResponse.data,
-      layoutSha256: candidateSha256,
-    });
-  }
-  const savedLayoutSha256 = nodeMapSha256(savedNodeMap);
+  const savedLayoutSha256 = savedEvidence.declaredDigest;
 
   const readbackResponse = await request(options, authHeader, {
     method: pageResource.readMethod,
@@ -2296,20 +2404,15 @@ async function runSave(options, authHeader) {
       layoutSha256: candidateSha256,
     });
   }
-  const readbackDocument = layoutDocument(
-    readbackResponse.data,
-    pageResource.versionField,
-    pageResource.carrier
-  );
-  const readbackVersion = versionToken(readbackDocument, pageResource.versionField);
-  let readbackNodeMap;
-  try {
-    readbackNodeMap = extractNodeMap(readbackDocument, pageResource.carrier);
-  } catch {
-    readbackNodeMap = null;
-  }
-  const readbackLayoutSha256 = readbackNodeMap ? nodeMapSha256(readbackNodeMap) : '';
-  if (readbackVersion !== savedVersion || readbackLayoutSha256 !== savedLayoutSha256) {
+  const readbackEvidence = layoutResourceEvidence(readbackResponse.data, pageResource, options.pageId);
+  const readbackVersion = readbackEvidence.versionToken;
+  const readbackLayoutSha256 = readbackEvidence.declaredDigest;
+  if (
+    !readbackEvidence.validIdentity
+    || !readbackEvidence.validRepresentation
+    || readbackVersion !== savedVersion
+    || readbackLayoutSha256 !== savedLayoutSha256
+  ) {
     return createResult({
       ok: false,
       stage: 'save',
@@ -2351,11 +2454,16 @@ async function runSave(options, authHeader) {
       pageId: options.pageId,
       publicPageUrl: snapshotValue.publicPageUrl,
       layoutSha256: candidateSha256,
+      candidateLayoutSha256: validatedCandidateSha256,
       savedLayoutSha256,
       readbackLayoutSha256,
+      readbackLayout: readbackEvidence.nodeMap,
       versionField: pageResource.versionField,
       previousVersionToken: freshVersion,
+      previousLayoutSha256: freshEvidence.declaredDigest,
       versionToken: savedVersion,
+      versionAdvanced: savedVersion !== freshVersion,
+      layoutChanged: savedLayoutSha256 !== freshEvidence.declaredDigest,
       validation: {
         valid: true,
         lint: validation.response.lint,
@@ -2380,19 +2488,21 @@ async function preparePatch(options, authHeader) {
   if (scopeFailure) return { failure: scopeFailure };
   const discovered = await fetchOperationsCapability(options, authHeader);
   if (discovered.failure) return discovered;
-  const expectedVersionToken = versionToken(
-    layoutDocument(
-      snapshot,
-      discovered.pageLayout.versionField,
-      discovered.pageLayout.carrier
-    ),
-    discovered.pageLayout.versionField
+  const snapshotEvidence = layoutResourceEvidence(
+    snapshot,
+    discovered.pageLayout,
+    options.pageId
   );
-  if (!expectedVersionToken) {
+  const expectedVersionToken = snapshotEvidence.versionToken;
+  if (
+    !expectedVersionToken
+    || !snapshotEvidence.validIdentity
+    || !snapshotEvidence.validRepresentation
+  ) {
     return { failure: createResult({
-      ok: false, stage: options.command, code: 'SNAPSHOT_VERSION_MISSING', artifacts,
+      ok: false, stage: options.command, code: 'SNAPSHOT_EVIDENCE_INVALID', artifacts,
       nextAction: 'Create a fresh page-scoped snapshot and preflight the patch again.',
-      message: `Snapshot does not contain ${discovered.pageLayout.versionField}.`,
+      message: 'Snapshot does not bind the requested page, version, digest, and exact layout representation.',
     }) };
   }
   const operations = await loadOperations(options);
@@ -2407,6 +2517,7 @@ async function preparePatch(options, authHeader) {
     artifacts: { ...artifacts, operationsSha256: digest, snapshotSha256 },
     snapshot,
     expectedVersionToken,
+    expectedLayoutSha256: snapshotEvidence.declaredDigest,
     operations,
     operationsSha256: digest,
     snapshotSha256,
@@ -2424,6 +2535,7 @@ async function runPatchValidate(options, authHeader) {
     body: {
       operations: prepared.operations,
       [prepared.pageLayout.writePreconditionField]: prepared.expectedVersionToken,
+      [prepared.pageLayout.writeDigestPreconditionField]: prepared.expectedLayoutSha256,
     },
   });
   if (!response.ok) return httpFailureResult('patch-validate', response, prepared.artifacts);
@@ -2435,10 +2547,12 @@ async function runPatchValidate(options, authHeader) {
     || data.valid !== true
     || data.operationCount !== prepared.operations.length
     || data.operationsSha256 !== prepared.operationsSha256
-    || !validSha(data.candidateLayoutSha256)
-    || !validSha(data.compiledHtmlSha256)
+    || data.currentLayoutSha256 !== prepared.expectedLayoutSha256
+    || !validSha(data[prepared.pageLayout.candidateDigestField])
+    || !validSha(data[prepared.capability.compiledDigestField])
     || data[prepared.pageLayout.versionField] !== prepared.expectedVersionToken
-    || !candidateLayout;
+    || !candidateLayout
+    || nodeMapSha256(candidateLayout) !== data[prepared.pageLayout.candidateDigestField];
   if (invalid) {
     return createResult({
       ok: false, stage: 'patch-validate', code: 'PATCH_VALIDATION_EVIDENCE_INVALID',
@@ -2449,8 +2563,10 @@ async function runPatchValidate(options, authHeader) {
       response: data,
     });
   }
-  prepared.artifacts.candidateLayoutSha256 = data.candidateLayoutSha256;
-  prepared.artifacts.compiledHtmlSha256 = data.compiledHtmlSha256;
+  const candidateLayoutSha256 = data[prepared.pageLayout.candidateDigestField];
+  const compiledHtmlSha256 = data[prepared.capability.compiledDigestField];
+  prepared.artifacts.candidateLayoutSha256 = candidateLayoutSha256;
+  prepared.artifacts.compiledHtmlSha256 = compiledHtmlSha256;
   return createResult({
     ok: true, stage: 'patch-validate', code: 'PATCH_VALIDATION_OK',
     artifacts: prepared.artifacts,
@@ -2458,17 +2574,19 @@ async function runPatchValidate(options, authHeader) {
     httpStatus: response.status,
     response: data,
     scope: { site: options.site, pageId: options.pageId },
-    layoutSha256: data.candidateLayoutSha256,
+    layoutSha256: candidateLayoutSha256,
     evidence: {
       site: options.site,
       pageId: options.pageId,
       publicPageUrl: prepared.snapshot.publicPageUrl,
       versionField: prepared.pageLayout.versionField,
       versionToken: prepared.expectedVersionToken,
+      layoutSha256: prepared.expectedLayoutSha256,
+      currentLayoutSha256: data.currentLayoutSha256,
       snapshotSha256: prepared.snapshotSha256,
       operationsSha256: prepared.operationsSha256,
-      candidateLayoutSha256: data.candidateLayoutSha256,
-      compiledHtmlSha256: data.compiledHtmlSha256,
+      candidateLayoutSha256,
+      compiledHtmlSha256,
     },
   });
 }
@@ -2483,9 +2601,11 @@ function patchReportFailure(report, options, prepared) {
     && report.scope?.pageId === options.pageId
     && report.evidence?.versionField === prepared.pageLayout.versionField
     && report.evidence?.versionToken === prepared.expectedVersionToken
+    && report.evidence?.layoutSha256 === prepared.expectedLayoutSha256
     && report.evidence?.snapshotSha256 === prepared.snapshotSha256
     && validSha(report.evidence?.operationsSha256)
-    && validSha(report.evidence?.candidateLayoutSha256);
+    && validSha(report.evidence?.candidateLayoutSha256)
+    && validSha(report.evidence?.compiledHtmlSha256);
   if (!valid) return 'PATCH_REPORT_INVALID';
   if (
     report.evidence.operationsSha256 !== options.expectedOperationsSha256
@@ -2493,6 +2613,9 @@ function patchReportFailure(report, options, prepared) {
   ) return 'OPERATIONS_SHA256_MISMATCH';
   if (report.evidence.candidateLayoutSha256 !== options.expectedCandidateLayoutSha256) {
     return 'CANDIDATE_LAYOUT_SHA256_MISMATCH';
+  }
+  if (report.evidence.compiledHtmlSha256 !== options.expectedCompiledHtmlSha256) {
+    return 'COMPILED_HTML_SHA256_MISMATCH';
   }
   return '';
 }
@@ -2516,15 +2639,19 @@ async function runPatchSave(options, authHeader) {
     endpoint: prepared.pageLayout.endpoint,
   });
   if (!fresh.ok) return httpFailureResult('patch-save', fresh, prepared.artifacts);
-  const currentVersion = versionToken(
-    layoutDocument(
-      fresh.data,
-      prepared.pageLayout.versionField,
-      prepared.pageLayout.carrier
-    ),
-    prepared.pageLayout.versionField
+  const currentEvidence = layoutResourceEvidence(
+    fresh.data,
+    prepared.pageLayout,
+    options.pageId
   );
-  if (!currentVersion || currentVersion !== prepared.expectedVersionToken) {
+  const currentVersion = currentEvidence.versionToken;
+  if (
+    !currentVersion
+    || !currentEvidence.validIdentity
+    || !currentEvidence.validRepresentation
+    || currentVersion !== prepared.expectedVersionToken
+    || currentEvidence.declaredDigest !== prepared.expectedLayoutSha256
+  ) {
     return createResult({
       ok: false, stage: 'patch-save', code: currentVersion ? 'REST_CONFLICT' : 'REST_VERSION_MISSING',
       artifacts: prepared.artifacts,
@@ -2536,6 +2663,8 @@ async function runPatchSave(options, authHeader) {
       response: currentVersion ? {
         snapshotVersionToken: prepared.expectedVersionToken,
         currentVersionToken: currentVersion,
+        snapshotLayoutSha256: prepared.expectedLayoutSha256,
+        currentLayoutSha256: currentEvidence.declaredDigest,
       } : undefined,
     });
   }
@@ -2545,21 +2674,30 @@ async function runPatchSave(options, authHeader) {
     body: {
       operations: prepared.operations,
       [prepared.pageLayout.writePreconditionField]: prepared.expectedVersionToken,
-      expectedCandidateSha256: options.expectedCandidateLayoutSha256,
+      [prepared.pageLayout.writeDigestPreconditionField]: prepared.expectedLayoutSha256,
+      [prepared.pageLayout.writeCandidatePreconditionField]: options.expectedCandidateLayoutSha256,
+      [prepared.capability.writeCompiledPreconditionField]: options.expectedCompiledHtmlSha256,
     },
   });
   if (!response.ok) return httpFailureResult('patch-save', response, prepared.artifacts);
   const data = response.data;
-  const savedVersion = isObject(data)
-    ? versionToken(data, prepared.pageLayout.versionField)
-    : '';
+  const savedEvidence = layoutResourceEvidence(data, prepared.pageLayout, options.pageId);
+  const savedVersion = savedEvidence.versionToken;
   if (
     !isObject(data)
+    || data.saved !== true
     || data.operationCount !== prepared.operations.length
     || data.operationsSha256 !== prepared.operationsSha256
-    || data.candidateLayoutSha256 !== options.expectedCandidateLayoutSha256
+    || data[prepared.pageLayout.candidateDigestField] !== options.expectedCandidateLayoutSha256
+    || data[prepared.capability.compiledDigestField] !== report.evidence.compiledHtmlSha256
     || !savedVersion
-    || savedVersion === prepared.expectedVersionToken
+    || !savedEvidence.validIdentity
+    || !savedEvidence.validRepresentation
+    || savedEvidence.declaredDigest !== options.expectedCandidateLayoutSha256
+    || (
+      savedVersion === prepared.expectedVersionToken
+      && savedEvidence.declaredDigest !== prepared.expectedLayoutSha256
+    )
   ) {
     return createResult({
       ok: false, stage: 'patch-save', code: 'PATCH_SAVE_EVIDENCE_INVALID',
@@ -2570,25 +2708,7 @@ async function runPatchSave(options, authHeader) {
       response: data,
     });
   }
-  let savedNodeMap;
-  try {
-    savedNodeMap = extractNodeMap(data, prepared.pageLayout.carrier);
-  } catch {
-    savedNodeMap = null;
-  }
-  if (!savedNodeMap) {
-    return createResult({
-      ok: false,
-      stage: 'patch-save',
-      code: 'PATCH_SAVE_REPRESENTATION_EVIDENCE_INVALID',
-      artifacts: prepared.artifacts,
-      nextAction: 'Inspect the saved page and Builder response. Do not repeat the patch automatically.',
-      message: 'The patch returned a new version token without the saved layout representation.',
-      httpStatus: response.status,
-      response: data,
-    });
-  }
-  const savedLayoutSha256 = nodeMapSha256(savedNodeMap);
+  const savedLayoutSha256 = savedEvidence.declaredDigest;
   const readbackResponse = await request(options, authHeader, {
     method: prepared.pageLayout.readMethod,
     endpoint: prepared.pageLayout.endpoint,
@@ -2605,21 +2725,17 @@ async function runPatchSave(options, authHeader) {
       response: readbackResponse.reportResponse,
     });
   }
-  const readbackDocument = layoutDocument(
+  const readbackEvidence = layoutResourceEvidence(
     readbackResponse.data,
-    prepared.pageLayout.versionField,
-    prepared.pageLayout.carrier
+    prepared.pageLayout,
+    options.pageId
   );
-  const readbackVersion = versionToken(readbackDocument, prepared.pageLayout.versionField);
-  let readbackNodeMap;
-  try {
-    readbackNodeMap = extractNodeMap(readbackDocument, prepared.pageLayout.carrier);
-  } catch {
-    readbackNodeMap = null;
-  }
-  const readbackLayoutSha256 = readbackNodeMap ? nodeMapSha256(readbackNodeMap) : '';
+  const readbackVersion = readbackEvidence.versionToken;
+  const readbackLayoutSha256 = readbackEvidence.declaredDigest;
   if (
-    readbackVersion !== savedVersion
+    !readbackEvidence.validIdentity
+    || !readbackEvidence.validRepresentation
+    || readbackVersion !== savedVersion
     || readbackLayoutSha256 !== savedLayoutSha256
   ) {
     return createResult({
@@ -2642,23 +2758,27 @@ async function runPatchSave(options, authHeader) {
     ok: true, stage: 'patch-save', code: 'PATCH_SAVE_OK',
     artifacts: {
       ...prepared.artifacts,
-      candidateLayoutSha256: data.candidateLayoutSha256,
-      ...(validSha(data.compiledHtmlSha256) ? { compiledHtmlSha256: data.compiledHtmlSha256 } : {}),
+      candidateLayoutSha256: data[prepared.pageLayout.candidateDigestField],
+      compiledHtmlSha256: data[prepared.capability.compiledDigestField],
     },
     nextAction: 'Snapshot and inspect the canonical saved page.',
     httpStatus: response.status,
     response: data,
     scope: { site: options.site, pageId: options.pageId },
-    layoutSha256: data.candidateLayoutSha256,
+    layoutSha256: data[prepared.pageLayout.candidateDigestField],
     evidence: {
       site: options.site,
       pageId: options.pageId,
       publicPageUrl: prepared.snapshot.publicPageUrl,
       previousVersionToken: prepared.expectedVersionToken,
+      previousLayoutSha256: prepared.expectedLayoutSha256,
       snapshotSha256: prepared.snapshotSha256,
       versionToken: savedVersion,
+      versionAdvanced: savedVersion !== prepared.expectedVersionToken,
+      layoutChanged: savedLayoutSha256 !== prepared.expectedLayoutSha256,
       operationsSha256: prepared.operationsSha256,
-      candidateLayoutSha256: data.candidateLayoutSha256,
+      candidateLayoutSha256: data[prepared.pageLayout.candidateDigestField],
+      compiledHtmlSha256: data[prepared.capability.compiledDigestField],
       savedLayoutSha256,
       readbackLayoutSha256,
       versionField: prepared.pageLayout.versionField,
@@ -2686,6 +2806,15 @@ function isRenderedHtml(value) {
 }
 
 function previewSaveEvidence(saveReport, options, candidateSha256, artifacts) {
+  const readbackLayout = saveReport?.evidence?.readbackLayout;
+  const readbackNodeMap = (() => {
+    try {
+      return extractNodeMap(readbackLayout);
+    } catch {
+      return null;
+    }
+  })();
+  const readbackLayoutSha256 = readbackNodeMap ? nodeMapSha256(readbackNodeMap) : '';
   const valid = isObject(saveReport)
     && saveReport.schemaVersion === SCHEMA_VERSION
     && saveReport.ok === true
@@ -2702,11 +2831,24 @@ function previewSaveEvidence(saveReport, options, candidateSha256, artifacts) {
     && isFieldName(saveReport.evidence?.versionField)
     && typeof saveReport.evidence?.previousVersionToken === 'string'
     && saveReport.evidence.previousVersionToken !== ''
+    && validSha(saveReport.evidence?.previousLayoutSha256)
     && typeof saveReport.evidence?.versionToken === 'string'
     && saveReport.evidence.versionToken !== ''
-    && saveReport.evidence.versionToken !== saveReport.evidence.previousVersionToken
+    && typeof saveReport.evidence?.versionAdvanced === 'boolean'
+    && typeof saveReport.evidence?.layoutChanged === 'boolean'
+    && saveReport.evidence.site === saveReport.scope.site
+    && saveReport.evidence.pageId === saveReport.scope.pageId
+    && saveReport.evidence.layoutSha256 === saveReport.layoutSha256
+    && validSha(saveReport.evidence?.candidateLayoutSha256)
     && validSha(saveReport.evidence?.savedLayoutSha256)
+    && saveReport.evidence.candidateLayoutSha256 === saveReport.evidence.savedLayoutSha256
     && saveReport.evidence?.readbackLayoutSha256 === saveReport.evidence.savedLayoutSha256
+    && readbackLayoutSha256 === saveReport.evidence.readbackLayoutSha256
+    && saveReport.evidence.versionAdvanced
+      === (saveReport.evidence.versionToken !== saveReport.evidence.previousVersionToken)
+    && saveReport.evidence.layoutChanged
+      === (saveReport.evidence.savedLayoutSha256 !== saveReport.evidence.previousLayoutSha256)
+    && (saveReport.evidence.versionAdvanced || !saveReport.evidence.layoutChanged)
     && saveReport.evidence?.validation?.valid === true
     && Array.isArray(saveReport.evidence?.validation?.lint);
   if (!valid) {
@@ -2775,14 +2917,19 @@ function previewSaveEvidence(saveReport, options, candidateSha256, artifacts) {
       pageId: saveReport.scope.pageId,
       publicPageUrl,
       layoutSha256: candidateSha256,
+      candidateLayoutSha256: saveReport.evidence.candidateLayoutSha256,
       savedLayoutSha256: saveReport.evidence.savedLayoutSha256,
       readbackLayoutSha256: saveReport.evidence.readbackLayoutSha256,
       versionField: saveReport.evidence.versionField,
       previousVersionToken: saveReport.evidence.previousVersionToken,
+      previousLayoutSha256: saveReport.evidence.previousLayoutSha256,
       versionToken: saveReport.evidence.versionToken,
+      versionAdvanced: saveReport.evidence.versionAdvanced,
+      layoutChanged: saveReport.evidence.layoutChanged,
       validation: saveReport.evidence.validation,
       saveReport: options.saveReport,
     },
+    nodeMap: readbackNodeMap,
     scope: {
       site: saveReport.scope.site,
       pageId: saveReport.scope.pageId,
@@ -2826,7 +2973,7 @@ async function runPreview(options, authHeader) {
     method: capability.method,
     endpoint: capability.endpoint,
     body: {
-      [capability.carrier]: nodeMap,
+      [capability.carrier]: savedEvidence.nodeMap,
       [capability.contextField]: savedEvidence.scope.pageId,
     },
     expectJson: false,
@@ -2839,6 +2986,7 @@ async function runPreview(options, authHeader) {
   const html = jsonHtml || (previewResponse.data === undefined ? previewResponse.text : '');
   let result;
   if (isRenderedHtml(html)) {
+    artifacts.previewLayoutSha256 = savedEvidence.evidence.readbackLayoutSha256;
     artifacts.format = 'html';
     result = createResult({
       ok: true,

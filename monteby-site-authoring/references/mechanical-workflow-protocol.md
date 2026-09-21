@@ -228,10 +228,10 @@ Every artifact is JSON unless its name says otherwise.
 | `layout-draft.json` | `draft-monteby-layout.js` | contract-valid generated node map |
 | `layout.json` | iteration runner | current candidate under repair |
 | `visual-iteration-report.json` | `run-visual-iteration.js` | complete repair queue, exactly one next action, SHA-256 bindings for plan, candidate, both contract files, and both manifests |
-| `layout-before.json` | `wordpress-layout-client.js snapshot` | scoped site/document envelope from the advertised layout resource: `id`, `postType`, `viewUrl`, optional `renderContextUrl`, node map, presentation, and the token named by `layoutPersistence.versionField` |
+| `layout-before.json` | `wordpress-layout-client.js snapshot` | scoped site/document envelope from the advertised layout resource: requested `id`, `postType`, `viewUrl`, optional `renderContextUrl`, exact node map, matching descriptor-named layout digest, presentation, and version token |
 | validation report | `wordpress-layout-client.js validate` | advertised validation resource accepted the exact candidate SHA-256 and returned `valid: true` with its evaluated `lint` array |
-| save report | `wordpress-layout-client.js save` | scoped site/page, validated candidate SHA-256, conflict check, a new descriptor-named version token, saved-response representation SHA-256, and canonical readback with the same token and saved representation SHA-256 |
-| PHP preview + report | `wordpress-layout-client.js preview` | scoped `PREVIEW_OK`, same save report and SHA-256 |
+| save report | `wordpress-layout-client.js save` | scoped site/page identity, submitted and canonical validated-candidate SHA-256, token-plus-digest conflict check, valid descriptor-named response token, saved-response representation SHA-256, and canonical readback with the same token and saved representation SHA-256 |
+| PHP preview + report | `wordpress-layout-client.js preview` | scoped `PREVIEW_OK` that rendered the exact canonical readback representation from the save report |
 | final screenshots/diffs | capture and benchmark scripts | all canonical viewports after the canonical save; zero aggregate and per-viewport mismatch |
 
 An artifact is not optional because a later step appears possible without it.
@@ -402,8 +402,10 @@ output. Execute that action directly; no separate queue-applied gate exists.
 ### CANONICAL_SNAPSHOT
 
 Snapshot the exact live page immediately before validation/save. This step is
-read-only. Store presentation settings and the token from the field named by
-the live `layoutPersistence.versionField` (currently `postModifiedGmt`).
+read-only. Store presentation settings, the requested numeric document `id`,
+the token from the field named by the live `layoutPersistence.versionField`
+(currently `postModifiedGmt`), and the matching canonical layout digest named
+by `layoutDigestField`.
 
 ### REST_VALIDATE
 
@@ -417,25 +419,33 @@ to contain `valid: true` and an evaluated `lint` array.
 For a bounded existing-node edit, use the separate operation branch documented
 in `partial-layout-operations.md`: `patch-validate -> patch-save -> canonical
 review`. Enter it only after `CANONICAL_SNAPSHOT`. Its preflight must bind the
-snapshot version, exact operation batch, candidate layout, and compiled output;
+snapshot version and layout digest, exact operation batch, candidate layout,
+and compiled output; apply sends every descriptor-named precondition, including
+the compiled-output digest;
 it does not permit skipping the canonical review after apply.
 
 ### SAVE
 
-Before the advertised write, fetch the page again and compare the token named by
-`layoutPersistence.versionField` with the snapshot. If it differs, stop with a
-conflict and make no write. Send the fresh token through the descriptor's
-`writePreconditionField`. Current Builder names these fields `postModifiedGmt`
-and `expectedModifiedGmt`; another compatible descriptor may name them
-differently. Preserve the live presentation unless the user explicitly supplied
-a presentation override.
+Before the advertised write, fetch the page again and compare both the token
+named by `layoutPersistence.versionField` and the canonical digest named by
+`layoutDigestField` with the snapshot. If either differs, stop with a conflict
+and make no write. This catches a second write inside the timestamp token's
+resolution. Send both values through the descriptor's `writePreconditionField`
+and `writeDigestPreconditionField`. Current Builder names the version fields
+`postModifiedGmt` and `expectedModifiedGmt`; another compatible descriptor may
+name them differently. Preserve the live presentation unless the user explicitly
+supplied a presentation override.
 
-After a successful write require a new non-empty token, then read the canonical
-layout through the same descriptor. The readback token must equal the write
-response token and the readback node-map SHA-256 must equal the validated
-candidate SHA-256. An arbitrary `2xx` or `{ "saved": true }` is not sufficient
-evidence, and a failed or mismatched readback must never trigger an automatic
-repeat write.
+After a successful write require a non-empty token and exact saved
+representation, then read the canonical layout through the same descriptor.
+The token may equal the previous token only when the representation proves a
+no-op. The readback token must equal the write-response token and the readback
+node-map SHA-256 must equal the write-response representation SHA-256. Retain
+the submitted and canonical validated-candidate SHA-256 separately, because a
+declared migration may change the persisted representation. Every response in
+this chain must identify the requested page. An arbitrary `2xx` or
+`{ "saved": true }` is not sufficient evidence, and a failed or mismatched
+readback must never trigger an automatic repeat write.
 
 Never implement “fetch and repeat” after HTTP 409/428. Reconcile against the
 snapshot first.
@@ -448,8 +458,9 @@ another write; this is not a database-wide transaction.
 
 ### PHP_PREVIEW
 
-Render through WordPress/PHP after save. The saved REST response and a local
-preview are not sufficient.
+Render the exact canonical readback representation through WordPress/PHP after
+save. Do not re-submit the local pre-save candidate. The saved REST response and
+a local preview are not sufficient.
 
 ### FINAL_CAPTURE and FINAL_COMPARE
 
@@ -469,13 +480,15 @@ mismatch into a pass.
 - the candidate passes local contract and graph validation;
 - local full-page comparison passes at all canonical viewports;
 - the server validates the exact node map;
-- save succeeds without a concurrency conflict and returns a new version token;
+- save succeeds without a concurrency conflict and returns a valid version
+  token; an unchanged token is accepted only for a proven no-op;
 - the canonical readback carries that token and the exact saved-response
   representation SHA-256, while the report separately retains the validated
   candidate SHA-256;
 - the save evidence preserves the server's `valid: true` result and `lint`
   array;
-- validate, save, and preview bind the same node-map SHA-256 and site/page;
+- validate and save bind the submitted and canonical candidate SHA-256 to the
+  same site/page, while preview binds the exact canonical readback SHA-256;
 - the plan, candidate, source/copied contract, and reference/target manifests
   still match the SHA-256 bindings recorded by the passing local report;
 - the confirmed public URL shares the saved site's origin and is not the remote

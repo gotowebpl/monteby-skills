@@ -239,24 +239,25 @@ publish `/monteby/v1/validate`, `/monteby/v1/pages/{postId}/layout`, and
 `/monteby/v1/preview`; those names are examples of the current live descriptor,
 not routes an authoring client may remember. A missing, malformed, or unsupported
 descriptor is a hard stop; never fall back to a guessed endpoint or payload key.
+The page-layout path must contain exactly one `{postId}` placeholder. Snapshot,
+fresh read, write, and readback must return the requested numeric `id`.
 
 For a bounded change to existing nodes, prefer the operation resources exposed
 under `layoutPersistence.operations` in the live contract. Read
 `references/partial-layout-operations.md`; use `patch-validate`, then execute
 only its emitted `patch-save` action. The live `operationSchemas` are the sole
 authority for operation payloads, including whether `update_props` supports
-`unsetProps`. Bind the page snapshot, the token named by the live
-`versionField`, canonical operations SHA-256, and `candidateLayoutSha256`.
+`unsetProps`. Bind the snapshot, version token, current layout digest, canonical operations SHA-256,
+`candidateLayoutSha256`, and `compiledHtmlSha256`. Apply only with every descriptor-named precondition emitted by that exact preflight.
 Missing evidence is a hard stop.
 The client removes an `update_props` entry only when both `props` and
 `unsetProps` are empty; it never removes empty strings inside a meaningful
 `props` object because values such as decorative alt text can be intentional.
 
-Save only through the page-layout write descriptor. Read its fresh token from
-the field named by `layoutPersistence.versionField` and send it through the
-field named by `layoutPersistence.writePreconditionField` immediately before
-the write. In the current Builder these fields are `postModifiedGmt` and
-`expectedModifiedGmt`; they are live-contract examples, not fixed client keys.
+Save only through the page-layout write descriptor. Immediately before writing,
+send the token through the field named by `layoutPersistence.writePreconditionField`
+and compare/send its canonical layout digest; this closes same-second lost updates.
+Current names are `postModifiedGmt` and `expectedModifiedGmt`; they are live-contract examples, not fixed client keys.
 A save returns `428` or `409` only for versioning: a `428` means the declared
 precondition is absent; a `409` means another editor changed the page. Refetch,
 reconcile, revalidate, and issue one new explicit save action; never retry PUT
@@ -264,11 +265,11 @@ automatically. Never bypass a conflict with stale JSON, and never write post met
 or `post_content` directly.
 
 A successful write is not proven by an arbitrary `2xx` or `{ "saved": true }`.
-Require a new non-empty version token that differs from the pre-write token,
-require the write response to carry the saved node-map representation, then read
-the page again through the same descriptor. The readback token must equal the write response token and the readback node-map SHA-256 must equal the saved
-write-response representation SHA-256. Keep the separately validated candidate SHA-256 in the same report so the request remains bound to the exact validated
-input even when the server performs a declared canonical migration. Preserve the server validation result, including its `lint` array, in `SAVE_OK` evidence.
+Require a token and exact saved representation, then read through the same descriptor.
+The token may stay unchanged only for a proven no-op. The readback token must equal the
+write response token and the readback node-map SHA-256 must equal the saved
+write-response representation SHA-256. Keep the separately validated candidate
+SHA-256, preview the exact readback, and preserve validation `lint` in `SAVE_OK`.
 
 Apply the same rule to partial writes: never retry `409` or `428`, never apply
 without a successful preflight, and never reuse a preflight after the page or
