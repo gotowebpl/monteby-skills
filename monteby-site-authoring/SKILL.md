@@ -230,30 +230,45 @@ local self-tests or operational verification; it is not part of an ordinary
 page edit. A finding is evidence, never repair authority: do not change files,
 settings, cache, content, versions, or deployment state from this report alone.
 
-## Persistence endpoints
+## Persistence resources
 
-- `POST /wp-json/monteby/v1/validate`
-- `GET /wp-json/monteby/v1/pages/{id}/layout`
-- `PUT /wp-json/monteby/v1/pages/{id}/layout`
-- `POST /wp-json/monteby/v1/preview`
+`GET /wp-json/monteby/v1/contract` is the fixed bootstrap. Discover validation,
+page-layout read/write, and preview methods, paths, carriers, and context fields
+from the live `layoutPersistence.resources` document. Current Builder versions
+publish `/monteby/v1/validate`, `/monteby/v1/pages/{postId}/layout`, and
+`/monteby/v1/preview`; those names are examples of the current live descriptor,
+not routes an authoring client may remember. A missing, malformed, or unsupported
+descriptor is a hard stop; never fall back to a guessed endpoint or payload key.
 
 For a bounded change to existing nodes, prefer the operation resources exposed
 under `layoutPersistence.operations` in the live contract. Read
 `references/partial-layout-operations.md`; use `patch-validate`, then execute
 only its emitted `patch-save` action. The live `operationSchemas` are the sole
 authority for operation payloads, including whether `update_props` supports
-`unsetProps`. Bind the page snapshot, `postModifiedGmt`, canonical operations
-SHA-256, and `candidateLayoutSha256`. Missing evidence is a hard stop.
+`unsetProps`. Bind the page snapshot, the token named by the live
+`versionField`, canonical operations SHA-256, and `candidateLayoutSha256`.
+Missing evidence is a hard stop.
 The client removes an `update_props` entry only when both `props` and
 `unsetProps` are empty; it never removes empty strings inside a meaningful
 `props` object because values such as decorative alt text can be intentional.
 
-Save only through the versioned PUT with a fresh `expectedModifiedGmt` taken
-immediately before the write. A save returns `428` or `409` only for versioning:
-a `428` means the precondition is absent; a `409` means another editor changed
-the page. Refetch, reconcile, revalidate, and issue one new explicit save action;
-never retry PUT automatically. Never bypass a conflict with stale JSON, and never
-write post meta or `post_content` directly.
+Save only through the page-layout write descriptor. Read its fresh token from
+the field named by `layoutPersistence.versionField` and send it through the
+field named by `layoutPersistence.writePreconditionField` immediately before
+the write. In the current Builder these fields are `postModifiedGmt` and
+`expectedModifiedGmt`; they are live-contract examples, not fixed client keys.
+A save returns `428` or `409` only for versioning: a `428` means the declared
+precondition is absent; a `409` means another editor changed the page. Refetch,
+reconcile, revalidate, and issue one new explicit save action; never retry PUT
+automatically. Never bypass a conflict with stale JSON, and never write post meta
+or `post_content` directly.
+
+A successful write is not proven by an arbitrary `2xx` or `{ "saved": true }`.
+Require a new non-empty version token that differs from the pre-write token,
+require the write response to carry the saved node-map representation, then read
+the page again through the same descriptor. The readback token must equal the write response token and the readback node-map SHA-256 must equal the saved
+write-response representation SHA-256. Keep the separately validated candidate SHA-256 in the same report so the request remains bound to the exact validated
+input even when the server performs a declared canonical migration. Preserve the server validation result, including its `lint` array, in `SAVE_OK` evidence.
 
 Apply the same rule to partial writes: never retry `409` or `428`, never apply
 without a successful preflight, and never reuse a preflight after the page or
@@ -306,7 +321,8 @@ the user explicitly requests a one-off responsive SiteBranding widget override;
 it is never the global site identity.
 
 The versioned layout resource is the sole snapshot identity source. Use its
-`id`, `postType`, `viewUrl`, and `postModifiedGmt`; never assume a document is a
+`id`, `postType`, `viewUrl`, and the token field named by the live
+`versionField` (currently `postModifiedGmt`); never assume a document is a
 `page` or call `/wp/v2/pages/{id}` for a `gotoweb_template`. For a global header
 or footer, pass `--render-context-url` with a same-origin public page that
 actually renders it; retain the template's own `viewUrl` as document evidence.

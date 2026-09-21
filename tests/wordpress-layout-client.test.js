@@ -47,6 +47,37 @@ const OPERATIONS = [{
 const OPERATIONS_SHA256 = operationsSha256(OPERATIONS);
 const BRANDING_REVISION = 'a'.repeat(64);
 
+function layoutContract({
+  productVersion = '1.6.0',
+  pagePath = '/monteby/v1/pages/{postId}/layout',
+  validatePath = '/monteby/v1/validate',
+  previewPath = '/monteby/v1/preview',
+  carrier = 'nodeMap',
+  validationContextField = 'postId',
+  previewContextField = 'postId',
+  versionField = 'postModifiedGmt',
+  writePreconditionField = 'expectedModifiedGmt',
+} = {}) {
+  return {
+    version: 1,
+    productVersion,
+    authoring: { capabilities: { providerRenderedWidgetSave: true } },
+    layoutPersistence: {
+      versionField,
+      writePreconditionField,
+      validationContextField,
+      previewContextField,
+      resources: {
+        validate: { method: 'POST', path: validatePath, carrier },
+        pageLayout: {
+          readMethod: 'GET', writeMethod: 'PUT', path: pagePath, carrier,
+        },
+        preview: { method: 'POST', path: previewPath, carrier },
+      },
+    },
+  };
+}
+
 test('operation generation prunes empty update_props entries without changing meaningful values', () => {
   const meaningful = {
     type: 'update_props',
@@ -95,9 +126,12 @@ function brandingSnapshot(site, data = brandingDocument()) {
   };
 }
 
-function patchContract() {
+function patchContract(layoutOptions = {}) {
+  const baseContract = layoutContract(layoutOptions);
   return {
+    ...baseContract,
     layoutPersistence: {
+      ...baseContract.layoutPersistence,
       operations: {
         limits: { maxBatchItems: 100, maxPayloadBytes: 2097152 },
         operationSchemas: {
@@ -171,6 +205,12 @@ function saveReport(site, pageId, layoutSha256 = LAYOUT_SHA256) {
       pageId,
       publicPageUrl: `${site}/page-${pageId}/`,
       layoutSha256,
+      savedLayoutSha256: layoutSha256,
+      readbackLayoutSha256: layoutSha256,
+      versionField: 'postModifiedGmt',
+      previousVersionToken: 'v1',
+      versionToken: 'v2',
+      validation: { valid: true, lint: [] },
     },
   };
 }
@@ -283,9 +323,7 @@ function assertEnvelope(result, {
 test('snapshot fetches contract before the page and atomically records both artifacts', async (t) => {
   const requests = [];
   const contract = {
-    version: 1,
-    productVersion: '1.4.0',
-    authoring: { capabilities: { providerRenderedWidgetSave: true } },
+    ...layoutContract({ productVersion: '1.4.0' }),
     components: [{ name: 'Section' }],
   };
   const before = {
@@ -353,8 +391,11 @@ test('snapshot fetches contract before the page and atomically records both arti
   });
   assert.equal(execution.result.nextAction.id, 'validate_candidate');
   assert.deepEqual(
-    execution.result.nextAction.args.slice(0, 6),
-    ['validate', '--site', server.site, '--layout', '$MONTEBY_LAYOUT_PATH', '--out']
+    execution.result.nextAction.args.slice(0, 8),
+    [
+      'validate', '--site', server.site, '--layout', '$MONTEBY_LAYOUT_PATH',
+      '--page-id', '17', '--out',
+    ]
   );
   assert.ok(execution.result.nextAction.requires.includes('MONTEBY_LAYOUT_PATH'));
   assert.equal(
@@ -370,10 +411,7 @@ test('template snapshot uses only the layout resource and accepts an explicit re
   const server = await startServer(t, (request, response) => {
     requests.push(`${request.method} ${request.url}`);
     if (request.url.endsWith('/contract')) {
-      sendJson(response, 200, {
-        productVersion: '1.4.0',
-        authoring: { capabilities: { providerRenderedWidgetSave: true } },
-      });
+      sendJson(response, 200, layoutContract({ productVersion: '1.4.0' }));
       return;
     }
     sendJson(response, 200, {
@@ -456,8 +494,12 @@ test('validate posts nodeMap, reads only the named auth environment variable, an
   const secret = 'Bearer custom-private-token';
   const server = await startServer(t, async (request, response) => {
     receivedAuth = request.headers.authorization;
+    if (request.url.endsWith('/contract')) {
+      sendJson(response, 200, layoutContract());
+      return;
+    }
     receivedBody = await readBody(request);
-    sendJson(response, 200, { valid: true, reflectedAuthorization: receivedAuth });
+    sendJson(response, 200, { valid: true, lint: [], reflectedAuthorization: receivedAuth });
   });
 
   const execution = await runClient([
@@ -491,6 +533,43 @@ test('validate posts nodeMap, reads only the named auth environment variable, an
   assert.deepEqual(server.errors, []);
 });
 
+test('layout workflows fail closed when their live descriptor is absent or unsafe', async (t) => {
+  const directory = tempDir(t);
+  const layoutFile = path.join(directory, 'layout.json');
+  writeJson(layoutFile, NODE_MAP);
+
+  const cases = [
+    {
+      command: ['validate', '--layout', layoutFile],
+      mutate(contract) { delete contract.layoutPersistence.resources.validate; },
+      code: 'VALIDATION_RESOURCE_MISSING',
+    },
+    {
+      command: ['snapshot', '--page-id', '17', '--out-dir', path.join(directory, 'snapshot')],
+      mutate(contract) { contract.layoutPersistence.resources.pageLayout.path = 'https://attacker.example/layout'; },
+      code: 'LAYOUT_RESOURCE_INVALID',
+    },
+  ];
+
+  for (const [index, current] of cases.entries()) {
+    let requestCount = 0;
+    const contract = layoutContract();
+    current.mutate(contract);
+    const server = await startServer(t, (_request, response) => {
+      requestCount += 1;
+      sendJson(response, 200, contract);
+    });
+    const execution = await runClient([
+      current.command[0], '--site', server.site, ...current.command.slice(1),
+      '--out', path.join(directory, `descriptor-${index}.json`),
+    ]);
+    assert.equal(execution.exitCode, 1);
+    assert.equal(execution.result.code, current.code);
+    assert.equal(requestCount, 1, 'only contract discovery may run');
+    assert.deepEqual(server.errors, []);
+  }
+});
+
 test('save stops before validation and PUT when postModifiedGmt differs from the snapshot', async (t) => {
   const directory = tempDir(t);
   const layoutFile = path.join(directory, 'layout.json');
@@ -498,6 +577,10 @@ test('save stops before validation and PUT when postModifiedGmt differs from the
   const requests = [];
   const server = await startServer(t, (request, response) => {
     requests.push(`${request.method} ${request.url}`);
+    if (request.url.endsWith('/contract')) {
+      sendJson(response, 200, layoutContract());
+      return;
+    }
     sendJson(response, 200, {
       postModifiedGmt: '2026-07-26 08:05:00',
       nodeMap: NODE_MAP,
@@ -528,7 +611,10 @@ test('save stops before validation and PUT when postModifiedGmt differs from the
   assert.equal(execution.result.nextAction.id, 'resnapshot_and_reconcile');
   assert.equal(execution.result.nextAction.args[0], 'snapshot');
   assert.ok(execution.result.nextAction.requires.includes('MANUAL_LAYOUT_RECONCILIATION'));
-  assert.deepEqual(requests, ['GET /wp-json/monteby/v1/pages/17/layout']);
+  assert.deepEqual(requests, [
+    'GET /wp-json/monteby/v1/contract',
+    'GET /wp-json/monteby/v1/pages/17/layout',
+  ]);
   assert.equal(execution.result.artifacts.snapshot, path.join(directory, 'layout-before.json'));
   assert.deepEqual(server.errors, []);
 });
@@ -623,20 +709,34 @@ test('save validates before PUT and preserves fresh presentation while overridin
     disableGlobalTemplates: true,
     contentWidth: 'wide',
   };
+  let expectReadback = false;
   const server = await startServer(t, async (request, response) => {
     requests.push(`${request.method} ${request.url}`);
-    if (request.method === 'GET') {
+    if (request.url.endsWith('/contract')) {
+      sendJson(response, 200, layoutContract());
+    } else if (request.method === 'GET') {
+      const postModifiedGmt = expectReadback
+        ? '2026-07-26 08:00:01'
+        : '2026-07-26 08:00:00';
+      expectReadback = false;
       sendJson(response, 200, {
-        postModifiedGmt: '2026-07-26 08:00:00',
-        nodeMap: { ROOT: { props: { remote: true } } },
+        postModifiedGmt,
+        nodeMap: postModifiedGmt.endsWith('01')
+          ? NODE_MAP
+          : { ROOT: { props: { remote: true } } },
         presentation: freshPresentation,
       });
     } else if (request.url.endsWith('/validate')) {
-      assert.deepEqual(await readBody(request), { nodeMap: NODE_MAP });
-      sendJson(response, 200, { valid: true });
+      assert.deepEqual(await readBody(request), { nodeMap: NODE_MAP, postId: 17 });
+      sendJson(response, 200, { valid: true, lint: [] });
     } else if (request.method === 'PUT') {
       putBodies.push(await readBody(request));
-      sendJson(response, 200, { saved: true });
+      expectReadback = true;
+      sendJson(response, 200, {
+        saved: true,
+        postModifiedGmt: '2026-07-26 08:00:01',
+        nodeMap: NODE_MAP,
+      });
     } else {
       sendJson(response, 404, { code: 'not_found' });
     }
@@ -687,12 +787,16 @@ test('save validates before PUT and preserves fresh presentation while overridin
   assert.ok(first.result.nextAction.args.includes(path.join(directory, 'preview-response.json')));
   assert.ok(first.result.nextAction.args.includes(path.join(directory, 'preview.html')));
   assert.deepEqual(requests, [
+    'GET /wp-json/monteby/v1/contract',
     'GET /wp-json/monteby/v1/pages/17/layout',
     'POST /wp-json/monteby/v1/validate',
     'PUT /wp-json/monteby/v1/pages/17/layout',
     'GET /wp-json/monteby/v1/pages/17/layout',
+    'GET /wp-json/monteby/v1/contract',
+    'GET /wp-json/monteby/v1/pages/17/layout',
     'POST /wp-json/monteby/v1/validate',
     'PUT /wp-json/monteby/v1/pages/17/layout',
+    'GET /wp-json/monteby/v1/pages/17/layout',
   ]);
   assert.deepEqual(putBodies[0], {
     expectedModifiedGmt: '2026-07-26 08:00:00',
@@ -709,6 +813,155 @@ test('save validates before PUT and preserves fresh presentation while overridin
     },
   });
   assert.deepEqual(server.errors, []);
+});
+
+test('save and preview follow custom live resource paths, carriers, contexts, and version fields', async (t) => {
+  const directory = tempDir(t);
+  const layoutFile = path.join(directory, 'layout.json');
+  const snapshotFile = path.join(directory, 'snapshot.json');
+  const saveReportFile = path.join(directory, 'save.json');
+  const previewFile = path.join(directory, 'preview.html');
+  const previewReportFile = path.join(directory, 'preview.json');
+  const persistedNodeMap = { schemaVersion: 4, ...NODE_MAP };
+  const persistedLayoutSha256 = nodeMapSha256(persistedNodeMap);
+  writeJson(layoutFile, NODE_MAP);
+  const contract = layoutContract({
+    pagePath: '/monteby/v1/documents/{postId}/canvas',
+    validatePath: '/monteby/v1/check-layout',
+    previewPath: '/monteby/v1/render-layout',
+    carrier: 'layoutCandidate',
+    validationContextField: 'documentRef',
+    previewContextField: 'previewDocumentRef',
+    versionField: 'revisionToken',
+    writePreconditionField: 'expectedRevisionToken',
+  });
+  const requests = [];
+  let saved = false;
+  const server = await startServer(t, async (request, response) => {
+    const body = await readBody(request);
+    requests.push({ method: request.method, url: request.url, body });
+    if (request.url.endsWith('/contract')) return sendJson(response, 200, contract);
+    if (request.method === 'GET' && request.url.endsWith('/documents/37/canvas')) {
+      return sendJson(response, 200, {
+        data: {
+          id: 37,
+          postType: 'page',
+          viewUrl: `${server.site}/page-37/`,
+          revisionToken: saved ? 'revision-2' : 'revision-1',
+          layoutCandidate: saved ? persistedNodeMap : { ROOT: { props: { old: true } } },
+          presentation: { layout: 'default', disableGlobalTemplates: false },
+        },
+      });
+    }
+    if (request.url.endsWith('/check-layout')) {
+      assert.deepEqual(body, { layoutCandidate: NODE_MAP, documentRef: 37 });
+      return sendJson(response, 200, { valid: true, lint: [] });
+    }
+    if (request.method === 'PUT' && request.url.endsWith('/documents/37/canvas')) {
+      assert.deepEqual(body, {
+        expectedRevisionToken: 'revision-1',
+        layoutCandidate: NODE_MAP,
+        presentation: { layout: 'default', disableGlobalTemplates: false },
+      });
+      saved = true;
+      return sendJson(response, 200, { data: {
+        saved: true,
+        revisionToken: 'revision-2',
+        layoutCandidate: persistedNodeMap,
+      } });
+    }
+    if (request.url.endsWith('/render-layout')) {
+      assert.deepEqual(body, { layoutCandidate: NODE_MAP, previewDocumentRef: 37 });
+      return sendJson(response, 200, { html: '<main>Custom descriptor preview</main>' });
+    }
+    return sendJson(response, 404, { code: 'unexpected_test_route' });
+  });
+  writeJson(snapshotFile, pageSnapshot(server.site, 37, {
+    revisionToken: 'revision-1',
+    layoutCandidate: { ROOT: { props: { old: true } } },
+  }));
+
+  const save = await runClient([
+    'save', '--site', server.site, '--page-id', '37', '--layout', layoutFile,
+    '--snapshot', snapshotFile, '--expected-layout-sha256', LAYOUT_SHA256,
+    '--out', saveReportFile,
+  ]);
+  assert.equal(save.exitCode, 0, JSON.stringify(save.result));
+  assert.equal(save.result.evidence.versionField, 'revisionToken');
+  assert.equal(save.result.evidence.previousVersionToken, 'revision-1');
+  assert.equal(save.result.evidence.versionToken, 'revision-2');
+  assert.notEqual(persistedLayoutSha256, LAYOUT_SHA256);
+  assert.equal(save.result.evidence.savedLayoutSha256, persistedLayoutSha256);
+  assert.equal(save.result.evidence.readbackLayoutSha256, persistedLayoutSha256);
+
+  const preview = await runClient([
+    'preview', '--site', server.site, '--layout', layoutFile,
+    '--save-report', saveReportFile, '--out', previewFile, '--report-out', previewReportFile,
+  ]);
+  assert.equal(preview.exitCode, 0);
+  assert.equal(fs.readFileSync(previewFile, 'utf8'), '<main>Custom descriptor preview</main>');
+  assert.deepEqual(requests.map(({ method, url }) => `${method} ${url}`), [
+    'GET /wp-json/monteby/v1/contract',
+    'GET /wp-json/monteby/v1/documents/37/canvas',
+    'POST /wp-json/monteby/v1/check-layout',
+    'PUT /wp-json/monteby/v1/documents/37/canvas',
+    'GET /wp-json/monteby/v1/documents/37/canvas',
+    'GET /wp-json/monteby/v1/contract',
+    'POST /wp-json/monteby/v1/render-layout',
+  ]);
+  assert.deepEqual(server.errors, []);
+});
+
+test('save refuses incomplete write evidence and mismatched canonical readback', async (t) => {
+  for (const scenario of ['missing-version', 'missing-representation', 'mismatched-readback']) {
+    const directory = tempDir(t);
+    const layoutFile = path.join(directory, 'layout.json');
+    const snapshotFile = path.join(directory, 'snapshot.json');
+    writeJson(layoutFile, NODE_MAP);
+    let writeCompleted = false;
+    const server = await startServer(t, async (request, response) => {
+      if (request.url.endsWith('/contract')) return sendJson(response, 200, layoutContract());
+      if (request.url.endsWith('/validate')) {
+        return sendJson(response, 200, { valid: true, lint: [] });
+      }
+      if (request.method === 'PUT') {
+        writeCompleted = true;
+        await readBody(request);
+        if (scenario === 'missing-version') return sendJson(response, 200, { saved: true });
+        if (scenario === 'missing-representation') {
+          return sendJson(response, 200, { saved: true, postModifiedGmt: 'v2' });
+        }
+        return sendJson(response, 200, {
+          saved: true, postModifiedGmt: 'v2', nodeMap: NODE_MAP,
+        });
+      }
+      return sendJson(response, 200, {
+        postModifiedGmt: writeCompleted ? 'v2' : 'v1',
+        nodeMap: writeCompleted && scenario === 'mismatched-readback'
+          ? { ROOT: { props: { unexpected: true } } }
+          : NODE_MAP,
+        presentation: { layout: 'default', disableGlobalTemplates: false },
+      });
+    });
+    writeJson(snapshotFile, pageSnapshot(server.site, 17, {
+      postModifiedGmt: 'v1', nodeMap: NODE_MAP,
+    }));
+
+    const execution = await runClient([
+      'save', '--site', server.site, '--page-id', '17', '--layout', layoutFile,
+      '--snapshot', snapshotFile, '--expected-layout-sha256', LAYOUT_SHA256,
+      '--out', path.join(directory, `${scenario}.json`),
+    ]);
+    assert.equal(execution.exitCode, 1);
+    const expectedCode = {
+      'missing-version': 'SAVE_VERSION_EVIDENCE_INVALID',
+      'missing-representation': 'SAVE_REPRESENTATION_EVIDENCE_INVALID',
+      'mismatched-readback': 'SAVE_READBACK_MISMATCH',
+    }[scenario];
+    assert.equal(execution.result.code, expectedCode);
+    assert.equal(execution.result.retryable, false);
+    assert.deepEqual(server.errors, []);
+  }
 });
 
 test('save rejects an unknown presentation layout before making a request', async (t) => {
@@ -747,6 +1000,10 @@ test('save blocks a presentation override when the live page exposes no presenta
   const requests = [];
   const server = await startServer(t, (request, response) => {
     requests.push(`${request.method} ${request.url}`);
+    if (request.url.endsWith('/contract')) {
+      sendJson(response, 200, layoutContract());
+      return;
+    }
     sendJson(response, 200, {
       postModifiedGmt: 'v1',
       nodeMap: NODE_MAP,
@@ -777,7 +1034,10 @@ test('save blocks a presentation override when the live page exposes no presenta
   assert.equal(execution.result.nextAction.id, 'blocked_client_error');
   assert.equal(execution.result.nextAction.tool, '');
   assert.deepEqual(execution.result.nextAction.args, []);
-  assert.deepEqual(requests, ['GET /wp-json/monteby/v1/pages/17/layout']);
+  assert.deepEqual(requests, [
+    'GET /wp-json/monteby/v1/contract',
+    'GET /wp-json/monteby/v1/pages/17/layout',
+  ]);
   assert.deepEqual(server.errors, []);
 });
 
@@ -793,14 +1053,16 @@ test('save maps PUT 428 and 409 to stable non-retryable codes without retrying',
     const requests = [];
     const server = await startServer(t, async (request, response) => {
       requests.push(`${request.method} ${request.url}`);
-      if (request.method === 'GET') {
+      if (request.url.endsWith('/contract')) {
+        sendJson(response, 200, layoutContract());
+      } else if (request.method === 'GET') {
         sendJson(response, 200, {
           postModifiedGmt: 'v1',
           presentation: { layout: 'default', disableGlobalTemplates: false },
         });
       } else if (request.url.endsWith('/validate')) {
         await readBody(request);
-        sendJson(response, 200, { valid: true });
+        sendJson(response, 200, { valid: true, lint: [] });
       } else {
         await readBody(request);
         response.writeHead(status, { 'Content-Type': 'text/plain' });
@@ -825,6 +1087,7 @@ test('save maps PUT 428 and 409 to stable non-retryable codes without retrying',
     assert.equal(execution.result.nextAction.id, 'resnapshot_and_reconcile');
     assert.equal(execution.result.nextAction.args[0], 'snapshot');
     assert.deepEqual(requests, [
+      'GET /wp-json/monteby/v1/contract',
       'GET /wp-json/monteby/v1/pages/21/layout',
       'POST /wp-json/monteby/v1/validate',
       'PUT /wp-json/monteby/v1/pages/21/layout',
@@ -889,31 +1152,43 @@ test('patch-save applies only the exact preflighted batch and sends both server 
   writeJson(operationsFile, OPERATIONS);
   const requests = [];
   let applyBody;
+  const persistedNodeMap = { schemaVersion: 4, ...NODE_MAP };
+  const persistedLayoutSha256 = nodeMapSha256(persistedNodeMap);
+  const customContract = patchContract({
+    pagePath: '/monteby/v1/custom/pages/{postId}/layout',
+    carrier: 'documentTree',
+    versionField: 'revisionToken',
+    writePreconditionField: 'ifRevision',
+  });
   const server = await startServer(t, async (request, response) => {
     requests.push(`${request.method} ${request.url}`);
     if (request.url.endsWith('/contract')) return sendJson(response, 200, {
-      ...patchContract(), productVersion: '1.5.3', authoring: { capabilities: { providerRenderedWidgetSave: true } },
+      ...customContract, productVersion: '1.5.3', authoring: { capabilities: { providerRenderedWidgetSave: true } },
     });
-    if (request.method === 'GET') return sendJson(response, 200, {
+    if (request.method === 'GET') return sendJson(response, 200, { data: {
       id: 17, postType: 'page', viewUrl: `${server.site}/page-17/`,
-      postModifiedGmt: applyBody ? 'v2' : 'v1', nodeMap: NODE_MAP,
-    });
+      revisionToken: applyBody ? 'v2' : 'v1',
+      documentTree: applyBody ? persistedNodeMap : NODE_MAP,
+    } });
     applyBody = await readBody(request);
     return sendJson(response, 200, {
       operationCount: 1,
       operationsSha256: OPERATIONS_SHA256,
       candidateLayoutSha256: LAYOUT_SHA256,
       compiledHtmlSha256: 'a'.repeat(64),
-      postModifiedGmt: 'v2',
+      revisionToken: 'v2',
+      layout: persistedNodeMap,
     });
   });
-  const snapshot = pageSnapshot(server.site, 17, { postModifiedGmt: 'v1', nodeMap: NODE_MAP });
+  const snapshot = pageSnapshot(server.site, 17, {
+    revisionToken: 'v1', documentTree: NODE_MAP,
+  });
   writeJson(snapshotFile, snapshot);
   writeJson(reportFile, {
     schemaVersion: 1, ok: true, stage: 'patch-validate', code: 'PATCH_VALIDATION_OK',
     scope: { site: server.site, pageId: 17 },
     evidence: {
-      postModifiedGmt: 'v1', operationsSha256: OPERATIONS_SHA256,
+      versionField: 'revisionToken', versionToken: 'v1', operationsSha256: OPERATIONS_SHA256,
       snapshotSha256: canonicalSha256(snapshot),
       candidateLayoutSha256: LAYOUT_SHA256,
     },
@@ -932,22 +1207,28 @@ test('patch-save applies only the exact preflighted batch and sends both server 
   assertEnvelope(execution.result, { ok: true, stage: 'patch-save', code: 'PATCH_SAVE_OK' });
   assert.deepEqual(requests, [
     'GET /wp-json/monteby/v1/contract',
-    'GET /wp-json/monteby/v1/pages/17/layout',
+    'GET /wp-json/monteby/v1/custom/pages/17/layout',
     'POST /wp-json/monteby/v1/pages/17/layout/operations',
+    'GET /wp-json/monteby/v1/custom/pages/17/layout',
   ]);
   assert.deepEqual(applyBody, {
     operations: OPERATIONS,
-    expectedModifiedGmt: 'v1',
+    ifRevision: 'v1',
     expectedCandidateSha256: LAYOUT_SHA256,
   });
   assert.equal(execution.result.nextAction.id, 'verify_saved_patch');
+  assert.equal(execution.result.evidence.candidateLayoutSha256, LAYOUT_SHA256);
+  assert.notEqual(execution.result.evidence.candidateLayoutSha256, persistedLayoutSha256);
+  assert.equal(execution.result.evidence.savedLayoutSha256, persistedLayoutSha256);
+  assert.equal(execution.result.evidence.readbackLayoutSha256, persistedLayoutSha256);
+  assert.equal(execution.result.evidence.versionField, 'revisionToken');
   const beforeBytes = fs.readFileSync(snapshotFile, 'utf8');
   const preflightBytes = fs.readFileSync(reportFile, 'utf8');
   const verification = await runClient(execution.result.nextAction.args);
   assert.equal(verification.exitCode, 0);
   assert.equal(verification.result.code, 'SNAPSHOT_OK');
   assert.equal(verification.result.artifacts.snapshot, path.join(directory, 'saved-patch', 'layout-before.json'));
-  assert.equal(JSON.parse(fs.readFileSync(verification.result.artifacts.snapshot, 'utf8')).data.postModifiedGmt, 'v2');
+  assert.equal(JSON.parse(fs.readFileSync(verification.result.artifacts.snapshot, 'utf8')).data.revisionToken, 'v2');
   assert.equal(fs.readFileSync(snapshotFile, 'utf8'), beforeBytes);
   assert.equal(fs.readFileSync(reportFile, 'utf8'), preflightBytes);
   assert.equal(requests.filter((request) => request.startsWith('POST ')).length, 1);
@@ -971,7 +1252,7 @@ test('patch-save never applies or retries after a concurrent page change', async
   writeJson(reportFile, {
     schemaVersion: 1, ok: true, stage: 'patch-validate', code: 'PATCH_VALIDATION_OK',
     scope: { site: server.site, pageId: 17 },
-    evidence: { postModifiedGmt: 'v1', snapshotSha256: canonicalSha256(snapshot), operationsSha256: OPERATIONS_SHA256, candidateLayoutSha256: LAYOUT_SHA256 },
+    evidence: { versionField: 'postModifiedGmt', versionToken: 'v1', snapshotSha256: canonicalSha256(snapshot), operationsSha256: OPERATIONS_SHA256, candidateLayoutSha256: LAYOUT_SHA256 },
   });
 
   const execution = await runClient([
@@ -1008,7 +1289,7 @@ test('patch-save rejects an operation file changed after preflight before apply'
     schemaVersion: 1, ok: true, stage: 'patch-validate', code: 'PATCH_VALIDATION_OK',
     scope: { site: server.site, pageId: 17 },
     evidence: {
-      postModifiedGmt: 'v1', snapshotSha256: canonicalSha256(snapshot),
+      versionField: 'postModifiedGmt', versionToken: 'v1', snapshotSha256: canonicalSha256(snapshot),
       operationsSha256: OPERATIONS_SHA256, candidateLayoutSha256: LAYOUT_SHA256,
     },
   });
@@ -1038,6 +1319,10 @@ test('preview posts nodeMap and writes returned HTML atomically', async (t) => {
   let requestBody;
   const html = '<main data-preview="monteby">Rendered by PHP</main>';
   const server = await startServer(t, async (request, response) => {
+    if (request.url.endsWith('/contract')) {
+      sendJson(response, 200, layoutContract());
+      return;
+    }
     requestBody = await readBody(request);
     sendJson(response, 200, { html });
   });
@@ -1054,7 +1339,7 @@ test('preview posts nodeMap and writes returned HTML atomically', async (t) => {
 
   assert.equal(execution.exitCode, 0);
   assertEnvelope(execution.result, { ok: true, stage: 'preview', code: 'PREVIEW_OK' });
-  assert.deepEqual(requestBody, { nodeMap: NODE_MAP });
+  assert.deepEqual(requestBody, { nodeMap: NODE_MAP, postId: 17 });
   assert.equal(fs.readFileSync(previewFile, 'utf8'), html);
   assert.equal(execution.result.artifacts.preview, previewFile);
   assert.equal(execution.result.artifacts.format, 'html');
@@ -1065,6 +1350,12 @@ test('preview posts nodeMap and writes returned HTML atomically', async (t) => {
     pageId: 17,
     publicPageUrl: `${server.site}/page-17/`,
     layoutSha256: LAYOUT_SHA256,
+    savedLayoutSha256: LAYOUT_SHA256,
+    readbackLayoutSha256: LAYOUT_SHA256,
+    versionField: 'postModifiedGmt',
+    previousVersionToken: 'v1',
+    versionToken: 'v2',
+    validation: { valid: true, lint: [] },
     saveReport: saveReportFile,
   });
   assert.deepEqual(JSON.parse(fs.readFileSync(previewReportFile, 'utf8')), execution.result);
@@ -1079,6 +1370,31 @@ test('preview posts nodeMap and writes returned HTML atomically', async (t) => {
     fs.readdirSync(directory).some((name) => name.endsWith('.tmp')),
     false
   );
+  assert.deepEqual(server.errors, []);
+});
+
+test('preview refuses a missing descriptor without calling a guessed endpoint', async (t) => {
+  const directory = tempDir(t);
+  const layoutFile = path.join(directory, 'layout.json');
+  const saveReportFile = path.join(directory, 'save.json');
+  writeJson(layoutFile, NODE_MAP);
+  let requestCount = 0;
+  const contract = layoutContract();
+  delete contract.layoutPersistence.resources.preview;
+  const server = await startServer(t, (_request, response) => {
+    requestCount += 1;
+    sendJson(response, 200, contract);
+  });
+  writeJson(saveReportFile, saveReport(server.site, 17));
+
+  const execution = await runClient([
+    'preview', '--site', server.site, '--layout', layoutFile,
+    '--save-report', saveReportFile, '--out', path.join(directory, 'preview.html'),
+    '--report-out', path.join(directory, 'preview-report.json'),
+  ]);
+  assert.equal(execution.exitCode, 1);
+  assert.equal(execution.result.code, 'PREVIEW_RESOURCE_MISSING');
+  assert.equal(requestCount, 1);
   assert.deepEqual(server.errors, []);
 });
 
@@ -1135,7 +1451,11 @@ test('preview rejects a 2xx JSON response without rendered HTML', async (t) => {
   const saveReportFile = path.join(directory, 'save-response.json');
   const previewReportFile = path.join(directory, 'preview-response.json');
   writeJson(layoutFile, NODE_MAP);
-  const server = await startServer(t, (_request, response) => {
+  const server = await startServer(t, (request, response) => {
+    if (request.url.endsWith('/contract')) {
+      sendJson(response, 200, layoutContract());
+      return;
+    }
     sendJson(response, 200, { ok: true, previewId: 123 });
   });
   writeJson(saveReportFile, saveReport(server.site, 17));

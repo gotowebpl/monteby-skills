@@ -40,12 +40,12 @@ Require a current backup/rollback path before the first write.
 | Phase | Required inputs | Required artifacts | Command | Pass condition | Failure action | Allowed verdict |
 |---|---|---|---|---|---|---|
 | 0. Rights and target | Ownership/license evidence, site/page/public URL, HTML path, rollback owner | Recorded mode and rights decision | No authoring command | Source may be reused; target and rollback are exact | Unknown rights → stop and use external-reference mode. Unknown target/rollback → stop | `continue`, `blocked_source_rights`, or `blocked_target` |
-| 1. Discover exact live target | Phase 0, approved auth environment | `contract.json`; document-scoped discovery `layout-before.json`; snapshot report | `wordpress-layout-client.js snapshot` (`--render-context-url` for a global template) | Contract exposes `productVersion`, provider-rendered save, components/layout persistence; layout resource binds `id`, `postType`, `viewUrl`, `postModifiedGmt` and this exact site/document | Missing contract, old plugin, inconsistent capability, or scope mismatch → stop; never substitute a policy file, fixture, remembered contract, `/wp/v2/pages`, or another document's snapshot | `continue`, `blocked_plugin_version`, `blocked_contract_inconsistency`, or `blocked_live_contract_unavailable` |
+| 1. Discover exact live target | Phase 0, approved auth environment | `contract.json`; document-scoped discovery `layout-before.json`; snapshot report | `wordpress-layout-client.js snapshot` (`--render-context-url` for a global template) | Contract exposes `productVersion`, provider-rendered save, components/layout persistence; the advertised layout resource binds `id`, `postType`, `viewUrl`, its named `versionField` token (currently `postModifiedGmt`) and this exact site/document | Missing contract, old plugin, inconsistent capability, or scope mismatch → stop; never substitute a policy file, fixture, remembered contract, `/wp/v2/pages`, or another document's snapshot | `continue`, `blocked_plugin_version`, `blocked_contract_inconsistency`, or `blocked_live_contract_unavailable` |
 | 2. Full measured iteration and plan | Live contract, owned HTML | Complete reference captures/layouts; `visual-iteration-report.json`; exact `files.layout`; exact `files.layoutPlan` | `run-visual-iteration.js --full-page` at all three viewports; runner internally invokes `draft-monteby-layout.js --plan-out` | Capture is complete; plan uses `generic-measured-reference`, maps every band, is untruncated, and omits nothing; report ends `diagnostic_passed` | Consume the report's blocker/queue; never redraft manually or relax evidence with a tolerance shortcut | `diagnostic_passed`, `blocked_incomplete_evidence`, `blocked_product_gap`, or `failed` |
 | 3. Bounded AUTHOR loop, only if emitted | Iteration report with non-empty `repairQueue` | Updated candidate plus rerun report | Execute the emitted `apply-layout-repair-queue.js` action, then its exact rerun action | Queue gate is satisfied and the rerun reaches `diagnostic_passed` without regressing passing sections | Ambiguous or unsupported repair → stop and review the reported blocker; never translate the queue into manual JSON edits | `diagnostic_passed`, `blocked_product_gap`, or `failed` |
 | 4. Fresh canonical snapshot | Passing iteration report, its exact layout, approved auth environment | Fresh `contract.json`; page-scoped `layout-before.json`; snapshot report | Execute emitted `snapshot_canonical_page` action | Snapshot matches the exact site/page and its next action is `validate_candidate` | Scope/version evidence missing → stop; do not reuse discovery evidence from another page or run | `continue` or `blocked_live_contract_unavailable` |
 | 5. Live validation | Exact `files.layout` from phase 2/3 | `validate-response.json` containing `layoutSha256` | Resolve `MONTEBY_LAYOUT_PATH` in emitted `validate_candidate`; execute ordered argv | Server accepts that exact node map; `nextAction.id` is `save_validated_candidate` and carries the same hash | Repair from live errors, rerun the local path, and snapshot again; never save rejected or different JSON | `continue` or `failed` |
-| 6. Versioned save | Validated layout, matching fresh snapshot, validation hash | Required `save-response.json`, before/after version evidence | Execute emitted `save_validated_candidate` with `--snapshot`, `--expected-layout-sha256`, and `--out` | Save succeeds with snapshot `postModifiedGmt`; presentation is preserved/explicit; next action is `preview_saved_candidate` | `428`/`409` → execute `resnapshot_and_reconcile`, manually reconcile, revalidate; never auto-retry PUT | `continue`, `blocked_concurrent_edit`, or `failed` |
+| 6. Versioned save | Validated layout, matching fresh snapshot, validation hash | Required `save-response.json`, before/after version evidence, saved-response representation SHA-256, and canonical readback SHA-256 | Execute emitted `save_validated_candidate` with `--snapshot`, `--expected-layout-sha256`, and `--out` | Client uses the live `versionField`/`writePreconditionField`, receives a new token plus saved representation, then proves the same token and saved-response representation hash through canonical readback while retaining the validated candidate hash; presentation is preserved/explicit; next action is `preview_saved_candidate` | `428`/`409` → execute `resnapshot_and_reconcile`, manually reconcile, revalidate; incomplete token/readback evidence → inspect saved state and never auto-retry PUT | `continue`, `blocked_concurrent_edit`, or `failed` |
 | 7. PHP preview | Saved candidate and successful save report | `preview.html`; required `preview-response.json` | Execute emitted `preview_saved_candidate` with `--save-report` and `--report-out` | Preview is bound to the successful save; `nextAction.id` is `verify_canonical_page` | Return through repair/validation/save; preview cannot prove 1:1 | `continue` or `failed` |
 | 8. Canonical capture + comparison | Passing iteration report, successful preview report, confirmed saved public URL | Complete canonical screenshots/layouts/manifest at 1440, 834, 390; benchmark/diffs; canonical report | Resolve the emitted `verify_canonical_page` action, including `--preview-report`; execute ordered argv | `status: "DONE"`, `ok`, `fidelityPassed`, and `canonicalVerification` are true; direct review finds no mismatch | Consume blockers and execute the emitted deterministic repair action; then repeat validation, save, preview, and canonical verification through emitted actions | `canonical_verified_1_to_1`, `blocked_incomplete_evidence`, `blocked_product_gap`, or `failed` |
 
@@ -184,12 +184,17 @@ node "$SKILL/scripts/wordpress-layout-client.js" snapshot \
 
 node "$SKILL/scripts/wordpress-layout-client.js" validate \
   --site "$SITE" \
+  --page-id "$PAGE_ID" \
   --layout "$WORK/iteration/candidate/layout.json" \
   --out "$WORK/iteration/wordpress/validate-response.json" \
   --auth-header-env MONTEBY_AUTH_HEADER
 ```
 
 Require `validate-response.json`, `ok: true`, and a 64-character `layoutSha256`.
+The client discovers the validation path, carrier, and context key from the live
+contract; `--page-id` supplies that advertised context without assuming its
+field name. The response must prove `valid: true` and include the evaluated
+`lint` array.
 The returned `save_validated_candidate` action binds that hash into
 `--expected-layout-sha256`; execute its ordered argv without rebuilding it.
 
@@ -215,6 +220,16 @@ remains authoritative.
 Preserve presentation by default. A deliberate shell change may use only a value
 from `contract.layoutPersistence.presentation` through
 `--presentation-layout`; presentation belongs to this same versioned save.
+
+The client discovers the page-layout method/path/carrier plus `versionField` and
+`writePreconditionField` from the live contract. In the current Builder those
+last two fields are `postModifiedGmt` and `expectedModifiedGmt`; do not encode
+them into another client. `SAVE_OK` requires a new response token, the saved
+node-map representation returned by the write, and a fresh canonical GET whose
+token and node-map SHA-256 match that response. The validated candidate hash is
+retained separately so the request stays bound across a declared server-side
+canonical migration. A `2xx` response containing only `{ "saved": true }` is
+not save proof.
 
 On `428`/`409`, execute `resnapshot_and_reconcile`. Reconcile remote changes,
 revalidate, and wait for a newly emitted save action. Never auto-retry PUT.

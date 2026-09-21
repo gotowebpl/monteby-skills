@@ -68,17 +68,21 @@ test('site-authoring keeps live contract, REST concurrency, and presentation can
   assert.match(skill, /exact-live-contract compatibility policy/);
   assert.match(skill, /Always fetch `GET \/wp-json\/monteby\/v1\/contract` for the target site/);
   assert.match(skill, /Never use the compatibility policy[\s\S]*as a substitute for the live response/);
-  assert.match(skill, /POST \/wp-json\/monteby\/v1\/validate/);
-  assert.match(skill, /GET \/wp-json\/monteby\/v1\/pages\/\{id\}\/layout/);
-  assert.match(skill, /PUT \/wp-json\/monteby\/v1\/pages\/\{id\}\/layout/);
-  assert.match(skill, /POST \/wp-json\/monteby\/v1\/preview/);
+  assert.match(skill, /Discover validation,\s+page-layout read\/write, and preview methods, paths, carriers, and context fields\s+from the live `layoutPersistence\.resources` document/);
+  assert.match(skill, /Current Builder versions\s+publish `\/monteby\/v1\/validate`, `\/monteby\/v1\/pages\/\{postId\}\/layout`, and\s+`\/monteby\/v1\/preview`/);
+  assert.match(skill, /missing, malformed, or unsupported\s+descriptor is a hard stop/);
+  assert.match(skill, /never fall back to a guessed endpoint or payload key/);
   assert.match(skill, /layoutPersistence\.operations/);
   assert.match(skill, /references\/partial-layout-operations\.md/);
   assert.match(skill, /`patch-validate`/);
   assert.match(skill, /canonical operations\s+SHA-256/);
   assert.match(skill, /never retry `409` or `428`/);
-  assert.match(skill, /fresh `expectedModifiedGmt`/);
+  assert.match(skill, /field named by `layoutPersistence\.writePreconditionField`/);
+  assert.match(skill, /`postModifiedGmt` and\s+`expectedModifiedGmt`; they are live-contract examples, not fixed client keys/);
   assert.match(skill, /A save returns `428` or `409`/);
+  assert.match(skill, /not proven by an arbitrary `2xx` or `\{ "saved": true \}`/);
+  assert.match(skill, /readback token must equal the\s+write response token and the readback node-map SHA-256 must equal the saved\s+write-response representation SHA-256/);
+  assert.match(skill, /separately validated candidate\s+SHA-256/);
   assert.match(skill, /send presentation\s+in the same versioned layout PUT/i);
   assert.match(skill, /live contract advertises presentation persistence/);
   assert.match(skill, /Never call the legacy page-settings route/);
@@ -156,7 +160,7 @@ test('global templates use activePostId and snapshots use the layout identity re
 
   assert.match(skill, /globalTemplates\.header\/footer\.activePostId/);
   assert.match(skill, /selectionSource: canonical\|host-filter/);
-  assert.match(skill, /`id`, `postType`, `viewUrl`, and `postModifiedGmt`/);
+  assert.match(skill, /`id`, `postType`, `viewUrl`, and the token field named by the live\s+`versionField` \(currently `postModifiedGmt`\)/);
   assert.match(skill, /--render-context-url/);
   assert.match(skill, /never assume a document is a\s+`page` or call `\/wp\/v2\/pages\/\{id\}`/);
   assert.match(production, /Creation publishes the document but does not activate it/);

@@ -228,9 +228,9 @@ Every artifact is JSON unless its name says otherwise.
 | `layout-draft.json` | `draft-monteby-layout.js` | contract-valid generated node map |
 | `layout.json` | iteration runner | current candidate under repair |
 | `visual-iteration-report.json` | `run-visual-iteration.js` | complete repair queue, exactly one next action, SHA-256 bindings for plan, candidate, both contract files, and both manifests |
-| `layout-before.json` | `wordpress-layout-client.js snapshot` | scoped site/document envelope from the layout resource: `id`, `postType`, `viewUrl`, optional `renderContextUrl`, node map, presentation, and `postModifiedGmt` |
-| validation report | `wordpress-layout-client.js validate` | server accepted the exact candidate SHA-256 |
-| save report | `wordpress-layout-client.js save` | scoped site/page, same SHA-256, conflict check, successful save |
+| `layout-before.json` | `wordpress-layout-client.js snapshot` | scoped site/document envelope from the advertised layout resource: `id`, `postType`, `viewUrl`, optional `renderContextUrl`, node map, presentation, and the token named by `layoutPersistence.versionField` |
+| validation report | `wordpress-layout-client.js validate` | advertised validation resource accepted the exact candidate SHA-256 and returned `valid: true` with its evaluated `lint` array |
+| save report | `wordpress-layout-client.js save` | scoped site/page, validated candidate SHA-256, conflict check, a new descriptor-named version token, saved-response representation SHA-256, and canonical readback with the same token and saved representation SHA-256 |
 | PHP preview + report | `wordpress-layout-client.js preview` | scoped `PREVIEW_OK`, same save report and SHA-256 |
 | final screenshots/diffs | capture and benchmark scripts | all canonical viewports after the canonical save; zero aggregate and per-viewport mismatch |
 
@@ -402,12 +402,17 @@ output. Execute that action directly; no separate queue-applied gate exists.
 ### CANONICAL_SNAPSHOT
 
 Snapshot the exact live page immediately before validation/save. This step is
-read-only. Store presentation settings and `postModifiedGmt`.
+read-only. Store presentation settings and the token from the field named by
+the live `layoutPersistence.versionField` (currently `postModifiedGmt`).
 
 ### REST_VALIDATE
 
-Send the exact candidate node map to the canonical validation endpoint. A local
-audit does not replace server validation.
+Send the exact candidate node map through the validation method, path, carrier,
+and context field advertised in the live `layoutPersistence` descriptor. The
+current Builder's `/monteby/v1/validate`, `nodeMap`, and `postId` names are
+examples, not fixed client constants. Missing or unsupported descriptors stop
+the run; a local audit does not replace server validation. Require the response
+to contain `valid: true` and an evaluated `lint` array.
 
 For a bounded existing-node edit, use the separate operation branch documented
 in `partial-layout-operations.md`: `patch-validate -> patch-save -> canonical
@@ -417,9 +422,20 @@ it does not permit skipping the canonical review after apply.
 
 ### SAVE
 
-Before PUT, fetch the page again and compare `postModifiedGmt` with the
-snapshot. If it differs, stop with a conflict and make no write. Preserve the
-live presentation unless the user explicitly supplied a presentation override.
+Before the advertised write, fetch the page again and compare the token named by
+`layoutPersistence.versionField` with the snapshot. If it differs, stop with a
+conflict and make no write. Send the fresh token through the descriptor's
+`writePreconditionField`. Current Builder names these fields `postModifiedGmt`
+and `expectedModifiedGmt`; another compatible descriptor may name them
+differently. Preserve the live presentation unless the user explicitly supplied
+a presentation override.
+
+After a successful write require a new non-empty token, then read the canonical
+layout through the same descriptor. The readback token must equal the write
+response token and the readback node-map SHA-256 must equal the validated
+candidate SHA-256. An arbitrary `2xx` or `{ "saved": true }` is not sufficient
+evidence, and a failed or mismatched readback must never trigger an automatic
+repeat write.
 
 Never implement “fetch and repeat” after HTTP 409/428. Reconcile against the
 snapshot first.
@@ -453,7 +469,12 @@ mismatch into a pass.
 - the candidate passes local contract and graph validation;
 - local full-page comparison passes at all canonical viewports;
 - the server validates the exact node map;
-- save succeeds without a concurrency conflict;
+- save succeeds without a concurrency conflict and returns a new version token;
+- the canonical readback carries that token and the exact saved-response
+  representation SHA-256, while the report separately retains the validated
+  candidate SHA-256;
+- the save evidence preserves the server's `valid: true` result and `lint`
+  array;
 - validate, save, and preview bind the same node-map SHA-256 and site/page;
 - the plan, candidate, source/copied contract, and reference/target manifests
   still match the SHA-256 bindings recorded by the passing local report;

@@ -11,6 +11,8 @@ const SCHEMA_VERSION = 1;
 const DEFAULT_AUTH_HEADER_ENV = 'MONTEBY_AUTH_HEADER';
 const DEFAULT_TIMEOUT_MS = 30_000;
 const API_ROOT = '/wp-json/monteby/v1';
+const CONTRACT_ENDPOINT = '/contract';
+const REST_NAMESPACE = '/monteby/v1';
 const COMMANDS = new Set([
   'snapshot',
   'validate',
@@ -321,7 +323,6 @@ function validateOptions(options) {
     rejectOption(options, 'reportOut', '--report-out');
   } else if (options.command === 'validate') {
     requireOption(options, 'layout', '--layout');
-    rejectOption(options, 'pageId', '--page-id');
     rejectOption(options, 'outDir', '--out-dir');
     rejectOption(options, 'snapshot', '--snapshot');
     rejectOption(options, 'presentationLayout', '--presentation-layout');
@@ -419,7 +420,7 @@ function validateOptions(options) {
 function printHelp() {
   process.stdout.write(`Usage:
   wordpress-layout-client.js snapshot --site URL --page-id ID --out-dir DIR [--render-context-url URL] [--out REPORT.json]
-  wordpress-layout-client.js validate --site URL --layout LAYOUT.json [--out REPORT.json]
+  wordpress-layout-client.js validate --site URL --layout LAYOUT.json [--page-id ID] [--out REPORT.json]
   wordpress-layout-client.js save --site URL --page-id ID --layout LAYOUT.json (--out-dir DIR | --snapshot FILE) --expected-layout-sha256 SHA256 --out SAVE-REPORT.json [--presentation-layout NAME]
   wordpress-layout-client.js preview --site URL --layout LAYOUT.json --save-report SAVE-REPORT.json --out PREVIEW.html --report-out PREVIEW-REPORT.json
   wordpress-layout-client.js patch-validate --site URL --page-id ID --operations OPERATIONS.json (--out-dir DIR | --snapshot FILE) --out PATCH-VALIDATE-REPORT.json
@@ -439,7 +440,7 @@ layoutSha256 required by save; preview requires the persisted scoped SAVE_OK
 report and writes a separate PREVIEW_OK report for canonical verification.
 patch-validate and patch-save discover their endpoints and operation schemas only
 from the live contract. patch-save binds the same snapshot, operations digest,
-candidate digest, and postModifiedGmt. Neither command retries 409/428.
+candidate digest, and descriptor-named version token. Neither command retries 409/428.
 branding-snapshot and branding-save discover the sole branding resource from the
 full live contract. branding-save writes only logoUrl with the snapshot revision;
 it never calls WordPress settings, theme mods, post meta, or layout-local props.
@@ -520,6 +521,7 @@ function validationArgs(options, layout = options.layout) {
     '--site', options.site,
     '--layout', layout,
   ];
+  if (options.pageId) args.push('--page-id', String(options.pageId));
   const reportDirectory = options.outDir
     || path.dirname(options.out || layout.replace(/\$[A-Z0-9_]+/g, 'layout.json'));
   args.push('--out', path.join(reportDirectory, 'validate-response.json'));
@@ -1077,12 +1079,12 @@ function httpFailureResult(stage, response, artifacts = {}) {
     code = 'REST_CONFLICT';
     nextAction = brandingWrite
       ? 'Take a new branding snapshot, review the newer identity, and issue one explicit save without retrying automatically.'
-      : 'Take a new snapshot, reconcile the remote layout, revalidate, and run save again explicitly.';
+      : 'Take a new snapshot, reconcile the remote layout and version token, revalidate, and run save again explicitly.';
   } else if (status === 428) {
     code = 'REST_PRECONDITION_REQUIRED';
     nextAction = brandingWrite
       ? 'Take a new branding snapshot and issue one explicit save with its expectedRevision precondition.'
-      : 'Take a new snapshot and run save again with its postModifiedGmt precondition.';
+      : 'Take a new snapshot and run save again with the precondition field declared by the live descriptor.';
   } else if (status === 401) {
     code = 'REST_UNAUTHENTICATED';
     nextAction = 'Replace the configured authorization environment variable and run the command again.';
@@ -1123,6 +1125,158 @@ function httpFailureResult(stage, response, artifacts = {}) {
 
 function isObject(value) {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isFieldName(value) {
+  return typeof value === 'string' && /^[A-Za-z][A-Za-z0-9_]{0,63}$/u.test(value);
+}
+
+function resourceEndpoint(resourcePath, pageId, stage) {
+  if (
+    typeof resourcePath !== 'string'
+    || !resourcePath.startsWith(`${REST_NAMESPACE}/`)
+    || resourcePath.includes('..')
+    || /[?#\\\u0000-\u001F\u007F]/u.test(resourcePath)
+  ) {
+    throw new ClientError('The live contract contains an unsafe REST resource path.', {
+      code: 'LAYOUT_RESOURCE_INVALID',
+      stage,
+      nextAction: 'Repair the Builder live contract. Do not guess or rewrite its resource paths.',
+    });
+  }
+
+  const placeholders = [...resourcePath.matchAll(/\{([^}]+)\}/gu)].map((match) => match[1]);
+  if (placeholders.some((placeholder) => placeholder !== 'postId')) {
+    throw new ClientError('The live layout resource uses an unsupported path placeholder.', {
+      code: 'LAYOUT_RESOURCE_INVALID',
+      stage,
+      nextAction: 'Repair the Builder descriptor so page-scoped resources use only {postId}.',
+    });
+  }
+  if (placeholders.length > 0 && (!Number.isSafeInteger(pageId) || pageId < 1)) {
+    throw new ClientError('The discovered REST resource requires a page context.', {
+      code: 'LAYOUT_RESOURCE_CONTEXT_MISSING',
+      stage,
+      nextAction: 'Provide --page-id or use a page-scoped workflow that supplies the saved page identity.',
+    });
+  }
+
+  const resolved = resourcePath.replaceAll('{postId}', String(pageId));
+  if (!/^\/monteby\/v1\/[A-Za-z0-9_./-]+$/u.test(resolved)) {
+    throw new ClientError('The live contract contains an unsupported REST resource path.', {
+      code: 'LAYOUT_RESOURCE_INVALID',
+      stage,
+      nextAction: 'Repair the Builder descriptor. Do not call a resource outside the declared Monteby namespace.',
+    });
+  }
+  return resolved.slice(REST_NAMESPACE.length);
+}
+
+function layoutPersistence(contract, stage) {
+  const persistence = contract?.layoutPersistence;
+  if (!isObject(persistence) || !isObject(persistence.resources)) {
+    throw new ClientError('The live contract does not expose layout persistence resources.', {
+      code: 'LAYOUT_PERSISTENCE_MISSING',
+      stage,
+      nextAction: 'Upgrade or repair Monteby Builder, fetch the live contract again, and do not guess REST routes.',
+    });
+  }
+  return persistence;
+}
+
+function pageLayoutCapability(contract, pageId, stage) {
+  const persistence = layoutPersistence(contract, stage);
+  const resource = persistence.resources.pageLayout;
+  if (
+    !isObject(resource)
+    || resource.readMethod !== 'GET'
+    || resource.writeMethod !== 'PUT'
+    || !isFieldName(resource.carrier)
+    || !isFieldName(persistence.versionField)
+    || !isFieldName(persistence.writePreconditionField)
+  ) {
+    throw new ClientError('The live contract does not expose a supported versioned page-layout resource.', {
+      code: 'PAGE_LAYOUT_RESOURCE_MISSING',
+      stage,
+      nextAction: 'Upgrade or repair Monteby Builder. Do not substitute a hardcoded page-layout endpoint.',
+    });
+  }
+  return {
+    endpoint: resourceEndpoint(resource.path, pageId, stage),
+    readMethod: resource.readMethod,
+    writeMethod: resource.writeMethod,
+    carrier: resource.carrier,
+    versionField: persistence.versionField,
+    writePreconditionField: persistence.writePreconditionField,
+  };
+}
+
+function validationCapability(contract, pageId, stage) {
+  const persistence = layoutPersistence(contract, stage);
+  const resource = persistence.resources.validate;
+  if (
+    !isObject(resource)
+    || resource.method !== 'POST'
+    || !isFieldName(resource.carrier)
+    || !isFieldName(persistence.validationContextField)
+  ) {
+    throw new ClientError('The live contract does not expose a supported layout-validation resource.', {
+      code: 'VALIDATION_RESOURCE_MISSING',
+      stage,
+      nextAction: 'Upgrade or repair Monteby Builder. Do not substitute a hardcoded validation endpoint or field.',
+    });
+  }
+  return {
+    endpoint: resourceEndpoint(resource.path, pageId, stage),
+    method: resource.method,
+    carrier: resource.carrier,
+    contextField: persistence.validationContextField,
+  };
+}
+
+function previewCapability(contract, pageId, stage) {
+  const persistence = layoutPersistence(contract, stage);
+  const resource = persistence.resources.preview;
+  if (
+    !isObject(resource)
+    || resource.method !== 'POST'
+    || !isFieldName(resource.carrier)
+    || !isFieldName(persistence.previewContextField)
+  ) {
+    throw new ClientError('The live contract does not expose a supported layout-preview resource.', {
+      code: 'PREVIEW_RESOURCE_MISSING',
+      stage,
+      nextAction: 'Upgrade or repair Monteby Builder. Do not substitute a hardcoded preview endpoint or field.',
+    });
+  }
+  return {
+    endpoint: resourceEndpoint(resource.path, pageId, stage),
+    method: resource.method,
+    carrier: resource.carrier,
+    contextField: persistence.previewContextField,
+  };
+}
+
+async function fetchLiveContract(options, authHeader, artifacts = {}) {
+  const response = await request(options, authHeader, {
+    method: 'GET',
+    endpoint: CONTRACT_ENDPOINT,
+  });
+  if (!response.ok) return { failure: httpFailureResult(options.command, response, artifacts) };
+  if (!isObject(response.data)) {
+    return {
+      failure: createResult({
+        ok: false,
+        stage: options.command,
+        code: 'CONTRACT_INVALID',
+        artifacts,
+        nextAction: 'Repair the live Site Contract before authoring. Do not infer missing resources.',
+        message: 'The contract endpoint did not return a JSON object.',
+        httpStatus: response.status,
+      }),
+    };
+  }
+  return { contract: response.data };
 }
 
 function nodeMapSha256(nodeMap) {
@@ -1245,13 +1399,10 @@ function operationsCapability(contract, pageId, stage) {
       nextAction: 'Upgrade Monteby Builder, then fetch the live contract again. Do not guess endpoint or payload shapes.',
     });
   }
-  const endpoint = (value) => value
-    .replace('{postId}', String(pageId))
-    .replace(/^\/monteby\/v1(?=\/)/, '');
   return {
     ...capability,
-    validateEndpoint: endpoint(capability.validate.endpoint),
-    applyEndpoint: endpoint(capability.apply.endpoint),
+    validateEndpoint: resourceEndpoint(capability.validate.endpoint, pageId, stage),
+    applyEndpoint: resourceEndpoint(capability.apply.endpoint, pageId, stage),
   };
 }
 
@@ -1343,17 +1494,33 @@ function validateOperations(operations, capability, stage) {
   }
 }
 
-function layoutDocument(value) {
-  if (isObject(value?.data) && value.postModifiedGmt === undefined && value.data.postModifiedGmt !== undefined) {
+function layoutDocument(value, versionField, carrier) {
+  if (
+    isObject(value?.data)
+    && value[versionField] === undefined
+    && (
+      value.data[versionField] !== undefined
+      || (isFieldName(carrier) && value.data[carrier] !== undefined)
+    )
+  ) {
     return value.data;
   }
   return value;
 }
 
-function extractNodeMap(value) {
+function extractNodeMap(value, carrier = '', depth = 0) {
+  if (depth > 4) {
+    throw new ClientError('Layout input nesting exceeds the supported contract envelope.', {
+      code: 'INVALID_LAYOUT_INPUT',
+      nextAction: 'Provide the exact node map returned through the declared layout carrier.',
+    });
+  }
   if (isObject(value) && isObject(value.ROOT)) return value;
-  if (isObject(value?.nodeMap)) return value.nodeMap;
-  if (isObject(value?.layout)) return value.layout;
+  if (isFieldName(carrier) && isObject(value?.[carrier])) {
+    return extractNodeMap(value[carrier], '', depth + 1);
+  }
+  if (isObject(value?.nodeMap)) return extractNodeMap(value.nodeMap, '', depth + 1);
+  if (isObject(value?.layout)) return extractNodeMap(value.layout, '', depth + 1);
   throw new ClientError('Layout input does not contain a Monteby node map.', {
     code: 'INVALID_LAYOUT_INPUT',
     nextAction: 'Provide a JSON node map with ROOT, or an object containing nodeMap or layout.',
@@ -1464,22 +1631,26 @@ async function loadOperations(options) {
 }
 
 async function fetchOperationsCapability(options, authHeader) {
-  const response = await request(options, authHeader, { method: 'GET', endpoint: '/contract' });
-  if (!response.ok) return { failure: httpFailureResult(options.command, response, {}) };
+  const discovered = await fetchLiveContract(options, authHeader);
+  if (discovered.failure) return discovered;
   try {
-    return { capability: operationsCapability(response.data, options.pageId, options.command) };
+    return {
+      capability: operationsCapability(discovered.contract, options.pageId, options.command),
+      contract: discovered.contract,
+      pageLayout: pageLayoutCapability(discovered.contract, options.pageId, options.command),
+    };
   } catch (error) {
     return { failure: resultFromError(error, options.command) };
   }
 }
 
 async function fetchSiteBrandingCapability(options, authHeader) {
-  const response = await request(options, authHeader, { method: 'GET', endpoint: '/contract' });
-  if (!response.ok) return { failure: httpFailureResult(options.command, response, {}) };
+  const discovered = await fetchLiveContract(options, authHeader);
+  if (discovered.failure) return discovered;
   try {
     return {
-      capability: siteBrandingCapability(response.data, options.command),
-      contract: response.data,
+      capability: siteBrandingCapability(discovered.contract, options.command),
+      contract: discovered.contract,
     };
   } catch (error) {
     return { failure: resultFromError(error, options.command) };
@@ -1680,15 +1851,10 @@ async function runSnapshot(options, authHeader) {
     snapshot: path.join(options.outDir, 'layout-before.json'),
   };
 
-  const contractResponse = await request(options, authHeader, {
-    method: 'GET',
-    endpoint: '/contract',
-  });
-  if (!contractResponse.ok) {
-    return httpFailureResult('snapshot', contractResponse, artifacts);
-  }
+  const discovered = await fetchLiveContract(options, authHeader, artifacts);
+  if (discovered.failure) return discovered.failure;
   const providerSaveGate = evaluateFeatureGate(
-    contractResponse.data,
+    discovered.contract,
     'providerRenderedWidgetSave',
     compatibilityManifest
   );
@@ -1705,23 +1871,33 @@ async function runSnapshot(options, authHeader) {
     });
   }
 
+  let layoutResource;
+  try {
+    layoutResource = pageLayoutCapability(discovered.contract, options.pageId, 'snapshot');
+  } catch (error) {
+    return resultFromError(error, 'snapshot');
+  }
+
   const layoutResponse = await request(options, authHeader, {
-    method: 'GET',
-    endpoint: `/pages/${options.pageId}/layout`,
+    method: layoutResource.readMethod,
+    endpoint: layoutResource.endpoint,
   });
   if (!layoutResponse.ok) {
     return httpFailureResult('snapshot', layoutResponse, artifacts);
   }
 
-  const layoutIdentity = layoutResponse.data;
+  const layoutIdentity = layoutDocument(
+    layoutResponse.data,
+    layoutResource.versionField,
+    layoutResource.carrier
+  );
   const viewUrl = normalizePublicPageUrl(layoutIdentity?.viewUrl, options.site);
   const publicPageUrl = options.renderContextUrl || viewUrl;
   if (
     Number(layoutIdentity?.id) !== options.pageId
     || typeof layoutIdentity?.postType !== 'string'
     || !layoutIdentity.postType.trim()
-    || typeof layoutIdentity?.postModifiedGmt !== 'string'
-    || !layoutIdentity.postModifiedGmt.trim()
+    || !versionToken(layoutIdentity, layoutResource.versionField)
     || !viewUrl
   ) {
     return createResult({
@@ -1729,7 +1905,7 @@ async function runSnapshot(options, authHeader) {
       stage: 'snapshot',
       code: 'LAYOUT_IDENTITY_INVALID',
       artifacts,
-      nextAction: 'Repair the versioned layout resource so it returns id, postType, viewUrl, and postModifiedGmt for the requested document.',
+      nextAction: `Repair the versioned layout resource so it returns id, postType, viewUrl, and ${layoutResource.versionField} for the requested document.`,
       message: 'The layout resource did not bind the requested document to a complete same-site identity.',
       response: layoutIdentity,
     });
@@ -1745,12 +1921,12 @@ async function runSnapshot(options, authHeader) {
     renderContextUrl: options.renderContextUrl || '',
     publicPageUrl,
     capturedAt: new Date().toISOString(),
-    data: redact(layoutResponse.data, authHeader),
+    data: redact(layoutIdentity, authHeader),
   };
   await atomicWriteMany([
     {
       target: artifacts.contract,
-      content: `${JSON.stringify(redact(contractResponse.data, authHeader), null, 2)}\n`,
+      content: `${JSON.stringify(redact(discovered.contract, authHeader), null, 2)}\n`,
     },
     {
       target: artifacts.snapshot,
@@ -1798,11 +1974,15 @@ function normalizePublicPageUrl(value, site) {
   }
 }
 
-async function validateNodeMap(options, authHeader, nodeMap, artifacts) {
+async function validateNodeMap(options, authHeader, nodeMap, artifacts, capability) {
+  const body = {
+    [capability.carrier]: nodeMap,
+    ...(options.pageId ? { [capability.contextField]: options.pageId } : {}),
+  };
   const response = await request(options, authHeader, {
-    method: 'POST',
-    endpoint: '/validate',
-    body: { nodeMap },
+    method: capability.method,
+    endpoint: capability.endpoint,
+    body,
   });
   if (!response.ok) {
     return httpFailureResult('validate', response, artifacts);
@@ -1815,6 +1995,19 @@ async function validateNodeMap(options, authHeader, nodeMap, artifacts) {
       artifacts,
       nextAction: 'Correct the node map using the validation response, then run validate again.',
       message: 'Monteby rejected the candidate node map.',
+      httpStatus: response.status,
+      response: response.data,
+      layoutSha256: artifacts.layoutSha256,
+    });
+  }
+  if (!isObject(response.data) || response.data.valid !== true || !Array.isArray(response.data.lint)) {
+    return createResult({
+      ok: false,
+      stage: 'validate',
+      code: 'VALIDATION_EVIDENCE_INVALID',
+      artifacts,
+      nextAction: 'Repair the validation resource so it returns valid: true and the evaluated lint findings.',
+      message: 'Validation returned 2xx without complete contract-backed evidence.',
       httpStatus: response.status,
       response: response.data,
       layoutSha256: artifacts.layoutSha256,
@@ -1834,14 +2027,25 @@ async function validateNodeMap(options, authHeader, nodeMap, artifacts) {
 
 async function runValidate(options, authHeader) {
   const nodeMap = await loadCandidate(options);
-  return validateNodeMap(options, authHeader, nodeMap, {
+  const artifacts = {
     layout: options.layout,
     layoutSha256: nodeMapSha256(nodeMap),
-  });
+  };
+  const discovered = await fetchLiveContract(options, authHeader, artifacts);
+  if (discovered.failure) return discovered.failure;
+  let capability;
+  try {
+    capability = validationCapability(discovered.contract, options.pageId, 'validate');
+  } catch (error) {
+    return resultFromError(error, 'validate');
+  }
+  return validateNodeMap(options, authHeader, nodeMap, {
+    ...artifacts,
+  }, capability);
 }
 
-function versionToken(document) {
-  const token = document?.postModifiedGmt;
+function versionToken(document, versionField) {
+  const token = isFieldName(versionField) ? document?.[versionField] : undefined;
   return typeof token === 'string' && token.trim() ? token : '';
 }
 
@@ -1909,8 +2113,22 @@ async function runSave(options, authHeader) {
       layoutSha256: candidateSha256,
     });
   }
-  const snapshotDocument = layoutDocument(snapshotValue);
-  const snapshotVersion = versionToken(snapshotDocument);
+  const discovered = await fetchLiveContract(options, authHeader, artifacts);
+  if (discovered.failure) return discovered.failure;
+  let pageResource;
+  let validateResource;
+  try {
+    pageResource = pageLayoutCapability(discovered.contract, options.pageId, 'save');
+    validateResource = validationCapability(discovered.contract, options.pageId, 'save');
+  } catch (error) {
+    return resultFromError(error, 'save');
+  }
+  const snapshotDocument = layoutDocument(
+    snapshotValue,
+    pageResource.versionField,
+    pageResource.carrier
+  );
+  const snapshotVersion = versionToken(snapshotDocument, pageResource.versionField);
   if (!snapshotVersion) {
     return createResult({
       ok: false,
@@ -1918,27 +2136,31 @@ async function runSave(options, authHeader) {
       code: 'SNAPSHOT_VERSION_MISSING',
       artifacts,
       nextAction: 'Run snapshot again and keep its unmodified layout-before.json for save.',
-      message: 'Snapshot does not contain postModifiedGmt.',
+      message: `Snapshot does not contain ${pageResource.versionField}.`,
     });
   }
 
   const freshResponse = await request(options, authHeader, {
-    method: 'GET',
-    endpoint: `/pages/${options.pageId}/layout`,
+    method: pageResource.readMethod,
+    endpoint: pageResource.endpoint,
   });
   if (!freshResponse.ok) {
     return httpFailureResult('save', freshResponse, artifacts);
   }
-  const freshDocument = layoutDocument(freshResponse.data);
-  const freshVersion = versionToken(freshDocument);
+  const freshDocument = layoutDocument(
+    freshResponse.data,
+    pageResource.versionField,
+    pageResource.carrier
+  );
+  const freshVersion = versionToken(freshDocument, pageResource.versionField);
   if (!freshVersion) {
     return createResult({
       ok: false,
       stage: 'save',
       code: 'REST_VERSION_MISSING',
       artifacts,
-      nextAction: 'Inspect the page layout endpoint; it must return postModifiedGmt before save is safe.',
-      message: 'Current page layout does not contain postModifiedGmt.',
+      nextAction: `Inspect the page layout endpoint; it must return ${pageResource.versionField} before save is safe.`,
+      message: `Current page layout does not contain ${pageResource.versionField}.`,
       httpStatus: freshResponse.status,
     });
   }
@@ -1953,8 +2175,8 @@ async function runSave(options, authHeader) {
       message: 'The page changed after the snapshot; no validation or PUT request was sent.',
       httpStatus: 409,
       response: {
-        snapshotPostModifiedGmt: snapshotVersion,
-        currentPostModifiedGmt: freshVersion,
+        snapshotVersionToken: snapshotVersion,
+        currentVersionToken: freshVersion,
       },
     });
   }
@@ -1975,7 +2197,13 @@ async function runSave(options, authHeader) {
     });
   }
 
-  const validation = await validateNodeMap(options, authHeader, candidate, artifacts);
+  const validation = await validateNodeMap(
+    options,
+    authHeader,
+    candidate,
+    artifacts,
+    validateResource
+  );
   if (!validation.ok) {
     return {
       ...validation,
@@ -2002,17 +2230,102 @@ async function runSave(options, authHeader) {
     }
     : presentation;
   const payload = {
-    expectedModifiedGmt: freshVersion,
-    nodeMap: candidate,
+    [pageResource.writePreconditionField]: freshVersion,
+    [pageResource.carrier]: candidate,
     ...(effectivePresentation ? { presentation: effectivePresentation } : {}),
   };
   const saveResponse = await request(options, authHeader, {
-    method: 'PUT',
-    endpoint: `/pages/${options.pageId}/layout`,
+    method: pageResource.writeMethod,
+    endpoint: pageResource.endpoint,
     body: payload,
   });
   if (!saveResponse.ok) {
     return httpFailureResult('save', saveResponse, artifacts);
+  }
+
+  const savedDocument = layoutDocument(
+    saveResponse.data,
+    pageResource.versionField,
+    pageResource.carrier
+  );
+  const savedVersion = versionToken(savedDocument, pageResource.versionField);
+  if (!savedVersion || savedVersion === freshVersion) {
+    return createResult({
+      ok: false,
+      stage: 'save',
+      code: 'SAVE_VERSION_EVIDENCE_INVALID',
+      artifacts,
+      nextAction: 'Inspect the saved page and Builder versioning. Do not repeat the write automatically.',
+      message: 'The write returned 2xx without a new version token.',
+      httpStatus: saveResponse.status,
+      response: saveResponse.data,
+      layoutSha256: candidateSha256,
+    });
+  }
+  let savedNodeMap;
+  try {
+    savedNodeMap = extractNodeMap(savedDocument, pageResource.carrier);
+  } catch {
+    savedNodeMap = null;
+  }
+  if (!savedNodeMap) {
+    return createResult({
+      ok: false,
+      stage: 'save',
+      code: 'SAVE_REPRESENTATION_EVIDENCE_INVALID',
+      artifacts,
+      nextAction: 'Inspect the saved page and Builder response. Do not repeat the write automatically.',
+      message: 'The write returned a new version token without the saved layout representation.',
+      httpStatus: saveResponse.status,
+      response: saveResponse.data,
+      layoutSha256: candidateSha256,
+    });
+  }
+  const savedLayoutSha256 = nodeMapSha256(savedNodeMap);
+
+  const readbackResponse = await request(options, authHeader, {
+    method: pageResource.readMethod,
+    endpoint: pageResource.endpoint,
+  });
+  if (!readbackResponse.ok) {
+    return createResult({
+      ...httpFailureResult('save', readbackResponse, artifacts),
+      code: 'SAVE_READBACK_FAILED',
+      retryable: false,
+      nextAction: 'Inspect the page state manually. The write succeeded but its canonical readback failed.',
+      layoutSha256: candidateSha256,
+    });
+  }
+  const readbackDocument = layoutDocument(
+    readbackResponse.data,
+    pageResource.versionField,
+    pageResource.carrier
+  );
+  const readbackVersion = versionToken(readbackDocument, pageResource.versionField);
+  let readbackNodeMap;
+  try {
+    readbackNodeMap = extractNodeMap(readbackDocument, pageResource.carrier);
+  } catch {
+    readbackNodeMap = null;
+  }
+  const readbackLayoutSha256 = readbackNodeMap ? nodeMapSha256(readbackNodeMap) : '';
+  if (readbackVersion !== savedVersion || readbackLayoutSha256 !== savedLayoutSha256) {
+    return createResult({
+      ok: false,
+      stage: 'save',
+      code: 'SAVE_READBACK_MISMATCH',
+      artifacts,
+      nextAction: 'Inspect the canonical page state and reconcile it before another write.',
+      message: 'The canonical readback does not match the saved version and write-response representation.',
+      httpStatus: readbackResponse.status,
+      response: {
+        expectedVersionToken: savedVersion,
+        readbackVersionToken: readbackVersion,
+        expectedSavedLayoutSha256: savedLayoutSha256,
+        readbackLayoutSha256,
+      },
+      layoutSha256: candidateSha256,
+    });
   }
 
   const responseDetails = isObject(saveResponse.data)
@@ -2038,6 +2351,15 @@ async function runSave(options, authHeader) {
       pageId: options.pageId,
       publicPageUrl: snapshotValue.publicPageUrl,
       layoutSha256: candidateSha256,
+      savedLayoutSha256,
+      readbackLayoutSha256,
+      versionField: pageResource.versionField,
+      previousVersionToken: freshVersion,
+      versionToken: savedVersion,
+      validation: {
+        valid: true,
+        lint: validation.response.lint,
+      },
     },
   });
 }
@@ -2056,17 +2378,24 @@ async function preparePatch(options, authHeader) {
   const snapshot = await readJsonFile(snapshotFile, 'snapshot', options.command);
   const scopeFailure = snapshotScopeFailure(snapshot, options, artifacts, options.command);
   if (scopeFailure) return { failure: scopeFailure };
-  const expectedModifiedGmt = versionToken(layoutDocument(snapshot));
-  if (!expectedModifiedGmt) {
+  const discovered = await fetchOperationsCapability(options, authHeader);
+  if (discovered.failure) return discovered;
+  const expectedVersionToken = versionToken(
+    layoutDocument(
+      snapshot,
+      discovered.pageLayout.versionField,
+      discovered.pageLayout.carrier
+    ),
+    discovered.pageLayout.versionField
+  );
+  if (!expectedVersionToken) {
     return { failure: createResult({
       ok: false, stage: options.command, code: 'SNAPSHOT_VERSION_MISSING', artifacts,
       nextAction: 'Create a fresh page-scoped snapshot and preflight the patch again.',
-      message: 'Snapshot does not contain postModifiedGmt.',
+      message: `Snapshot does not contain ${discovered.pageLayout.versionField}.`,
     }) };
   }
   const operations = await loadOperations(options);
-  const discovered = await fetchOperationsCapability(options, authHeader);
-  if (discovered.failure) return discovered;
   try {
     validateOperations(operations, discovered.capability, options.command);
   } catch (error) {
@@ -2077,11 +2406,12 @@ async function preparePatch(options, authHeader) {
   return {
     artifacts: { ...artifacts, operationsSha256: digest, snapshotSha256 },
     snapshot,
-    expectedModifiedGmt,
+    expectedVersionToken,
     operations,
     operationsSha256: digest,
     snapshotSha256,
     capability: discovered.capability,
+    pageLayout: discovered.pageLayout,
   };
 }
 
@@ -2093,7 +2423,7 @@ async function runPatchValidate(options, authHeader) {
     endpoint: prepared.capability.validateEndpoint,
     body: {
       operations: prepared.operations,
-      expectedModifiedGmt: prepared.expectedModifiedGmt,
+      [prepared.pageLayout.writePreconditionField]: prepared.expectedVersionToken,
     },
   });
   if (!response.ok) return httpFailureResult('patch-validate', response, prepared.artifacts);
@@ -2107,7 +2437,7 @@ async function runPatchValidate(options, authHeader) {
     || data.operationsSha256 !== prepared.operationsSha256
     || !validSha(data.candidateLayoutSha256)
     || !validSha(data.compiledHtmlSha256)
-    || data.postModifiedGmt !== prepared.expectedModifiedGmt
+    || data[prepared.pageLayout.versionField] !== prepared.expectedVersionToken
     || !candidateLayout;
   if (invalid) {
     return createResult({
@@ -2133,7 +2463,8 @@ async function runPatchValidate(options, authHeader) {
       site: options.site,
       pageId: options.pageId,
       publicPageUrl: prepared.snapshot.publicPageUrl,
-      postModifiedGmt: prepared.expectedModifiedGmt,
+      versionField: prepared.pageLayout.versionField,
+      versionToken: prepared.expectedVersionToken,
       snapshotSha256: prepared.snapshotSha256,
       operationsSha256: prepared.operationsSha256,
       candidateLayoutSha256: data.candidateLayoutSha256,
@@ -2150,7 +2481,8 @@ function patchReportFailure(report, options, prepared) {
     && report.code === 'PATCH_VALIDATION_OK'
     && report.scope?.site === options.site
     && report.scope?.pageId === options.pageId
-    && report.evidence?.postModifiedGmt === prepared.expectedModifiedGmt
+    && report.evidence?.versionField === prepared.pageLayout.versionField
+    && report.evidence?.versionToken === prepared.expectedVersionToken
     && report.evidence?.snapshotSha256 === prepared.snapshotSha256
     && validSha(report.evidence?.operationsSha256)
     && validSha(report.evidence?.candidateLayoutSha256);
@@ -2180,20 +2512,30 @@ async function runPatchSave(options, authHeader) {
     });
   }
   const fresh = await request(options, authHeader, {
-    method: 'GET', endpoint: `/pages/${options.pageId}/layout`,
+    method: prepared.pageLayout.readMethod,
+    endpoint: prepared.pageLayout.endpoint,
   });
   if (!fresh.ok) return httpFailureResult('patch-save', fresh, prepared.artifacts);
-  const currentVersion = versionToken(layoutDocument(fresh.data));
-  if (!currentVersion || currentVersion !== prepared.expectedModifiedGmt) {
+  const currentVersion = versionToken(
+    layoutDocument(
+      fresh.data,
+      prepared.pageLayout.versionField,
+      prepared.pageLayout.carrier
+    ),
+    prepared.pageLayout.versionField
+  );
+  if (!currentVersion || currentVersion !== prepared.expectedVersionToken) {
     return createResult({
       ok: false, stage: 'patch-save', code: currentVersion ? 'REST_CONFLICT' : 'REST_VERSION_MISSING',
       artifacts: prepared.artifacts,
       nextAction: 'Snapshot the page again, reconcile the patch, and preflight it again. Do not retry apply.',
-      message: currentVersion ? 'The page changed after patch preflight; no apply request was sent.' : 'Current layout has no postModifiedGmt.',
+      message: currentVersion
+        ? 'The page changed after patch preflight; no apply request was sent.'
+        : `Current layout has no ${prepared.pageLayout.versionField}.`,
       httpStatus: currentVersion ? 409 : fresh.status,
       response: currentVersion ? {
-        snapshotPostModifiedGmt: prepared.expectedModifiedGmt,
-        currentPostModifiedGmt: currentVersion,
+        snapshotVersionToken: prepared.expectedVersionToken,
+        currentVersionToken: currentVersion,
       } : undefined,
     });
   }
@@ -2202,17 +2544,22 @@ async function runPatchSave(options, authHeader) {
     endpoint: prepared.capability.applyEndpoint,
     body: {
       operations: prepared.operations,
-      expectedModifiedGmt: prepared.expectedModifiedGmt,
+      [prepared.pageLayout.writePreconditionField]: prepared.expectedVersionToken,
       expectedCandidateSha256: options.expectedCandidateLayoutSha256,
     },
   });
   if (!response.ok) return httpFailureResult('patch-save', response, prepared.artifacts);
   const data = response.data;
+  const savedVersion = isObject(data)
+    ? versionToken(data, prepared.pageLayout.versionField)
+    : '';
   if (
     !isObject(data)
     || data.operationCount !== prepared.operations.length
     || data.operationsSha256 !== prepared.operationsSha256
     || data.candidateLayoutSha256 !== options.expectedCandidateLayoutSha256
+    || !savedVersion
+    || savedVersion === prepared.expectedVersionToken
   ) {
     return createResult({
       ok: false, stage: 'patch-save', code: 'PATCH_SAVE_EVIDENCE_INVALID',
@@ -2221,6 +2568,74 @@ async function runPatchSave(options, authHeader) {
       message: 'Apply returned 2xx without complete evidence for the exact preflighted patch.',
       httpStatus: response.status,
       response: data,
+    });
+  }
+  let savedNodeMap;
+  try {
+    savedNodeMap = extractNodeMap(data, prepared.pageLayout.carrier);
+  } catch {
+    savedNodeMap = null;
+  }
+  if (!savedNodeMap) {
+    return createResult({
+      ok: false,
+      stage: 'patch-save',
+      code: 'PATCH_SAVE_REPRESENTATION_EVIDENCE_INVALID',
+      artifacts: prepared.artifacts,
+      nextAction: 'Inspect the saved page and Builder response. Do not repeat the patch automatically.',
+      message: 'The patch returned a new version token without the saved layout representation.',
+      httpStatus: response.status,
+      response: data,
+    });
+  }
+  const savedLayoutSha256 = nodeMapSha256(savedNodeMap);
+  const readbackResponse = await request(options, authHeader, {
+    method: prepared.pageLayout.readMethod,
+    endpoint: prepared.pageLayout.endpoint,
+  });
+  if (!readbackResponse.ok) {
+    return createResult({
+      ok: false,
+      stage: 'patch-save',
+      code: 'PATCH_SAVE_READBACK_FAILED',
+      artifacts: prepared.artifacts,
+      nextAction: 'Inspect the page state manually. The patch succeeded but its canonical readback failed.',
+      message: 'The canonical layout could not be read after patch apply.',
+      httpStatus: readbackResponse.status,
+      response: readbackResponse.reportResponse,
+    });
+  }
+  const readbackDocument = layoutDocument(
+    readbackResponse.data,
+    prepared.pageLayout.versionField,
+    prepared.pageLayout.carrier
+  );
+  const readbackVersion = versionToken(readbackDocument, prepared.pageLayout.versionField);
+  let readbackNodeMap;
+  try {
+    readbackNodeMap = extractNodeMap(readbackDocument, prepared.pageLayout.carrier);
+  } catch {
+    readbackNodeMap = null;
+  }
+  const readbackLayoutSha256 = readbackNodeMap ? nodeMapSha256(readbackNodeMap) : '';
+  if (
+    readbackVersion !== savedVersion
+    || readbackLayoutSha256 !== savedLayoutSha256
+  ) {
+    return createResult({
+      ok: false,
+      stage: 'patch-save',
+      code: 'PATCH_SAVE_READBACK_MISMATCH',
+      artifacts: prepared.artifacts,
+      nextAction: 'Inspect and reconcile the canonical page before another patch.',
+      message: 'The patch readback does not match the saved representation and returned version.',
+      httpStatus: readbackResponse.status,
+      response: {
+        expectedVersionToken: savedVersion,
+        readbackVersionToken: readbackVersion,
+        expectedSavedLayoutSha256: savedLayoutSha256,
+        readbackLayoutSha256,
+      },
     });
   }
   return createResult({
@@ -2239,11 +2654,14 @@ async function runPatchSave(options, authHeader) {
       site: options.site,
       pageId: options.pageId,
       publicPageUrl: prepared.snapshot.publicPageUrl,
-      previousPostModifiedGmt: prepared.expectedModifiedGmt,
+      previousVersionToken: prepared.expectedVersionToken,
       snapshotSha256: prepared.snapshotSha256,
-      postModifiedGmt: data.postModifiedGmt,
+      versionToken: savedVersion,
       operationsSha256: prepared.operationsSha256,
       candidateLayoutSha256: data.candidateLayoutSha256,
+      savedLayoutSha256,
+      readbackLayoutSha256,
+      versionField: prepared.pageLayout.versionField,
     },
   });
 }
@@ -2280,7 +2698,17 @@ function previewSaveEvidence(saveReport, options, candidateSha256, artifacts) {
     && (
       saveReport.artifacts?.layoutSha256 === undefined
       || saveReport.artifacts.layoutSha256 === saveReport.layoutSha256
-    );
+    )
+    && isFieldName(saveReport.evidence?.versionField)
+    && typeof saveReport.evidence?.previousVersionToken === 'string'
+    && saveReport.evidence.previousVersionToken !== ''
+    && typeof saveReport.evidence?.versionToken === 'string'
+    && saveReport.evidence.versionToken !== ''
+    && saveReport.evidence.versionToken !== saveReport.evidence.previousVersionToken
+    && validSha(saveReport.evidence?.savedLayoutSha256)
+    && saveReport.evidence?.readbackLayoutSha256 === saveReport.evidence.savedLayoutSha256
+    && saveReport.evidence?.validation?.valid === true
+    && Array.isArray(saveReport.evidence?.validation?.lint);
   if (!valid) {
     return {
       failure: createResult({
@@ -2347,6 +2775,12 @@ function previewSaveEvidence(saveReport, options, candidateSha256, artifacts) {
       pageId: saveReport.scope.pageId,
       publicPageUrl,
       layoutSha256: candidateSha256,
+      savedLayoutSha256: saveReport.evidence.savedLayoutSha256,
+      readbackLayoutSha256: saveReport.evidence.readbackLayoutSha256,
+      versionField: saveReport.evidence.versionField,
+      previousVersionToken: saveReport.evidence.previousVersionToken,
+      versionToken: saveReport.evidence.versionToken,
+      validation: saveReport.evidence.validation,
       saveReport: options.saveReport,
     },
     scope: {
@@ -2375,10 +2809,26 @@ async function runPreview(options, authHeader) {
   );
   if (savedEvidence.failure) return savedEvidence.failure;
 
+  const discovered = await fetchLiveContract(options, authHeader, artifacts);
+  if (discovered.failure) return discovered.failure;
+  let capability;
+  try {
+    capability = previewCapability(
+      discovered.contract,
+      savedEvidence.scope.pageId,
+      'preview'
+    );
+  } catch (error) {
+    return resultFromError(error, 'preview');
+  }
+
   const previewResponse = await request(options, authHeader, {
-    method: 'POST',
-    endpoint: '/preview',
-    body: { nodeMap },
+    method: capability.method,
+    endpoint: capability.endpoint,
+    body: {
+      [capability.carrier]: nodeMap,
+      [capability.contextField]: savedEvidence.scope.pageId,
+    },
     expectJson: false,
   });
   if (!previewResponse.ok) {
