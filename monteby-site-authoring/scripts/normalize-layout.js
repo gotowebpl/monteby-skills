@@ -63,8 +63,8 @@ function readJson(path, label) {
  * Bring one value into the shape the control accepts.
  * Returns {value, note} — a null value means the prop must be dropped.
  */
-function normalizeValue(control, value, publishedReferences = new Set()) {
-  const result = normalizeControlValue(control, value, publishedReferences);
+function normalizeValue(control, value, publishedReferences = new Set(), componentProps = {}) {
+  const result = normalizeControlValue(control, value, publishedReferences, { componentProps });
   if (!result.accepted) return { value: null, note: result.reason };
   return {
     value: result.value,
@@ -226,9 +226,9 @@ function main() {
         continue;
       }
       const control = controls.get(`${name}.${prop}`);
-      const { value: normalized, note } = normalizeValue(
-        control || {}, value, publishedControlReferences(contract, name, prop, control),
-      );
+      const { value: normalized, note } = control
+        ? normalizeValue(control, value, publishedControlReferences(contract, name, prop, control), props)
+        : { value, note: undefined };
       if (note) {
         repairs.push({ node: nodeId, prop, message: note, dropped: normalized === null });
       }

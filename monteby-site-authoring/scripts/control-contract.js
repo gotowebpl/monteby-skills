@@ -4,6 +4,39 @@ function isRecord(value) {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
 }
 
+const CONTROL_CONTEXT = Symbol('montebyControlContext');
+const CONTROL_RULE_FIELDS = Object.freeze([
+  'type',
+  'pattern',
+  'min',
+  'max',
+  'step',
+  'minLength',
+  'maxLength',
+  'minItems',
+  'maxItems',
+  'allowEmpty',
+  'atomic',
+  'source',
+  'uniqueItems',
+  'columns',
+  'maxColumns',
+  'itemControls',
+  'itemFields',
+]);
+
+function hasOwn(value, key) {
+  return isRecord(value) && Object.prototype.hasOwnProperty.call(value, key);
+}
+
+function codePointLength(value) {
+  return Array.from(value).length;
+}
+
+function sameJsonValue(left, right) {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
 function optionValues(options) {
   const values = Array.isArray(options)
     ? options
@@ -21,11 +54,53 @@ function controlProps(control) {
   if (!isRecord(control)) return [];
   return [...new Set([
     ...(typeof control.prop === 'string' ? [control.prop] : []),
+    ...(typeof control.ofProp === 'string' ? [control.ofProp] : []),
     ...(Array.isArray(control.props) ? control.props.filter((prop) => typeof prop === 'string') : []),
     ...(isRecord(control.spacingProps)
       ? Object.values(control.spacingProps).filter((prop) => typeof prop === 'string')
       : []),
+    ...(isRecord(control.spacingPropsTablet)
+      ? Object.values(control.spacingPropsTablet).filter((prop) => typeof prop === 'string')
+      : []),
+    ...(isRecord(control.spacingPropsMobile)
+      ? Object.values(control.spacingPropsMobile).filter((prop) => typeof prop === 'string')
+      : []),
+    ...(typeof control.spacingFallbackProp === 'string' ? [control.spacingFallbackProp] : []),
+    ...(isRecord(control.borderColorProps)
+      ? Object.values(control.borderColorProps).filter((prop) => typeof prop === 'string')
+      : []),
+    ...(typeof control.borderColorModeProp === 'string' ? [control.borderColorModeProp] : []),
   ].map((prop) => prop.trim()).filter(Boolean))];
+}
+
+function controlRule(control) {
+  const rule = {};
+  for (const field of CONTROL_RULE_FIELDS) {
+    if (hasOwn(control, field)) rule[field] = control[field];
+  }
+  if (Array.isArray(control.options) || isRecord(control.options)) rule.options = control.options;
+  if (Array.isArray(control.units)) rule.units = control.units;
+  return rule;
+}
+
+function nestedControlEntries(control) {
+  const entries = [];
+  for (const field of ['itemControls', 'itemFields']) {
+    const children = control?.[field];
+    if (Array.isArray(children)) {
+      entries.push(...children.filter(isRecord));
+      continue;
+    }
+    if (!isRecord(children)) continue;
+    for (const [prop, descriptor] of Object.entries(children)) {
+      if (isRecord(descriptor)) {
+        entries.push(controlProps(descriptor).length > 0 ? descriptor : { ...descriptor, prop });
+      } else if (typeof descriptor === 'string' && prop.trim()) {
+        entries.push({ type: descriptor, prop });
+      }
+    }
+  }
+  return entries;
 }
 
 function visitControls(value, callback) {
@@ -34,14 +109,17 @@ function visitControls(value, callback) {
     return;
   }
   if (!isRecord(value)) return;
-  if (typeof value.type === 'string' && value.type.trim()) callback(value);
+  if (typeof value.type === 'string' && value.type.trim()) {
+    callback(value);
+    return;
+  }
   for (const child of Object.values(value)) visitControls(child, callback);
 }
 
 function repeaterItemPropNames(control) {
-  if (!isRecord(control) || control.type !== 'repeater') return null;
+  if (!isRecord(control) || !['object', 'repeater'].includes(control.type)) return null;
   const names = new Set();
-  visitControls([control.itemControls, control.itemFields], (itemControl) => {
+  visitControls(nestedControlEntries(control), (itemControl) => {
     for (const prop of controlProps(itemControl)) names.add(prop);
   });
   if (isRecord(control.itemFields)) {
@@ -61,19 +139,10 @@ function collectControlMetadata(value) {
   visitControls(value, (control) => {
     const propsForControl = controlProps(control);
     const values = optionValues(control.options);
-    const rule = {
-      type: String(control.type),
-      ...(typeof control.pattern === 'string' ? { pattern: control.pattern } : {}),
-      ...(typeof control.min === 'number' ? { min: control.min } : {}),
-      ...(typeof control.max === 'number' ? { max: control.max } : {}),
-      ...(typeof control.step === 'number' ? { step: control.step } : {}),
-      ...(Array.isArray(control.units)
-        ? { units: control.units.filter((unit) => typeof unit === 'string') }
-        : {}),
-    };
+    const rule = controlRule(control);
     const itemProps = repeaterItemPropNames(control);
-    const nestedMetadata = control.type === 'repeater'
-      ? collectControlMetadata([control.itemControls, control.itemFields])
+    const nestedMetadata = ['object', 'repeater'].includes(control.type)
+      ? collectControlMetadata(nestedControlEntries(control))
       : null;
     for (const prop of propsForControl) {
       props.push(prop);
@@ -106,20 +175,79 @@ function collectControlMetadata(value) {
   };
 }
 
+function hostScopedPath(component, path) {
+  return Array.isArray(component?.hostScopedProps)
+    && component.hostScopedProps.some((entry) => entry === path);
+}
+
+function controlContext(component, contract, prop, path, bindingOverride) {
+  const defaults = isRecord(component?.defaults) ? component.defaults : {};
+  const valueSchemas = isRecord(component?.valueSchemas) ? component.valueSchemas : null;
+  const hostBindings = isRecord(component?.hostBindings) ? component.hostBindings : {};
+  const topLevel = path === prop;
+  const malformedHostScopedProps = hasOwn(component, 'hostScopedProps')
+    && (!Array.isArray(component.hostScopedProps)
+      || component.hostScopedProps.some((entry) => typeof entry !== 'string' || !entry.trim()));
+  const malformedHostBindings = hasOwn(component, 'hostBindings') && !isRecord(component.hostBindings);
+  const malformedValueSchemas = hasOwn(component, 'valueSchemas') && !isRecord(component.valueSchemas);
+  const boundValue = bindingOverride ?? hostBindings[path];
+  return {
+    componentName: component.name,
+    prop,
+    path,
+    contract,
+    hasPublishedValueSchemas: topLevel && valueSchemas !== null,
+    valueSchema: topLevel ? valueSchemas?.[prop] : undefined,
+    hasDefault: topLevel && Object.prototype.hasOwnProperty.call(defaults, prop),
+    defaultValue: topLevel ? defaults[prop] : undefined,
+    hostScoped: hostScopedPath(component, path),
+    hostBinding: boundValue,
+    metadataError: malformedHostScopedProps
+      || malformedHostBindings
+      || malformedValueSchemas
+      || (Object.prototype.hasOwnProperty.call(hostBindings, path) && !isRecord(hostBindings[path]))
+      || (bindingOverride !== undefined && !isRecord(bindingOverride)),
+  };
+}
+
+function enrichControl(control, component, contract, prop, path = prop, bindingOverride) {
+  const enriched = { ...control };
+  const context = controlContext(component, contract, prop, path, bindingOverride);
+  for (const field of ['itemControls', 'itemFields']) {
+    if (!hasOwn(control, field)) continue;
+    const nested = nestedControlEntries({ [field]: control[field] });
+    enriched[field] = nested.map((itemControl) => {
+      const itemProps = controlProps(itemControl);
+      if (itemProps.length === 0) return { ...itemControl };
+      const itemProp = itemProps[0];
+      const itemPath = `${path}${control.type === 'repeater' ? '[]' : ''}.${itemProp}`;
+      const itemBinding = isRecord(context.hostBinding?.itemFields)
+        ? context.hostBinding.itemFields[itemProp]
+        : undefined;
+      return enrichControl(itemControl, component, contract, itemProp, itemPath, itemBinding);
+    });
+  }
+  Object.defineProperty(enriched, CONTROL_CONTEXT, {
+    value: context,
+    enumerable: false,
+  });
+  return enriched;
+}
+
 function buildControlIndex(contract) {
   const index = new Map();
   for (const component of Array.isArray(contract?.components) ? contract.components : []) {
     if (!isRecord(component) || typeof component.name !== 'string') continue;
     const metadata = collectControlMetadata([component.controls, component.schema]);
     for (const [prop, control] of metadata.controls) {
-      index.set(`${component.name}.${prop}`, control);
+      index.set(`${component.name}.${prop}`, enrichControl(control, component, contract, prop));
     }
   }
   return index;
 }
 
-function snap(value, step) {
-  return Number((Math.round(value / step) * step).toFixed(6));
+function snap(value, step, base = 0) {
+  return Number((base + Math.round((value - base) / step) * step).toFixed(6));
 }
 
 function publishedControlReferences(contract, component, prop, control = {}) {
@@ -166,11 +294,534 @@ function publishedControlReferences(contract, component, prop, control = {}) {
   return references;
 }
 
-function normalizeControlValue(control, value, publishedReferences = new Set()) {
+function schemaValidation(value, schema, path = 'value') {
+  if (!isRecord(schema)) {
+    return { valid: false, contractError: true, reason: `${path}: schema must be an object` };
+  }
+  const supported = new Set([
+    'type', 'const', 'oneOf', 'minimum', 'maximum', 'minLength', 'maxLength',
+    'minItems', 'maxItems', 'items', 'enum', 'additionalProperties', 'required', 'properties',
+  ]);
+  const unsupported = Object.keys(schema).filter((key) => !supported.has(key));
+  if (unsupported.length > 0) {
+    return { valid: false, contractError: true, reason: `${path}: unsupported schema fields ${unsupported.join(', ')}` };
+  }
+  if (hasOwn(schema, 'oneOf')) {
+    if (!Array.isArray(schema.oneOf) || schema.oneOf.length === 0) {
+      return { valid: false, contractError: true, reason: `${path}.oneOf must be a non-empty array` };
+    }
+    const results = schema.oneOf.map((candidate, index) => schemaValidation(value, candidate, `${path}.oneOf[${index}]`));
+    const contractFailure = results.find((result) => result.contractError);
+    if (contractFailure) return contractFailure;
+    return results.some((result) => result.valid)
+      ? { valid: true }
+      : { valid: false, reason: `${path} does not match any published schema` };
+  }
+  if (hasOwn(schema, 'const') && !sameJsonValue(value, schema.const)) {
+    return { valid: false, reason: `${path} does not match the published constant` };
+  }
+  if (hasOwn(schema, 'enum')) {
+    if (!Array.isArray(schema.enum)) {
+      return { valid: false, contractError: true, reason: `${path}.enum must be an array` };
+    }
+    if (!schema.enum.some((candidate) => sameJsonValue(candidate, value))) {
+      return { valid: false, reason: `${path} is outside the published enum` };
+    }
+  }
+  if (hasOwn(schema, 'type')) {
+    const validTypes = new Set(['string', 'boolean', 'integer', 'number', 'array', 'object', 'null']);
+    if (typeof schema.type !== 'string' || !validTypes.has(schema.type)) {
+      return { valid: false, contractError: true, reason: `${path}.type is unsupported` };
+    }
+    const matchesType = {
+      string: typeof value === 'string',
+      boolean: typeof value === 'boolean',
+      integer: Number.isInteger(value),
+      number: typeof value === 'number' && Number.isFinite(value),
+      array: Array.isArray(value),
+      object: isRecord(value),
+      null: value === null,
+    }[schema.type];
+    if (!matchesType) return { valid: false, reason: `${path} is not ${schema.type}` };
+  }
+  for (const key of ['minimum', 'maximum']) {
+    if (!hasOwn(schema, key)) continue;
+    if (typeof schema[key] !== 'number' || !Number.isFinite(schema[key])) {
+      return { valid: false, contractError: true, reason: `${path}.${key} must be finite` };
+    }
+    if (typeof value === 'number' && (key === 'minimum' ? value < schema[key] : value > schema[key])) {
+      return { valid: false, reason: `${path} violates ${key}` };
+    }
+  }
+  for (const key of ['minLength', 'maxLength']) {
+    if (!hasOwn(schema, key)) continue;
+    if (!Number.isInteger(schema[key]) || schema[key] < 0) {
+      return { valid: false, contractError: true, reason: `${path}.${key} must be a non-negative integer` };
+    }
+    if (typeof value === 'string') {
+      const length = codePointLength(value);
+      if (key === 'minLength' ? length < schema[key] : length > schema[key]) {
+        return { valid: false, reason: `${path} violates ${key}` };
+      }
+    }
+  }
+  for (const key of ['minItems', 'maxItems']) {
+    if (!hasOwn(schema, key)) continue;
+    if (!Number.isInteger(schema[key]) || schema[key] < 0) {
+      return { valid: false, contractError: true, reason: `${path}.${key} must be a non-negative integer` };
+    }
+    if (Array.isArray(value) && (key === 'minItems' ? value.length < schema[key] : value.length > schema[key])) {
+      return { valid: false, reason: `${path} violates ${key}` };
+    }
+  }
+  if (hasOwn(schema, 'items')) {
+    if (!Array.isArray(value)) return { valid: false, reason: `${path} is not an array` };
+    for (let index = 0; index < value.length; index += 1) {
+      const result = schemaValidation(value[index], schema.items, `${path}[${index}]`);
+      if (!result.valid) return result;
+    }
+  }
+  if (hasOwn(schema, 'properties') || hasOwn(schema, 'required') || schema.additionalProperties === false) {
+    if (!isRecord(value)) return { valid: false, reason: `${path} is not an object` };
+    if (hasOwn(schema, 'properties') && !isRecord(schema.properties)) {
+      return { valid: false, contractError: true, reason: `${path}.properties must be an object` };
+    }
+    if (hasOwn(schema, 'required') && (!Array.isArray(schema.required) || schema.required.some((item) => typeof item !== 'string'))) {
+      return { valid: false, contractError: true, reason: `${path}.required must be a string array` };
+    }
+    for (const required of schema.required || []) {
+      if (!Object.prototype.hasOwnProperty.call(value, required)) {
+        return { valid: false, reason: `${path}.${required} is required` };
+      }
+    }
+    if (schema.additionalProperties === false) {
+      const allowed = new Set(Object.keys(schema.properties || {}));
+      const unknown = Object.keys(value).find((key) => !allowed.has(key));
+      if (unknown) return { valid: false, reason: `${path}.${unknown} is not published` };
+    } else if (hasOwn(schema, 'additionalProperties') && schema.additionalProperties !== true) {
+      return { valid: false, contractError: true, reason: `${path}.additionalProperties must be boolean` };
+    }
+    for (const [key, childSchema] of Object.entries(schema.properties || {})) {
+      if (!Object.prototype.hasOwnProperty.call(value, key)) continue;
+      const result = schemaValidation(value[key], childSchema, `${path}.${key}`);
+      if (!result.valid) return result;
+    }
+  }
+  return { valid: true };
+}
+
+function sourceValue(contract, source, componentProps) {
+  if (typeof source !== 'string' || !source.trim()) {
+    return { found: false, contractError: true, reason: 'host source must be a non-empty string' };
+  }
+  let resolved = source;
+  for (const match of source.matchAll(/\{([A-Za-z][A-Za-z0-9_]*)\}/gu)) {
+    const replacement = componentProps?.[match[1]];
+    if (!['string', 'number'].includes(typeof replacement) || String(replacement) === '') {
+      return { found: false, reason: `host source dependency ${match[1]} is unresolved` };
+    }
+    resolved = resolved.replace(match[0], String(replacement));
+  }
+  let current = contract;
+  for (const segment of resolved.split('.')) {
+    if (!segment || ['__proto__', 'prototype', 'constructor'].includes(segment) || !isRecord(current) || !Object.prototype.hasOwnProperty.call(current, segment)) {
+      return { found: false, reason: `host source ${resolved} is not published` };
+    }
+    current = current[segment];
+  }
+  return { found: true, value: current, source: resolved };
+}
+
+function sourceChoices(value) {
+  if (Array.isArray(value)) return value;
+  if (!isRecord(value)) return null;
+  return Object.entries(value).map(([key, entry]) => (
+    isRecord(entry) ? { key, ...entry } : { key, value: entry }
+  ));
+}
+
+function choiceField(binding) {
+  if (typeof binding?.valueField === 'string' && binding.valueField) return binding.valueField;
+  if (binding?.kind === 'dynamic-field') return 'key';
+  if (['form-destination-list', 'retention-policy'].includes(binding?.kind)) return 'id';
+  if (binding?.kind === 'exact-term-set-allowlist') return 'slug';
+  return '';
+}
+
+function publishedChoiceValues(choices, binding) {
+  const field = choiceField(binding);
+  if (!field) {
+    return choices.every((choice) => ['string', 'number', 'boolean'].includes(typeof choice))
+      ? choices
+      : null;
+  }
+  return choices.flatMap((choice) => isRecord(choice) && Object.prototype.hasOwnProperty.call(choice, field)
+    ? [choice[field]]
+    : []);
+}
+
+function validateExactTermSets(value, choices, componentProps) {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string')) return false;
+  const allowed = new Set(publishedChoiceValues(choices, { kind: 'exact-term-set-allowlist' }) || []);
+  const offered = Array.isArray(componentProps?.terms) ? new Set(componentProps.terms) : null;
+  const seen = new Set();
+  for (const item of value) {
+    const terms = item.split(',').filter(Boolean);
+    const canonical = [...new Set(terms)].sort().join(',');
+    if (!canonical || canonical !== item || seen.has(item)) return false;
+    if (componentProps?.selectionMode !== 'multiple' && terms.length > 1) return false;
+    if (terms.some((term) => !allowed.has(term) || (offered && offered.size > 0 && !offered.has(term)))) return false;
+    seen.add(item);
+  }
+  return componentProps?.indexPolicy === 'allowlist' || value.length === 0;
+}
+
+function validateTaxonomyBinding(value, binding, context) {
+  if (!Array.isArray(value)) return false;
+  for (const filter of value) {
+    if (!isRecord(filter)) return false;
+    const taxonomySource = sourceValue(context.contract, binding.taxonomySource, context.componentProps);
+    if (!taxonomySource.found) return false;
+    const taxonomyChoices = sourceChoices(taxonomySource.value);
+    const taxonomyValues = taxonomyChoices && publishedChoiceValues(taxonomyChoices, { valueField: 'name' });
+    if (!taxonomyValues?.includes(filter.taxonomy)) return false;
+    const termSource = sourceValue(context.contract, binding.termSource, { ...context.componentProps, taxonomy: filter.taxonomy });
+    if (!termSource.found) return false;
+    const termChoices = sourceChoices(termSource.value);
+    const termValues = termChoices && publishedChoiceValues(termChoices, { valueField: 'id' });
+    if (!Array.isArray(filter.terms) || filter.terms.some((term) => !termValues?.includes(term))) return false;
+  }
+  return true;
+}
+
+function validateHostBinding(control, value, options) {
+  const metadata = control?.[CONTROL_CONTEXT];
+  if (metadata?.metadataError) {
+    return { valid: false, contractError: true, reason: 'component host/value metadata is malformed' };
+  }
+  const binding = metadata?.hostBinding;
+  const controlSource = typeof control?.source === 'string' ? control.source : '';
+  if (!isRecord(binding) && !controlSource) {
+    if (!metadata?.hostScoped) return { valid: true };
+    const boundedHostNumber = control.type === 'number'
+      && Number.isInteger(control.min)
+      && control.min >= 0
+      && Number.isInteger(control.max)
+      && control.max >= control.min
+      && control.step === 1;
+    return boundedHostNumber
+      ? { valid: true }
+      : { valid: false, contractError: true, reason: 'host-scoped prop has no published binding or bounded numeric reference rule' };
+  }
+  const effective = isRecord(binding) ? binding : { source: controlSource };
+  const supportedBindingFields = new Set([
+    'source', 'valueField', 'dependsOn', 'emptyValue', 'prefix', 'kind', 'target',
+    'itemFields', 'schema', 'taxonomySource', 'termSource', 'assignedWhen',
+  ]);
+  const unsupportedBindingFields = Object.keys(effective).filter((key) => !supportedBindingFields.has(key));
+  if (unsupportedBindingFields.length > 0) {
+    return { valid: false, contractError: true, reason: `host binding contains unsupported fields ${unsupportedBindingFields.join(', ')}` };
+  }
+  for (const key of ['source', 'valueField', 'dependsOn', 'prefix', 'kind', 'target', 'taxonomySource', 'termSource']) {
+    if (hasOwn(effective, key) && (typeof effective[key] !== 'string' || !effective[key].trim())) {
+      return { valid: false, contractError: true, reason: `host binding ${key} must be a non-empty string` };
+    }
+  }
+  if (typeof effective.dependsOn === 'string'
+      && typeof effective.source === 'string'
+      && !effective.source.includes(`{${effective.dependsOn}}`)) {
+    return { valid: false, contractError: true, reason: 'host binding dependsOn does not match its source placeholder' };
+  }
+  if (hasOwn(effective, 'itemFields') && !isRecord(effective.itemFields)) {
+    return { valid: false, contractError: true, reason: 'host binding itemFields must be an object' };
+  }
+  if (isRecord(effective.itemFields)
+      && Object.values(effective.itemFields).some((itemBinding) => !isRecord(itemBinding))) {
+    return { valid: false, contractError: true, reason: 'host binding itemFields entries must be objects' };
+  }
+  if (hasOwn(effective, 'assignedWhen')) {
+    const assigned = effective.assignedWhen;
+    if (!isRecord(assigned)
+        || Object.keys(assigned).some((key) => !['field', 'minimum'].includes(key))
+        || typeof assigned.field !== 'string'
+        || !assigned.field
+        || typeof assigned.minimum !== 'number'
+        || !Number.isFinite(assigned.minimum)) {
+      return { valid: false, contractError: true, reason: 'host binding assignedWhen is malformed' };
+    }
+  }
+  if (hasOwn(effective, 'kind')
+      && !['dynamic-field', 'form-destination-list', 'retention-policy', 'exact-term-set-allowlist'].includes(effective.kind)) {
+    return { valid: false, contractError: true, reason: 'host binding kind is unsupported' };
+  }
+  if (controlSource && isRecord(binding) && typeof binding.source === 'string' && controlSource !== binding.source) {
+    return { valid: false, contractError: true, reason: 'control source and host binding source differ' };
+  }
+  if (hasOwn(effective, 'schema')) {
+    const schema = schemaValidation(value, effective.schema, metadata?.path || 'value');
+    if (!schema.valid && (schema.contractError || options?.metadataOnly !== true)) return schema;
+  }
+  if (options?.metadataOnly === true) return { valid: true };
+  if (hasOwn(effective, 'emptyValue') && sameJsonValue(value, effective.emptyValue)) return { valid: true };
+  if (isRecord(effective.itemFields)) return { valid: true };
+  const context = {
+    contract: metadata?.contract,
+    componentProps: options?.componentProps || {},
+  };
+  if (typeof effective.taxonomySource === 'string' || typeof effective.termSource === 'string') {
+    return validateTaxonomyBinding(value, effective, context)
+      ? { valid: true }
+      : { valid: false, reason: 'value does not match the published taxonomy and term sources' };
+  }
+  const resolved = sourceValue(context.contract, effective.source || controlSource, context.componentProps);
+  if (!resolved.found) return { valid: false, contractError: resolved.contractError, reason: resolved.reason };
+  const choices = sourceChoices(resolved.value);
+  if (!choices) return { valid: false, contractError: true, reason: `host source ${resolved.source} is not a collection` };
+  if (effective.kind === 'exact-term-set-allowlist') {
+    return validateExactTermSets(value, choices, context.componentProps)
+      ? { valid: true }
+      : { valid: false, reason: 'value is not a canonical published exact term set' };
+  }
+  const values = publishedChoiceValues(choices, effective);
+  if (!values) return { valid: false, contractError: true, reason: 'host binding does not publish a valueField' };
+  if (effective.kind === 'form-destination-list' || Array.isArray(value)) {
+    if (!Array.isArray(value) || value.some((item) => !values.some((choice) => sameJsonValue(choice, item)))) {
+      return { valid: false, reason: 'list contains a value outside the published host choices' };
+    }
+    return { valid: true };
+  }
+  let matchingChoices = choices;
+  if (isRecord(effective.assignedWhen)) {
+    const field = effective.assignedWhen.field;
+    const minimum = effective.assignedWhen.minimum;
+    if (typeof field !== 'string' || typeof minimum !== 'number') {
+      return { valid: false, contractError: true, reason: 'assignedWhen is malformed' };
+    }
+    matchingChoices = choices.filter((choice) => isRecord(choice) && typeof choice[field] === 'number' && choice[field] >= minimum);
+  }
+  if (typeof effective.prefix === 'string') {
+    const field = choiceField(effective);
+    matchingChoices = matchingChoices.filter((choice) => (
+      isRecord(choice)
+      && typeof choice[field] === 'string'
+      && choice[field].startsWith(effective.prefix)
+    ));
+  }
+  if (typeof effective.target === 'string') {
+    matchingChoices = matchingChoices.filter((choice) => (
+      isRecord(choice) && choice.target === effective.target
+    ));
+  }
+  const matchingValues = publishedChoiceValues(matchingChoices, effective);
+  return matchingValues?.some((choice) => sameJsonValue(choice, value))
+    ? { valid: true }
+    : { valid: false, reason: 'value is outside the exact published host choices' };
+}
+
+function validatePublishedValueSchema(control, value) {
+  const context = control?.[CONTROL_CONTEXT];
+  if (!context?.hasPublishedValueSchemas) {
+    return {
+      valid: true,
+      defaultMatch: context?.hasDefault === true && sameJsonValue(value, context.defaultValue),
+    };
+  }
+  if (!isRecord(context.valueSchema) || !context.hasDefault) {
+    return { valid: false, contractError: true, reason: 'component valueSchemas do not cover the published default' };
+  }
+  const defaultSchema = schemaValidation(context.defaultValue, context.valueSchema, `${context.componentName}.${context.prop}.default`);
+  if (!defaultSchema.valid) {
+    return { ...defaultSchema, contractError: true, reason: `published default violates valueSchemas: ${defaultSchema.reason}` };
+  }
+  return { valid: true, defaultMatch: sameJsonValue(value, context.defaultValue) };
+}
+
+function controlContractValidation(control) {
+  if (!isRecord(control) || typeof control.type !== 'string' || !control.type.trim()) {
+    return { valid: false, reason: 'kontrolka nie publikuje typu' };
+  }
+  for (const key of ['min', 'max', 'step']) {
+    if (hasOwn(control, key) && (typeof control[key] !== 'number' || !Number.isFinite(control[key]))) {
+      return { valid: false, reason: `${key} kontrolki musi być skończoną liczbą` };
+    }
+  }
+  for (const key of ['minLength', 'maxLength', 'minItems', 'maxItems', 'columns', 'maxColumns']) {
+    if (hasOwn(control, key) && (!Number.isInteger(control[key]) || control[key] < 0)) {
+      return { valid: false, reason: `${key} kontrolki musi być nieujemną liczbą całkowitą` };
+    }
+  }
+  for (const [minimum, maximum] of [['min', 'max'], ['minLength', 'maxLength'], ['minItems', 'maxItems']]) {
+    if (hasOwn(control, minimum) && hasOwn(control, maximum) && control[minimum] > control[maximum]) {
+      return { valid: false, reason: `${minimum} kontrolki przekracza ${maximum}` };
+    }
+  }
+  for (const key of ['allowEmpty', 'atomic', 'uniqueItems']) {
+    if (hasOwn(control, key) && typeof control[key] !== 'boolean') {
+      return { valid: false, reason: `${key} kontrolki musi być wartością logiczną` };
+    }
+  }
+  if (hasOwn(control, 'source') && (typeof control.source !== 'string' || !control.source.trim())) {
+    return { valid: false, reason: 'source kontrolki musi być niepustym tekstem' };
+  }
+  if (hasOwn(control, 'units') && (!Array.isArray(control.units) || control.units.some((unit) => typeof unit !== 'string'))) {
+    return { valid: false, reason: 'units kontrolki musi być listą tekstów' };
+  }
+  if (hasOwn(control, 'pattern')) {
+    if (typeof control.pattern !== 'string' || control.pattern.length > 512) {
+      return { valid: false, reason: 'pattern kontrolki jest nieprawidłowy' };
+    }
+    try {
+      new RegExp(control.pattern, 'u');
+    } catch {
+      return { valid: false, reason: 'pattern kontrolki nie jest prawidłowym wyrażeniem regularnym' };
+    }
+  }
+  if (['object', 'repeater'].includes(control.type) && nestedControlEntries(control).length === 0) {
+    return { valid: false, reason: `${control.type} nie publikuje zagnieżdżonych kontrolek` };
+  }
+  return { valid: true };
+}
+
+function normalizeTextValue(control, value) {
+  if (!['string', 'number', 'boolean'].includes(typeof value)) {
+    return { accepted: false, reason: `${JSON.stringify(value)} nie jest tekstową wartością skalarną` };
+  }
+  const normalized = String(value);
+  const length = codePointLength(normalized);
+  if (typeof control.minLength === 'number' && length < control.minLength) {
+    return { accepted: false, reason: `tekst jest krótszy niż minLength ${control.minLength}` };
+  }
+  if (typeof control.maxLength === 'number' && length > control.maxLength) {
+    return { accepted: false, reason: `tekst jest dłuższy niż maxLength ${control.maxLength}` };
+  }
+  if (typeof control.pattern === 'string' && !new RegExp(control.pattern, 'u').test(normalized)) {
+    return { accepted: false, reason: `${JSON.stringify(normalized)} nie spełnia wzorca kontrolki` };
+  }
+  return {
+    accepted: true,
+    value: normalized,
+    ...(normalized !== value ? { changed: true, changeReason: `${JSON.stringify(value)} → ${JSON.stringify(normalized)}` } : {}),
+  };
+}
+
+function nestedControlMap(control) {
+  const controls = new Map();
+  for (const nested of nestedControlEntries(control)) {
+    for (const prop of controlProps(nested)) {
+      if (!controls.has(prop)) controls.set(prop, nested);
+    }
+  }
+  return controls;
+}
+
+function normalizeNestedObject(control, value, publishedReferences, options, label) {
+  if (!isRecord(value) || Object.keys(value).length === 0) {
+    return { accepted: false, reason: `${label} musi być niepustym obiektem` };
+  }
+  const controls = nestedControlMap(control);
+  const unknown = Object.keys(value).find((key) => !controls.has(key));
+  if (unknown) return { accepted: false, reason: `${label}.${unknown} nie jest opublikowanym polem` };
+  const normalized = {};
+  let changed = false;
+  for (const [key, item] of Object.entries(value)) {
+    const result = normalizeControlValue(controls.get(key), item, publishedReferences, options);
+    if (!result.accepted) return result;
+    normalized[key] = result.value;
+    changed ||= result.changed === true;
+  }
+  if (control.atomic === true && changed) {
+    return { accepted: false, reason: `${label} jest atomowy i wymagałby normalizacji` };
+  }
+  return {
+    accepted: true,
+    value: normalized,
+    ...(changed ? { changed: true, changeReason: `${label}: znormalizowano zagnieżdżone wartości` } : {}),
+  };
+}
+
+function normalizeCollection(control, value, publishedReferences, options) {
+  if (!Array.isArray(value)) return { accepted: false, reason: `${JSON.stringify(value)} nie jest listą` };
+  if (typeof control.minItems === 'number' && value.length < control.minItems) {
+    return { accepted: false, reason: `lista ma mniej niż minItems ${control.minItems}` };
+  }
+  if (typeof control.maxItems === 'number' && value.length > control.maxItems) {
+    return { accepted: false, reason: `lista ma więcej niż maxItems ${control.maxItems}` };
+  }
+  if (control.type === 'tag-list') {
+    if (value.some((item) => typeof item !== 'string' || !item.trim())) {
+      return { accepted: false, reason: 'tag-list przyjmuje wyłącznie niepuste teksty' };
+    }
+    const normalized = value.map((item) => item.trim());
+    if (control.uniqueItems !== false && new Set(normalized).size !== normalized.length) {
+      return { accepted: false, reason: 'tag-list nie dopuszcza duplikatów' };
+    }
+    if (typeof control.pattern === 'string' && normalized.some((item) => !new RegExp(control.pattern, 'u').test(item))) {
+      return { accepted: false, reason: 'element tag-list nie spełnia wzorca kontrolki' };
+    }
+    const changed = normalized.some((item, index) => item !== value[index]);
+    return {
+      accepted: true,
+      value: normalized,
+      ...(changed ? { changed: true, changeReason: 'przycięto białe znaki tag-list' } : {}),
+    };
+  }
+  if (control.type === 'string-matrix') {
+    for (const row of value) {
+      if (!Array.isArray(row) || row.some((cell) => typeof cell !== 'string')) {
+        return { accepted: false, reason: 'string-matrix wymaga list wierszy tekstowych' };
+      }
+      if (typeof control.columns === 'number' && row.length !== control.columns) {
+        return { accepted: false, reason: `wiersz string-matrix musi mieć ${control.columns} pól` };
+      }
+      if (typeof control.maxColumns === 'number' && row.length > control.maxColumns) {
+        return { accepted: false, reason: `wiersz string-matrix przekracza maxColumns ${control.maxColumns}` };
+      }
+    }
+    return { accepted: true, value };
+  }
+  if (control.type !== 'repeater') return { accepted: true, value };
+  const normalized = [];
+  let changed = false;
+  for (let index = 0; index < value.length; index += 1) {
+    const item = normalizeNestedObject(control, value[index], publishedReferences, options, `repeater[${index}]`);
+    if (!item.accepted) return item;
+    normalized.push(item.value);
+    changed ||= item.changed === true;
+  }
+  if (control.atomic === true && changed) {
+    return { accepted: false, reason: 'repeater jest atomowy i wymagałby normalizacji' };
+  }
+  return {
+    accepted: true,
+    value: normalized,
+    ...(changed ? { changed: true, changeReason: 'znormalizowano zagnieżdżone wartości repeatera' } : {}),
+  };
+}
+
+function normalizeControlValue(control, value, publishedReferences = new Set(), options = {}) {
   if (!isRecord(control)) return { accepted: true, value };
   const label = JSON.stringify(value);
   const type = String(control.type || '');
   const values = optionValues(control.options);
+
+  const validContract = controlContractValidation(control);
+  if (!validContract.valid) {
+    return { accepted: false, contractError: true, reason: `kontrakt kontrolki jest nieprawidłowy: ${validContract.reason}` };
+  }
+  const hostContract = validateHostBinding(control, value, { ...options, metadataOnly: true });
+  if (!hostContract.valid) {
+    return { accepted: false, contractError: true, reason: hostContract.reason };
+  }
+  const publishedSchema = validatePublishedValueSchema(control, value);
+  if (!publishedSchema.valid) {
+    return { accepted: false, contractError: true, reason: publishedSchema.reason };
+  }
+  if (publishedSchema.defaultMatch) return { accepted: true, value };
+
+  const host = validateHostBinding(control, value, options);
+  if (!host.valid) {
+    return { accepted: false, contractError: host.contractError === true, reason: host.reason };
+  }
 
   if (typeof value === 'string' && /^var\s*\(/iu.test(value.trim())) {
     const reference = value.trim();
@@ -178,25 +829,25 @@ function normalizeControlValue(control, value, publishedReferences = new Set()) 
       ? { accepted: true, value: reference }
       : { accepted: false, reason: `nieopublikowana referencja CSS ${label}` };
   }
-  if (values.length > 0 && ['custom', 'select', 'segment'].includes(type) && !values.includes(value)) {
+  if (value === '' && control.allowEmpty === true) return { accepted: true, value: '' };
+  if (values.length > 0 && ['custom', 'select', 'segment'].includes(type)
+      && !values.some((option) => String(option) === String(value))) {
     return { accepted: false, reason: `${label} spoza ${JSON.stringify(values)}` };
   }
-  if (typeof control.pattern === 'string' && typeof value === 'string') {
-    let pattern;
-    try {
-      pattern = new RegExp(control.pattern, 'u');
-    } catch {
-      return { accepted: false, contractError: true, reason: 'kontrakt publikuje nieprawidłowy wzorzec kontrolki' };
-    }
-    if (!pattern.test(value)) return { accepted: false, reason: `${label} nie spełnia wzorca kontrolki` };
+  if (['text', 'textarea'].includes(type)) {
+    return normalizeTextValue(control, value);
   }
   if (type === 'toggle' && typeof value !== 'boolean') {
     return { accepted: false, reason: `${label} nie jest wartością logiczną` };
   }
   if (type === 'number') {
+    if (value === '') return { accepted: false, reason: 'pusta liczba wymaga allowEmpty lub opublikowanej wartości domyślnej' };
     const numeric = Number(value);
     if (!Number.isFinite(numeric)) return { accepted: false, reason: `${label} nie jest liczbą` };
-    let normalized = typeof control.step === 'number' && control.step > 0 ? snap(numeric, control.step) : numeric;
+    const stepBase = typeof control.min === 'number' ? control.min : 0;
+    let normalized = typeof control.step === 'number' && control.step > 0
+      ? snap(numeric, control.step, stepBase)
+      : numeric;
     if (typeof control.min === 'number') normalized = Math.max(control.min, normalized);
     if (typeof control.max === 'number') normalized = Math.min(control.max, normalized);
     return {
@@ -208,7 +859,29 @@ function normalizeControlValue(control, value, publishedReferences = new Set()) 
         : {}),
     };
   }
+  if (type === 'spacing' && isRecord(value)) {
+    const allowedEdges = new Set(['top', 'right', 'bottom', 'left']);
+    if (Object.keys(value).length === 0 || Object.keys(value).some((edge) => !allowedEdges.has(edge))) {
+      return { accepted: false, reason: 'mapa spacing przyjmuje tylko top, right, bottom i left' };
+    }
+    const normalized = {};
+    let changed = false;
+    for (const [edge, edgeValue] of Object.entries(value)) {
+      const result = normalizeControlValue({ ...control, type: 'css-value' }, edgeValue, publishedReferences, options);
+      if (!result.accepted) return result;
+      normalized[edge] = result.value;
+      changed ||= result.changed === true;
+    }
+    return {
+      accepted: true,
+      value: normalized,
+      ...(changed ? { changed: true, changeReason: 'znormalizowano krawędzie spacing' } : {}),
+    };
+  }
   if (['css-value', 'spacing'].includes(type) && typeof value === 'string') {
+    if (value.trim() === '') {
+      return { accepted: false, reason: 'pusta wartość CSS wymaga allowEmpty lub opublikowanej wartości domyślnej' };
+    }
     if (/\S\s+\S/u.test(value.trim())) {
       return { accepted: false, reason: `kontrolka przyjmuje jedną wartość, podano ${label}` };
     }
@@ -219,7 +892,9 @@ function normalizeControlValue(control, value, publishedReferences = new Set()) 
       return { accepted: false, reason: `jednostka ${JSON.stringify(unit)} spoza ${JSON.stringify(control.units)}` };
     }
     let numeric = Number(match[1]);
-    if (typeof control.step === 'number' && control.step > 0) numeric = snap(numeric, control.step);
+    if (typeof control.step === 'number' && control.step > 0) {
+      numeric = snap(numeric, control.step, typeof control.min === 'number' ? control.min : 0);
+    }
     if (typeof control.min === 'number') numeric = Math.max(control.min, numeric);
     if (typeof control.max === 'number') numeric = Math.min(control.max, numeric);
     const normalized = `${numeric}${unit}`;
@@ -232,6 +907,15 @@ function normalizeControlValue(control, value, publishedReferences = new Set()) 
         : {}),
     };
   }
+  if (type === 'object') {
+    return normalizeNestedObject(control, value, publishedReferences, options, 'object');
+  }
+  if (['repeater', 'tag-list', 'string-matrix'].includes(type)) {
+    return normalizeCollection(control, value, publishedReferences, options);
+  }
+  if (hasOwn(control, 'pattern') || hasOwn(control, 'minLength') || hasOwn(control, 'maxLength')) {
+    return normalizeTextValue(control, value);
+  }
   return { accepted: true, value };
 }
 
@@ -239,6 +923,7 @@ module.exports = {
   buildControlIndex,
   collectControlMetadata,
   controlProps,
+  nestedControlMap,
   normalizeControlValue,
   publishedControlReferences,
   optionValues,

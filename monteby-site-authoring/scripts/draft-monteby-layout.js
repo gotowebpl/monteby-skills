@@ -6041,11 +6041,11 @@ function addGenericMeasuredGroups(context, parentId, desktopParent, tabletParent
       if (!formComponent) {
         throw new Error('Generic measured reference contract gaps:\n- [generic_semantic_form_widget_missing] FormBlock is required to reproduce a measured multi-field form without raw HTML.');
       }
-      const supportedFieldTypes = formComponent.propOptions?.get('type');
       const capturedFields = Array.isArray(desktop.props?.fields) ? desktop.props.fields : [];
       const formAuthoringProps = new Set(formComponent.authoringProps || []);
       const fieldAuthoringProps = formComponent.repeaterItemProps?.get('fields');
       const fieldAuthoringRules = formComponent.repeaterItemRules?.get('fields');
+      const supportedFieldTypes = fieldAuthoringRules?.get('type')?.options;
       if (!(supportedFieldTypes instanceof Set) || supportedFieldTypes.size === 0) {
         throw new Error('Generic measured reference contract gaps:\n- [generic_semantic_form_field_contract_missing] FormBlock must expose live repeater item type options before a measured form can be authored.');
       }
@@ -6224,6 +6224,7 @@ function addGenericMeasuredGroups(context, parentId, desktopParent, tabletParent
           .filter(([, value]) => typeof value !== 'undefined' && value !== null && value !== '')
           .map(([prop]) => prop)));
       const authoringProps = new Set(tabsComponent.authoringProps || []);
+      const tabItemProps = tabsComponent.repeaterItemProps?.get('tabs') || new Set();
       const missingProps = requiredProps.filter((prop) => !authoringProps.has(prop));
       if (missingProps.length > 0) {
         throw new Error(`Generic measured reference contract gaps:\n- [generic_semantic_tabs_control_missing] TabsBlock is missing measured authoring controls: ${missingProps.join(', ')}.`);
@@ -6286,23 +6287,23 @@ function addGenericMeasuredGroups(context, parentId, desktopParent, tabletParent
         const sourceCtaLabel = String(tab?.ctaLabel || '').trim();
         const sourceCtaUrl = String(tab?.ctaUrl || '').trim();
         return {
-          ...(authoringProps.has('labelPrefix') && sourceLabelPrefix ? {
+          ...(tabItemProps.has('labelPrefix') && sourceLabelPrefix ? {
             labelPrefix: plan.preserveSourceText ? sourceLabelPrefix : String(tabIndex + 1).padStart(2, '0'),
           } : {}),
           label: plan.preserveSourceText
             ? sourceLabel
             : genericMeasuredReplacementCopy(sourceLabel, 'button', contentIndex + tabIndex),
-          ...(authoringProps.has('labelSuffix') && sourceLabelSuffix ? {
+          ...(tabItemProps.has('labelSuffix') && sourceLabelSuffix ? {
             labelSuffix: plan.preserveSourceText
               ? sourceLabelSuffix
               : `${String(18 + tabIndex).padStart(2, '0')}:00`,
           } : {}),
-          ...(authoringProps.has('eyebrow') && sourceEyebrow ? {
+          ...(tabItemProps.has('eyebrow') && sourceEyebrow ? {
             eyebrow: plan.preserveSourceText
               ? sourceEyebrow
               : genericMeasuredReplacementCopy(sourceEyebrow, 'p', contentIndex + tabIndex),
           } : {}),
-          ...(authoringProps.has('title') && sourceTitle ? {
+          ...(tabItemProps.has('title') && sourceTitle ? {
             title: plan.preserveSourceText
               ? sourceTitle
               : genericMeasuredReplacementCopy(sourceTitle, 'h3', contentIndex + tabIndex),
@@ -6310,20 +6311,20 @@ function addGenericMeasuredGroups(context, parentId, desktopParent, tabletParent
           content: plan.preserveSourceText
             ? sourceContent
             : genericMeasuredReplacementCopy(sourceContent, 'p', contentIndex + tabIndex),
-          ...(authoringProps.has('image') && sourceImage ? {
+          ...(tabItemProps.has('image') && sourceImage ? {
             image: generatedTarget && plan.reuseSourceMedia
               ? sourceImage
               : genericReplacementMediaSource(context, contentIndex, tabIndex, false),
           } : {}),
-          ...(authoringProps.has('imageAlt') && String(tab?.imageAlt || '').trim() ? {
+          ...(tabItemProps.has('imageAlt') && String(tab?.imageAlt || '').trim() ? {
             imageAlt: String(tab.imageAlt).trim(),
           } : {}),
-          ...(authoringProps.has('ctaLabel') && sourceCtaLabel ? {
+          ...(tabItemProps.has('ctaLabel') && sourceCtaLabel ? {
             ctaLabel: plan.preserveSourceText
               ? sourceCtaLabel
               : genericMeasuredReplacementCopy(sourceCtaLabel, 'a', contentIndex + tabIndex),
           } : {}),
-          ...(authoringProps.has('ctaUrl') && sourceCtaLabel ? {
+          ...(tabItemProps.has('ctaUrl') && sourceCtaLabel ? {
             ctaUrl: generatedTarget && plan.preserveSourceText && sourceCtaUrl ? sourceCtaUrl : '#',
           } : {}),
         };

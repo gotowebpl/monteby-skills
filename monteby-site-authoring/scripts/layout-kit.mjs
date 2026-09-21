@@ -43,7 +43,12 @@ const {
   effectiveTypographyValue,
   tokenReference,
 } = designProfileModule;
-const { buildControlIndex, normalizeControlValue } = controlContractModule;
+const {
+  buildControlIndex,
+  nestedControlMap,
+  normalizeControlValue,
+  publishedControlReferences,
+} = controlContractModule;
 const { applySemanticMotionPlan } = motionContractModule;
 
 const TEXT_NODES = new Set(['Heading', 'Text', 'MultilineHeading']);
@@ -58,23 +63,11 @@ export class Kit {
     this.blocked = new Set(contract.authoring?.blockedProps || []);
     this.rootComponents = new Set(contract.authoring?.topLevelRootComponents || ['Section']);
     this.controls = buildControlIndex(contract);
-    // Kontrolki zagnieżdżone repeaterów (itemControls), np. Section.backgroundLayers
-    // czy FormBlock.fields; klucz: "Komponent.propRepeatera".
-    this.repeaterItemControls = new Map();
-    for (const component of contract.components || []) {
-      for (const control of component.controls || []) {
-        if (control.type !== 'repeater' || !Array.isArray(control.itemControls)) continue;
-        for (const prop of control.props || []) {
-          const itemControls = new Map();
-          for (const itemControl of control.itemControls) {
-            for (const itemProp of itemControl.props || []) {
-              if (!itemControls.has(itemProp)) itemControls.set(itemProp, itemControl);
-            }
-          }
-          this.repeaterItemControls.set(`${component.name}.${prop}`, itemControls);
-        }
-      }
-    }
+    this.repeaterItemControls = new Map(
+      [...this.controls.entries()]
+        .map(([key, control]) => [key, nestedControlMap(control)])
+        .filter(([, controls]) => controls.size > 0)
+    );
     this.nodes = {};
     this.counter = 0;
     this.initialNotes = this.designProfile.rejectedProjectTokens.map((key) => `project-token-rejected: ${key}; provide a safe literal or published token reference`);
@@ -123,57 +116,26 @@ export class Kit {
     return new Kit(await response.json());
   }
 
-  #normalize(component, prop, value) {
+  #normalize(component, prop, value, componentProps) {
     const control = this.controls.get(`${component}.${prop}`);
     if (!control) return value;
-    if (control.type === 'repeater' && Array.isArray(value)) {
-      return this.#normalizeRepeater(component, prop, control, value);
-    }
-    return this.#normalizeControlValue(control, `${component}.${prop}`, value);
+    return this.#normalizeControlValue(
+      control,
+      `${component}.${prop}`,
+      value,
+      publishedControlReferences(this.contract, component, prop, control),
+      componentProps
+    );
   }
 
-  #normalizeControlValue(control, label, value) {
-    const result = normalizeControlValue(control, value, this.publishedReferences);
+  #normalizeControlValue(control, label, value, references, componentProps) {
+    const result = normalizeControlValue(control, value, references, { componentProps });
     if (!result.accepted) {
       this.notes.push(`${label}: ${result.reason}, pominięte`);
       return undefined;
     }
     if (result.changed) this.notes.push(`${label}: ${result.changeReason || `${JSON.stringify(value)} → ${JSON.stringify(result.value)}`}`);
     return result.value;
-  }
-
-  #normalizeRepeater(component, prop, control, value) {
-    const itemControls = this.repeaterItemControls.get(`${component}.${prop}`);
-    if (!itemControls || itemControls.size === 0) return value;
-
-    const items = [];
-    for (const [index, item] of value.entries()) {
-      const label = `${component}.${prop}[${index}]`;
-      if (!item || typeof item !== 'object' || Array.isArray(item)) {
-        this.notes.push(`${label}: pozycja repeatera musi być obiektem, pominięta`);
-        continue;
-      }
-      const out = {};
-      for (const [itemProp, raw] of Object.entries(item)) {
-        if (raw === undefined || raw === null || raw === '') continue;
-        if (!itemControls.has(itemProp)) {
-          // Wymyślony klucz potrafi przejść render PHP i wywrócić edytor,
-          // dlatego nie wchodzi do node mapy.
-          this.notes.push(`${label}.${itemProp}: klucz spoza itemControls kontraktu, pominięty`);
-          continue;
-        }
-        const normalized = this.#normalizeControlValue(itemControls.get(itemProp), `${label}.${itemProp}`, raw);
-        if (normalized !== undefined) out[itemProp] = normalized;
-      }
-      items.push(out);
-    }
-    if (typeof control.minItems === 'number' && items.length < control.minItems) {
-      this.notes.push(`${component}.${prop}: ${items.length} pozycji poniżej minItems ${control.minItems}`);
-    }
-    if (typeof control.maxItems === 'number' && items.length > control.maxItems) {
-      this.notes.push(`${component}.${prop}: ${items.length} pozycji ponad maxItems ${control.maxItems}`);
-    }
-    return items;
   }
 
   /** Dowolny komponent z kontraktu. */
@@ -198,7 +160,14 @@ export class Kit {
           this.controls.has(`${component}.${prop}`)
           || /(?:color|fontFamily|fontSize|lineHeight|letterSpacing|padding|margin|radius|shadow|width|height|gap)$/iu.test(prop)
         )
-        && !this.publishedReferences.has(raw.trim())
+        && !(this.controls.has(`${component}.${prop}`)
+          ? publishedControlReferences(
+            this.contract,
+            component,
+            prop,
+            this.controls.get(`${component}.${prop}`)
+          )
+          : this.publishedReferences).has(raw.trim())
       ) {
         this.notes.push(`${component}.${prop}: nieopublikowana referencja CSS ${JSON.stringify(raw)}, pominięta`);
         continue;
@@ -213,7 +182,7 @@ export class Kit {
         }
         throw new Error(`Prop spoza kontraktu: ${component}.${prop}`);
       }
-      const value = this.#normalize(component, prop, raw);
+      const value = this.#normalize(component, prop, raw, resolvedProps);
       if (value !== undefined) out[prop] = value;
     }
 
