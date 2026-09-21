@@ -9,6 +9,7 @@ const {
   publishedControlReferences,
   normalizeControlValue,
   validateButtonFormPrefillRelationships,
+  validateQueryControlRelationships,
 } = require('./control-contract');
 const { buildResolvedMotionProfile, auditMotionLayout } = require('./motion-contract');
 
@@ -254,7 +255,11 @@ function audit(nodeMap, contractIndex, referenceManifest, minMediaSurfaces, opti
   }
 
   auditGraphIntegrity(report, nodeMap);
-  for (const finding of validateButtonFormPrefillRelationships(nodeMap, options.liveContract)) {
+  const relationshipFindings = [
+    ...validateButtonFormPrefillRelationships(nodeMap, options.liveContract),
+    ...validateQueryControlRelationships(nodeMap, options.liveContract),
+  ];
+  for (const finding of relationshipFindings) {
     error(report, finding.code, `${finding.path}: ${finding.message}`);
   }
   const motionAudit = auditMotionLayout(nodeMap, options.motionProfile);

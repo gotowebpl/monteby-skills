@@ -30,6 +30,7 @@ const {
   normalizeControlValue,
   publishedControlReferences,
   validateButtonFormPrefillRelationships,
+  validateQueryControlRelationships,
 } = require('./control-contract');
 const { auditMotionLayout } = require('./motion-contract');
 
@@ -281,7 +282,11 @@ function main() {
     code: entry.code,
     message: entry.message,
   })));
-  errors.push(...validateButtonFormPrefillRelationships(nodeMap, contract).map((entry) => ({
+  const relationshipErrors = [
+    ...validateButtonFormPrefillRelationships(nodeMap, contract),
+    ...validateQueryControlRelationships(nodeMap, contract),
+  ];
+  errors.push(...relationshipErrors.map((entry) => ({
     node: entry.path.split('.')[0],
     prop: entry.path.split('.').slice(1).join('.'),
     code: entry.code,

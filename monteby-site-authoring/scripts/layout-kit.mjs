@@ -49,6 +49,7 @@ const {
   normalizeControlValue,
   publishedControlReferences,
   validateButtonFormPrefillRelationships,
+  validateQueryControlRelationships,
 } = controlContractModule;
 const { applySemanticMotionPlan } = motionContractModule;
 
@@ -325,7 +326,10 @@ export class Kit {
         `${entry.recipeId || entry.nodeId || 'request'}: ${entry.reason}`
       )).join('; ')}`);
     }
-    const relationshipErrors = validateButtonFormPrefillRelationships(this.nodes, this.contract);
+    const relationshipErrors = [
+      ...validateButtonFormPrefillRelationships(this.nodes, this.contract),
+      ...validateQueryControlRelationships(this.nodes, this.contract),
+    ];
     if (relationshipErrors.length > 0) {
       throw new Error(`relationship plan rejected: ${relationshipErrors.map((entry) => (
         `${entry.path}: ${entry.message}`

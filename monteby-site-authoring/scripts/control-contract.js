@@ -185,6 +185,118 @@ function validateButtonFormPrefillRelationships(nodeMap, contract) {
   return errors;
 }
 
+function validateQueryControlRelationships(nodeMap, contract) {
+  const rules = contract?.authoring?.relationshipRules?.queryControls;
+  if (rules === undefined) return [];
+
+  const requiredStrings = ['loopComponent', 'referenceProp'];
+  const requiredComponentLists = [
+    'controlComponents',
+    'postTypeParityComponents',
+    'sortOptionsRequiredComponents',
+  ];
+  const malformedLists = requiredComponentLists.some((field) => (
+    !Array.isArray(rules?.[field])
+    || rules[field].some((component) => typeof component !== 'string' || !component.trim())
+    || new Set(rules[field]).size !== rules[field].length
+  ));
+  const controls = Array.isArray(rules?.controlComponents) ? new Set(rules.controlComponents) : new Set();
+  const malformed = !isRecord(rules)
+    || requiredStrings.some((field) => typeof rules[field] !== 'string' || !rules[field].trim())
+    || malformedLists
+    || controls.size === 0
+    || rules.requiresExplicitId !== true
+    || rules.requiresExactlyOne !== true
+    || rules.inheritSourceAllowed !== false
+    || [...(rules.postTypeParityComponents || []), ...(rules.sortOptionsRequiredComponents || [])]
+      .some((component) => !controls.has(component));
+  if (malformed) {
+    return [relationshipError(
+      'invalid_relationship_contract',
+      'authoring.relationshipRules.queryControls',
+      'The live queryControls relationship contract is incomplete.'
+    )];
+  }
+
+  const nodes = isRecord(nodeMap) ? nodeMap : {};
+  const loops = new Map();
+  const queryControls = [];
+  for (const [nodeId, node] of Object.entries(nodes)) {
+    const component = nodeComponent(node);
+    const props = isRecord(node?.props) ? node.props : {};
+    if (component === rules.loopComponent) {
+      const value = props[rules.referenceProp];
+      const queryId = typeof value === 'string' ? value.trim() : '';
+      if (queryId) {
+        const matches = loops.get(queryId) || [];
+        matches.push({ nodeId, props });
+        loops.set(queryId, matches);
+      }
+    } else if (controls.has(component)) {
+      queryControls.push({ nodeId, component, props });
+    }
+  }
+
+  const errors = [];
+  for (const matches of loops.values()) {
+    if (matches.length < 2) continue;
+    for (const match of matches) {
+      errors.push(relationshipError(
+        'duplicate_query_loop_id',
+        `${match.nodeId}.${rules.referenceProp}`,
+        `A ${rules.referenceProp} must identify exactly one ${rules.loopComponent} in the layout.`
+      ));
+    }
+  }
+
+  const postTypeParityComponents = new Set(rules.postTypeParityComponents);
+  const sortOptionsRequiredComponents = new Set(rules.sortOptionsRequiredComponents);
+  for (const control of queryControls) {
+    const value = control.props[rules.referenceProp];
+    const queryId = typeof value === 'string' ? value.trim() : '';
+    const path = `${control.nodeId}.${rules.referenceProp}`;
+    const matches = queryId ? loops.get(queryId) || [] : [];
+    if (matches.length !== 1) {
+      errors.push(relationshipError(
+        'orphan_query_control',
+        path,
+        `${control.component} must reference exactly one explicitly named ${rules.loopComponent}.`
+      ));
+      continue;
+    }
+
+    const loopProps = matches[0].props;
+    if (loopProps.source === 'inherit') {
+      errors.push(relationshipError(
+        'unsupported_inherited_query_control',
+        path,
+        `Public ${rules.loopComponent} controls cannot bind to source="inherit" because the page query owns that URL.`
+      ));
+    }
+    if (postTypeParityComponents.has(control.component)) {
+      const loopPostType = typeof loopProps.postType === 'string' ? loopProps.postType : 'post';
+      const controlPostType = typeof control.props.postType === 'string' ? control.props.postType : 'post';
+      if (loopPostType !== controlPostType) {
+        errors.push(relationshipError(
+          'query_control_post_type_mismatch',
+          `${control.nodeId}.postType`,
+          `${control.component} and its ${rules.loopComponent} must use the same postType.`
+        ));
+      }
+    }
+    if (sortOptionsRequiredComponents.has(control.component)
+        && (!Array.isArray(loopProps.sortOptions) || loopProps.sortOptions.length === 0)) {
+      errors.push(relationshipError(
+        'query_sort_options_missing',
+        path,
+        `${control.component} requires at least one stored sort option on its ${rules.loopComponent}.`
+      ));
+    }
+  }
+
+  return errors;
+}
+
 function optionValues(options) {
   const values = Array.isArray(options)
     ? options
@@ -1084,4 +1196,5 @@ module.exports = {
   publishedControlReferences,
   optionValues,
   validateButtonFormPrefillRelationships,
+  validateQueryControlRelationships,
 };
