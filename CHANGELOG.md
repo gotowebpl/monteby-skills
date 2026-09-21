@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.6.0 - Unreleased
+## 0.6.0 - 2026-09-21
 
 - Accept the `description` field Builder 1.6 publishes on every composition
   recipe; `layout-kit.mjs` previously rejected such contracts with
