@@ -453,6 +453,13 @@ test('partial operation guidance binds preflight evidence and forbids inferred A
   assert.match(guidance, /operationsSha256/);
   assert.match(guidance, /candidateLayoutSha256/);
   assert.match(guidance, /Never automatically retry/);
+  assert.match(
+    guidance,
+    /layout\/restore \{ revisionId, expectedModifiedGmt,\s+expectedDocumentSha256 \}/,
+  );
+  assert.match(guidance, /currentPostModifiedGmt[^]*currentDocumentSha256/);
+  assert.match(guidance, /`hasLayout: true`/);
+  assert.match(guidance, /rejects a missing or corrupt target layout before\s+mutation/);
 });
 
 test('accessibility fix guidance requires exact diff review and the canonical operation preflight', () => {

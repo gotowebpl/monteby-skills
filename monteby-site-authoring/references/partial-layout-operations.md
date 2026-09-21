@@ -124,13 +124,17 @@ prop values (`invalid_prop_range`, `invalid_prop_step`), so run
 `PUT /monteby/v1/pages/{id}/layout`, the operations apply route and
 `template-create` return `revisionId` (0 when the host cannot report
 revisions); record it in the save report. To roll back, send
-`POST /monteby/v1/pages/{id}/layout/restore { revisionId, expectedModifiedGmt }`
-with a freshly read `expectedModifiedGmt`. It is a versioned write (`428`/`409`
-apply, one mutation token, theme write availability) that returns the restored
-`layout` and a fresh `postModifiedGmt`; a revision of another document answers
-`404`. Restore only a `revisionId` recorded by this workflow's own save
-evidence, then snapshot and inspect the canonical WordPress/PHP output as
-after any save. A restore conflict is reconciled manually, never retried.
+`POST /monteby/v1/pages/{id}/layout/restore { revisionId, expectedModifiedGmt,
+expectedDocumentSha256 }`. Read both `currentPostModifiedGmt` and
+`currentDocumentSha256` from one fresh revision-list response immediately before
+the write, then use them as the two preconditions. It is a versioned write
+(`428`/`409` apply, one mutation token, theme write availability) that returns
+the restored `layout`, `documentSha256`, and a fresh `postModifiedGmt`; a
+revision of another document answers `404`. Restore only a `revisionId` recorded
+by this workflow's own save evidence whose revision-list item reports
+`hasLayout: true`. The host rejects a missing or corrupt target layout before
+mutation. Then snapshot and inspect the canonical WordPress/PHP output as after
+any save. A restore conflict is reconciled manually, never retried.
 
 ### Preview options
 
