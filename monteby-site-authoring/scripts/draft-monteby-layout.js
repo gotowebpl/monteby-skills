@@ -25,6 +25,7 @@ const {
 } = require('./resolved-design-profile');
 const { validateIconMapping } = require('./icon-mapping');
 const { collectControlMetadata, normalizeControlValue } = require('./control-contract');
+const { applySemanticMotionPlan } = require('./motion-contract');
 const { GENERIC_MEASURED_REFERENCE, selectDraftStrategy } = require('./draft-strategy');
 
 const DEFAULT_REPLACEMENT_PROFILE = {
@@ -204,6 +205,7 @@ function parseArgs(argv) {
     planOut: '',
     referenceManifest: '',
     iconMapping: '',
+    motionSourceDocument: '',
     minMediaSurfaces: null,
     requireRealReference: false,
     requireMarketplaceMedia: false,
@@ -227,6 +229,8 @@ function parseArgs(argv) {
       options.referenceManifest = path.resolve(requiredValue(argv, index += 1, arg));
     } else if (arg === '--icon-mapping') {
       options.iconMapping = path.resolve(requiredValue(argv, index += 1, arg));
+    } else if (arg === '--motion-source-document') {
+      options.motionSourceDocument = path.resolve(requiredValue(argv, index += 1, arg));
     } else if (arg === '--min-media-surfaces') {
       options.minMediaSurfaces = parseNonNegativeInteger(requiredValue(argv, index += 1, arg), arg);
     } else if (arg === '--require-real-reference') {
@@ -276,7 +280,7 @@ function requiredValue(argv, index, arg) {
 
 function printHelp() {
   console.log(`Usage:
-  draft-monteby-layout.js --contract contract.json (--start-report benchmark-start-report.json | --brief-json visual-brief.json) --out layout-draft.json [--plan-out mechanical-layout-plan.json] [--reference-manifest reference-manifest.json] [--icon-mapping icon-mapping.json] [--require-real-reference] [--require-marketplace-media] [--preserve-source-text] [--json]
+  draft-monteby-layout.js --contract contract.json (--start-report benchmark-start-report.json | --brief-json visual-brief.json) --out layout-draft.json [--plan-out mechanical-layout-plan.json] [--reference-manifest reference-manifest.json] [--icon-mapping icon-mapping.json] [--motion-source-document approved-brief.json] [--require-real-reference] [--require-marketplace-media] [--preserve-source-text] [--json]
 
 Writes a clean Monteby JSON draft from a visual brief and live contract. When --plan-out is provided, it also writes a mechanical section-mapping plan. When --reference-manifest is provided, the draft is immediately audited for blocked props, placement, and replacement media roles. This is a first-pass scaffold only; do not treat it as a pixel-perfect result.`);
 }
@@ -318,8 +322,12 @@ function briefWithReferenceMediaRequirements(brief, referenceManifest, options =
   const referenceGeometry = referenceManifest && options.referenceManifest
     ? referenceGeometryFromManifest(referenceManifest, options.referenceManifest)
     : null;
+  const motionEvidence = referenceManifest?.motionEvidence && typeof referenceManifest.motionEvidence === 'object'
+    ? referenceManifest.motionEvidence
+    : undefined;
+  const motionPlan = brief.authoringRequirements?.motionPlan;
 
-  if (requiredMediaRoles.length === 0 && requiresRealReference === false && !referenceGeometry) {
+  if (requiredMediaRoles.length === 0 && requiresRealReference === false && !referenceGeometry && !motionEvidence && !motionPlan) {
     return brief;
   }
 
@@ -335,7 +343,42 @@ function briefWithReferenceMediaRequirements(brief, referenceManifest, options =
       realReferenceSourceUrl: realReferenceSourceUrl || undefined,
       referenceGeometry: referenceGeometry || undefined,
       iconMapping: options.validatedIconMapping || undefined,
+      motionEvidence,
+      motionPlan,
     },
+  };
+}
+
+function motionEvidenceContext(referenceManifest, manifestPath, sourceDocumentPath) {
+  if (sourceDocumentPath) {
+    return {
+      sourceDocumentSha256: createHash('sha256').update(fs.readFileSync(sourceDocumentPath)).digest('hex'),
+    };
+  }
+  if (!referenceManifest || !manifestPath) return {};
+  const manifestDirectory = path.dirname(manifestPath);
+  const entries = Array.isArray(referenceManifest.layouts)
+    ? referenceManifest.layouts
+    : Array.isArray(referenceManifest.layoutCapture?.layouts)
+      ? referenceManifest.layoutCapture.layouts
+      : referenceManifest.layout
+        ? [{ label: 'desktop', file: referenceManifest.layout }]
+        : [];
+  const viewportTargets = entries.flatMap((entry) => {
+    if (!entry?.file) return [];
+    const file = path.resolve(manifestDirectory, String(entry.file));
+    if (!fs.existsSync(file)) return [];
+    const layout = readJson(file);
+    return [{
+      label: String(entry.label || 'desktop').trim(),
+      width: Number(layout?.viewport?.width || entry.width || 0),
+      height: Number(layout?.viewport?.height || entry.height || 0),
+    }];
+  });
+  return {
+    referenceManifestSha256: createHash('sha256').update(fs.readFileSync(manifestPath)).digest('hex'),
+    motionEvidence: referenceManifest.motionEvidence,
+    viewportTargets,
   };
 }
 
@@ -2570,7 +2613,20 @@ function draftLayout(contractIndex, brief, contractPayload = {}, qualityContext 
     throw new Error(`Unsupported draft strategy: ${draftStrategy.name}`);
   }
 
+  const motionPlan = applySemanticMotionPlan(
+    context.nodeMap,
+    designProfile.motion,
+    brief.authoringRequirements?.motionPlan,
+    qualityContext.motionEvidence || {}
+  );
+  if (motionPlan.rejected.length > 0) {
+    throw new Error(`motion plan rejected: ${motionPlan.rejected.map((entry) => (
+      `${entry.recipeId || entry.nodeId || 'request'}: ${entry.reason}`
+    )).join('; ')}`);
+  }
+
   const mechanicalPlan = buildMechanicalLayoutPlan(context, genericPlan);
+  mechanicalPlan.motionPlan = motionPlan;
   if (genericPlan) {
     const authoredConstraintCount = mechanicalPlan.constraintDecisions.filter(({ decision }) => decision === 'authored').length;
     const omittedConstraintCount = mechanicalPlan.constraintDecisions.filter(({ decision }) => decision === 'omitted').length;
@@ -6020,11 +6076,11 @@ function addGenericMeasuredGroups(context, parentId, desktopParent, tabletParent
       if (!formComponent) {
         throw new Error('Generic measured reference contract gaps:\n- [generic_semantic_form_widget_missing] FormBlock is required to reproduce a measured multi-field form without raw HTML.');
       }
-      const supportedFieldTypes = formComponent.propOptions?.get('type');
       const capturedFields = Array.isArray(desktop.props?.fields) ? desktop.props.fields : [];
       const formAuthoringProps = new Set(formComponent.authoringProps || []);
       const fieldAuthoringProps = formComponent.repeaterItemProps?.get('fields');
       const fieldAuthoringRules = formComponent.repeaterItemRules?.get('fields');
+      const supportedFieldTypes = fieldAuthoringRules?.get('type')?.options;
       if (!(supportedFieldTypes instanceof Set) || supportedFieldTypes.size === 0) {
         throw new Error('Generic measured reference contract gaps:\n- [generic_semantic_form_field_contract_missing] FormBlock must expose live repeater item type options before a measured form can be authored.');
       }
@@ -6203,6 +6259,7 @@ function addGenericMeasuredGroups(context, parentId, desktopParent, tabletParent
           .filter(([, value]) => typeof value !== 'undefined' && value !== null && value !== '')
           .map(([prop]) => prop)));
       const authoringProps = new Set(tabsComponent.authoringProps || []);
+      const tabItemProps = tabsComponent.repeaterItemProps?.get('tabs') || new Set();
       const missingProps = requiredProps.filter((prop) => !authoringProps.has(prop));
       if (missingProps.length > 0) {
         throw new Error(`Generic measured reference contract gaps:\n- [generic_semantic_tabs_control_missing] TabsBlock is missing measured authoring controls: ${missingProps.join(', ')}.`);
@@ -6265,23 +6322,23 @@ function addGenericMeasuredGroups(context, parentId, desktopParent, tabletParent
         const sourceCtaLabel = String(tab?.ctaLabel || '').trim();
         const sourceCtaUrl = String(tab?.ctaUrl || '').trim();
         return {
-          ...(authoringProps.has('labelPrefix') && sourceLabelPrefix ? {
+          ...(tabItemProps.has('labelPrefix') && sourceLabelPrefix ? {
             labelPrefix: plan.preserveSourceText ? sourceLabelPrefix : String(tabIndex + 1).padStart(2, '0'),
           } : {}),
           label: plan.preserveSourceText
             ? sourceLabel
             : genericMeasuredReplacementCopy(sourceLabel, 'button', contentIndex + tabIndex),
-          ...(authoringProps.has('labelSuffix') && sourceLabelSuffix ? {
+          ...(tabItemProps.has('labelSuffix') && sourceLabelSuffix ? {
             labelSuffix: plan.preserveSourceText
               ? sourceLabelSuffix
               : `${String(18 + tabIndex).padStart(2, '0')}:00`,
           } : {}),
-          ...(authoringProps.has('eyebrow') && sourceEyebrow ? {
+          ...(tabItemProps.has('eyebrow') && sourceEyebrow ? {
             eyebrow: plan.preserveSourceText
               ? sourceEyebrow
               : genericMeasuredReplacementCopy(sourceEyebrow, 'p', contentIndex + tabIndex),
           } : {}),
-          ...(authoringProps.has('title') && sourceTitle ? {
+          ...(tabItemProps.has('title') && sourceTitle ? {
             title: plan.preserveSourceText
               ? sourceTitle
               : genericMeasuredReplacementCopy(sourceTitle, 'h3', contentIndex + tabIndex),
@@ -6289,20 +6346,20 @@ function addGenericMeasuredGroups(context, parentId, desktopParent, tabletParent
           content: plan.preserveSourceText
             ? sourceContent
             : genericMeasuredReplacementCopy(sourceContent, 'p', contentIndex + tabIndex),
-          ...(authoringProps.has('image') && sourceImage ? {
+          ...(tabItemProps.has('image') && sourceImage ? {
             image: generatedTarget && plan.reuseSourceMedia
               ? sourceImage
               : genericReplacementMediaSource(context, contentIndex, tabIndex, false),
           } : {}),
-          ...(authoringProps.has('imageAlt') && String(tab?.imageAlt || '').trim() ? {
+          ...(tabItemProps.has('imageAlt') && String(tab?.imageAlt || '').trim() ? {
             imageAlt: String(tab.imageAlt).trim(),
           } : {}),
-          ...(authoringProps.has('ctaLabel') && sourceCtaLabel ? {
+          ...(tabItemProps.has('ctaLabel') && sourceCtaLabel ? {
             ctaLabel: plan.preserveSourceText
               ? sourceCtaLabel
               : genericMeasuredReplacementCopy(sourceCtaLabel, 'a', contentIndex + tabIndex),
           } : {}),
-          ...(authoringProps.has('ctaUrl') && sourceCtaLabel ? {
+          ...(tabItemProps.has('ctaUrl') && sourceCtaLabel ? {
             ctaUrl: generatedTarget && plan.preserveSourceText && sourceCtaUrl ? sourceCtaUrl : '#',
           } : {}),
         };
@@ -9003,7 +9060,17 @@ function main() {
       }).values()];
     }
     const brief = briefWithReferenceMediaRequirements(readBrief(options), referenceManifest, options);
-    const draft = draftLayout(buildContractIndex(contract), brief, contract, { options, referenceManifest });
+    const planSource = brief.authoringRequirements?.motionPlan?.source;
+    const motionEvidence = planSource === 'explicit-brief'
+      ? motionEvidenceContext(null, '', options.motionSourceDocument)
+      : planSource === 'measured-reference'
+        ? motionEvidenceContext(referenceManifest, options.referenceManifest, '')
+        : {};
+    const draft = draftLayout(buildContractIndex(contract), brief, contract, {
+      options,
+      referenceManifest,
+      motionEvidence,
+    });
     const expectedContentLedger = referenceManifest?.contentLedger;
     const contentLedgerComparison = options.preserveSourceText && expectedContentLedger
       ? compareContentLedgers(

@@ -3,6 +3,8 @@
 
 const fs = require('fs');
 const path = require('path');
+const { createHash } = require('node:crypto');
+const { buildMotionPlanBindings } = require('./motion-contract');
 
 function parseArgs(argv) {
   const options = {
@@ -80,7 +82,7 @@ function buildBrief(manifest, html, files) {
   const mediaSurfaces = Array.isArray(manifest.mediaSurfaces) ? manifest.mediaSurfaces : [];
   const renderedLayouts = readRenderedLayouts(manifest, files.manifest);
   const renderedLayout = renderedLayouts[0] || emptyRenderedLayout();
-  const authoringRequirements = buildAuthoringRequirements(manifest, renderedLayouts, mediaSurfaces);
+  const authoringRequirements = buildAuthoringRequirements(manifest, renderedLayouts, mediaSurfaces, files);
 
   return {
     generatedAt: new Date().toISOString(),
@@ -161,13 +163,25 @@ function normalizeTabItems(items) {
   })).filter((item) => item.label !== '');
 }
 
-function buildAuthoringRequirements(manifest, renderedLayouts, mediaSurfaces) {
+function buildAuthoringRequirements(manifest, renderedLayouts, mediaSurfaces, files) {
   const primaryLayout = firstOkLayout(renderedLayouts);
   const firstViewportMediaCoverage = numberOrNull(
     Number.isFinite(manifest.firstViewportMediaCoverage)
       ? manifest.firstViewportMediaCoverage
       : primaryLayout.summary.firstViewportMediaCoverage
   );
+
+  const viewportTargets = renderedLayouts
+    .filter((layout) => layout.status === 'ok')
+    .map(viewportRequirement);
+  const motionEvidence = manifest.motionEvidence && typeof manifest.motionEvidence === 'object'
+    ? manifest.motionEvidence
+    : { schemaVersion: 1, normalized: true, viewports: [] };
+  const motionPlan = boundMeasuredMotionPlan(manifest.motionPlan, {
+    referenceManifestSha256: createHash('sha256').update(fs.readFileSync(files.manifest)).digest('hex'),
+    motionEvidence,
+    viewportTargets,
+  });
 
   return {
     preserveSourceText: manifest.sourceOwnership === 'generated' && manifest.preserveSourceText === true,
@@ -178,10 +192,10 @@ function buildAuthoringRequirements(manifest, renderedLayouts, mediaSurfaces) {
       target: firstViewportMediaCoverage,
       minimumCandidate: minimumCandidateCoverage(firstViewportMediaCoverage),
     },
-    viewportTargets: renderedLayouts
-      .filter((layout) => layout.status === 'ok')
-      .map(viewportRequirement),
+    viewportTargets,
     priorityMediaSamples: priorityMediaSamples(renderedLayouts),
+    motionEvidence,
+    ...(motionPlan ? { motionPlan } : {}),
     assetPolicy: manifest.sourceOwnership === 'generated' && manifest.reuseSourceMedia === true
       ? [
         'This target is generated and its declared media may be reused for deterministic visual comparison.',
@@ -192,6 +206,17 @@ function buildAuthoringRequirements(manifest, renderedLayouts, mediaSurfaces) {
         'Do not reuse captured template-demo media URLs in authored Monteby JSON.',
         'Represent large photo areas with contract-backed ImageBlock or Section/Container background controls.',
       ],
+  };
+}
+
+function boundMeasuredMotionPlan(plan, evidence) {
+  if (!plan || typeof plan !== 'object' || Array.isArray(plan)) return null;
+  if (plan.source !== 'measured-reference') {
+    throw new Error('A target manifest motionPlan must use measured-reference evidence');
+  }
+  return {
+    ...plan,
+    bindings: buildMotionPlanBindings(plan.source, evidence, plan.requests),
   };
 }
 

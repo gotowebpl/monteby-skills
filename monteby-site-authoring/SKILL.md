@@ -118,6 +118,15 @@ tokens, `globalStyles`, `designTokens`, and finally the mode's neutral fallback.
 must be reported. Never consume `globalStyles.customCSS` as an authoring token.
 An older live contract without `designTokens` remains valid; do not invent the
 missing host values.
+Resolve motion through the same profile seam. Motion authoring is available only
+when the live response publishes both `authoring.capabilities.motionRecipes:
+true` and `authoring.motion.version: 1`; every recipe prop must round-trip
+through the target component's current control metadata. Otherwise use the
+declared `no-generated-motion` fallback. A motion plan must be versioned, mark
+its source as `explicit-brief` or `measured-reference`, bind every request to a
+deterministic node target, and use a live recipe id with the same semantic
+intent. Never infer motion from an archetype, decoration, or generic desire to
+make a page feel dynamic.
 For a static diagnostic preview, pass that same full response through
 `render-monteby-preview.js --contract contract.json`. Use its published
 `fontCatalog` for system, Google and local font origins; do not infer a provider
@@ -221,30 +230,46 @@ local self-tests or operational verification; it is not part of an ordinary
 page edit. A finding is evidence, never repair authority: do not change files,
 settings, cache, content, versions, or deployment state from this report alone.
 
-## Persistence endpoints
+## Persistence resources
 
-- `POST /wp-json/monteby/v1/validate`
-- `GET /wp-json/monteby/v1/pages/{id}/layout`
-- `PUT /wp-json/monteby/v1/pages/{id}/layout`
-- `POST /wp-json/monteby/v1/preview`
+`GET /wp-json/monteby/v1/contract` is the fixed bootstrap; `contract-fetch` adds projection, component hydration and ETag caching. Discover validation,
+page-layout read/write, and preview methods, paths, carriers, and context fields
+from the live `layoutPersistence.resources` document. Current Builder versions
+publish `/monteby/v1/validate`, `/monteby/v1/pages/{postId}/layout`, and
+`/monteby/v1/preview`; examples only. `--help` lists context, documents, revisions,
+preview, bulk, composition, safe global styles, SEO and read-only Abilities.
+A missing, malformed, or unsupported descriptor is a hard stop; page paths have one `{postId}` and scoped numeric `id`; never fall back to a guessed endpoint or payload key.
 
 For a bounded change to existing nodes, prefer the operation resources exposed
 under `layoutPersistence.operations` in the live contract. Read
 `references/partial-layout-operations.md`; use `patch-validate`, then execute
 only its emitted `patch-save` action. The live `operationSchemas` are the sole
 authority for operation payloads, including whether `update_props` supports
-`unsetProps`. Bind the page snapshot, `postModifiedGmt`, canonical operations
-SHA-256, and `candidateLayoutSha256`. Missing evidence is a hard stop.
+`unsetProps`. Bind the snapshot, version token, current layout digest, canonical operations SHA-256,
+`candidateLayoutSha256`, and `compiledHtmlSha256`. Apply only with every descriptor-named precondition emitted by that exact preflight.
+Missing evidence is a hard stop.
 The client removes an `update_props` entry only when both `props` and
 `unsetProps` are empty; it never removes empty strings inside a meaningful
 `props` object because values such as decorative alt text can be intentional.
 
-Save only through the versioned PUT with a fresh `expectedModifiedGmt` taken
-immediately before the write. A save returns `428` or `409` only for versioning:
-a `428` means the precondition is absent; a `409` means another editor changed
-the page. Refetch, reconcile, revalidate, and issue one new explicit save action;
-never retry PUT automatically. Never bypass a conflict with stale JSON, and never
-write post meta or `post_content` directly.
+Save only through the page-layout write descriptor. Immediately before writing,
+send the token through the field named by `layoutPersistence.writePreconditionField`
+and compare/send its canonical layout digest; this closes same-second lost updates.
+Current names are `postModifiedGmt` and `expectedModifiedGmt`; they are live-contract examples, not fixed client keys. A save returns `428` or `409` only when the server refuses the requested write.
+`428` means the declared precondition is absent. Classify a
+`409` by the WordPress REST error `code`: only an explicit revision/digest
+`*_conflict` means another editor changed the resource. A write lock, required
+classic-content conversion, corrupt stored layout, or Builder/Theme integrity
+failure is a different terminal state and must follow its named recovery path;
+it must not enter the resnapshot/reconcile conflict loop. Never retry either
+status automatically. Never bypass a conflict with stale JSON, and never write
+post meta or `post_content` directly.
+A successful write is not proven by an arbitrary `2xx` or `{ "saved": true }`; require a token and exact saved representation, then read through the same descriptor.
+The token may stay unchanged when the host version field has coarse resolution, but only
+after the write used the exact source and candidate digest preconditions and both the
+write response and canonical readback prove the exact candidate representation. Patch apply also requires the exact preflighted compiled HTML digest. The
+readback token must equal the write response token and the readback node-map SHA-256 must equal the saved
+write-response representation SHA-256. Keep the separately validated candidate SHA-256, preview that exact readback and preserve validation `lint` in `SAVE_OK`.
 
 Apply the same rule to partial writes: never retry `409` or `428`, never apply
 without a successful preflight, and never reuse a preflight after the page or
@@ -297,7 +322,8 @@ the user explicitly requests a one-off responsive SiteBranding widget override;
 it is never the global site identity.
 
 The versioned layout resource is the sole snapshot identity source. Use its
-`id`, `postType`, `viewUrl`, and `postModifiedGmt`; never assume a document is a
+`id`, `postType`, `viewUrl`, and the token field named by the live
+`versionField` (currently `postModifiedGmt`); never assume a document is a
 `page` or call `/wp/v2/pages/{id}` for a `gotoweb_template`. For a global header
 or footer, pass `--render-context-url` with a same-origin public page that
 actually renders it; retain the template's own `viewUrl` as document evidence.
@@ -327,7 +353,7 @@ exact action. `--resume-capture` reuses the bound capture only when the contract
 source scope, capture options, viewports, full-page mode, owned HTML, manifests,
 layouts, and screenshots are unchanged; otherwise it stops without recapturing.
 Repair actions retain the same checkpoint and mapping.
-This prohibition applies only in `owned-html-reconstruction`, where a measurable reference exists. In `content-brief-authoring` there is no reference to measure, and the canonical route is `layout-kit.mjs` — see `references/brief-to-monteby.md`.
+This prohibition applies only in `owned-html-reconstruction`, where a measurable reference exists. In `content-brief-authoring` there is no reference to measure, and the canonical route is `layout-kit.mjs` — see `references/brief-to-monteby.md`; on Builder ≥ 1.6 with the `compositionInstantiate` gate, the server's `compositions/plan` and `compositions/instantiate` resources own expansion and `layout-kit.mjs` is the offline fallback.
 
 Do not replace this path with a browser snippet, a hand-written `build.mjs`,
 or manual node-map transcription as the primary route.

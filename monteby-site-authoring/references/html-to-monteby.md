@@ -327,6 +327,24 @@ alternatywną ścieżką authoringu. Sprawdź propsy i kontrolki Motion dla
 konkretnego komponentu w live contract, w tym dozwolone cele animacji,
 wejścia dzieci, easing, opóźnienia i progi obserwacji.
 
+Jedynym źródłem receptur i budżetów jest `authoring.motion` z bieżącego live
+contract. `resolvedDesignProfile.motion` odrzuca recepturę, jeśli choć jeden jej
+prop nie ma aktualnej kontrolki albo nie przechodzi przez jej reguły bez zmiany.
+Layout kit i drafter stosują recepturę tylko z planu `version: 1`, ze źródłem
+`explicit-brief` albo `measured-reference`, tym samym semantycznym `intent` i
+deterministycznym celem `nodeId` lub `component` + `occurrence`. Bez takiego
+dowodu wynik jest statyczny; rodzina strony, archetyp i nazwa sekcji nie są
+dowodem intencji ruchu.
+
+Egzekwuj opublikowane limity wejść, pierwszego viewportu, efektów tła,
+pointer-follow/magnetic/tilt i scen pinned. Stagger należy do jednej grupy od
+dwóch do sześciu bez niezależnego ruchu bezpośrednich dzieci; jego łączny czas
+nie przekracza limitu kontraktu. Parallax śledzi naturalny scroll, a scena
+pinned, slider i przejście stanu nie mogą przejmować kółka, dotyku ani
+klawiatury. Formularze i nawigacja pozostają nieruchome zgodnie z listą
+`forbiddenComponents`. Autoplay pozostaje `false`; brak trwałego, dostępnego
+sterowania pauzą nie jest zgodą na wyjątek.
+
 Brak mapowania efektu w drafterze nie dowodzi braku funkcji w Builderze.
 Rozróżnij lukę narzędzia od braku kontrolki produktu i popraw właściwego
 właściciela. Nie przenoś obsługiwanego ruchu do child theme, Custom CSS/JS
@@ -356,6 +374,10 @@ Zweryfikuj publiczny render, nie samą obecność propsów:
   z własną animacją; nowe karty paginacji nie animują ponownie starych;
 - wejście nie usuwa niezależnego stanu hover lub `focus-within`;
 - wyłączenie JavaScriptu i reduced-motion pozostawiają treść dostępną;
+- touch/coarse pointer pozostawia pointer-follow, magnetic i tilt całkowicie
+  statyczne, a klawiatura zachowuje zwykły fokus i aktywację;
+- parallax i pinned scenes nie przechwytują wheel, touch ani klawiszy i w
+  no-JS/reduced-motion wracają do zwykłego przepływu dokumentu;
 - powrót z nieaktywnej karty nie pozostawia elementów trwale ukrytych;
 - długi ruch ma dostępne sterowanie pauzą zgodnie z kontrolkami produktu.
 

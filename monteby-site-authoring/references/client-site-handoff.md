@@ -89,6 +89,13 @@ Use read-only WP-CLI or authenticated administrative APIs to record:
 - global Monteby header/footer template IDs and types;
 - WordPress menu locations and selected menu IDs.
 
+On Builder 1.6+, `GET /wp-json/monteby/v1/site/pages` and
+`GET /wp-json/monteby/v1/pages/{id}/context` provide the same document inventory
+(`documentType`, `layoutState`, `nodeCount`, `postModifiedGmt`, framing
+`headerPostId`/`footerPostId`) through the authenticated REST contract. Record
+them as a dated snapshot alongside the WP-CLI output, never instead of a fresh
+read.
+
 Do not record administrator passwords, application passwords, cookies, nonces, access tokens, database credentials, or S3 keys. Point workers to the approved local secret source without exposing values.
 
 Treat historical authoring directories as untrusted until audited and redacted. Never copy old cookie files, nonce captures, authorization headers, or raw browser-session output into a new handoff merely because they already exist locally.
@@ -104,6 +111,20 @@ The handoff must retain the normal site-authoring workflow:
 5. Save with the current modification precondition.
 6. Preview through WordPress/PHP.
 7. Reopen the editor and compare editor/frontend at desktop, tablet, and mobile widths.
+
+On Builder 1.6+ (gates in `references/site-contract-compatibility.json`) the
+handoff should also name: `?mode=authoring&components=summary` with
+`/contract/components/{name}` for per-turn discovery and `?mode=catalogs` for
+the icon and font name lists (`icon-svg` and `font-picker` values are
+validated against them); `POST /monteby/v1/site/pages/bulk` with a
+`requestId` for idempotent multi-page creation;
+`POST /gotoweb-craft/v1/settings/template-create` with `layout` for new
+header/footer/template documents (creation never activates them);
+`site.capabilities.manageDesign` for who may apply site-wide design writes;
+and, on WordPress 6.9+, the `monteby/*` abilities (`authoring.abilities.names`)
+as an equivalent transport. Document which of these the site actually
+advertises; an absent gate falls back to the single-page flow, never to a
+remembered endpoint.
 
 Keep global header, page content, and global footer as separate resources. Use a real WordPress menu selected from host choices. Do not authorize `className`, raw HTML, raw CSS, direct post-meta writes, database edits, or HTML-to-node conversion in the handoff.
 

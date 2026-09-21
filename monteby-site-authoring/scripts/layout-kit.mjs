@@ -30,10 +30,12 @@
  */
 
 import { readFile, realpath, stat, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { basename, dirname, join, resolve } from 'node:path';
 import designProfileModule from './resolved-design-profile.js';
 import controlContractModule from './control-contract.js';
+import motionContractModule from './motion-contract.js';
 
 const {
   UNMEASURED_CONTENT_SECTION_DEFAULTS,
@@ -42,7 +44,15 @@ const {
   effectiveTypographyValue,
   tokenReference,
 } = designProfileModule;
-const { buildControlIndex, normalizeControlValue } = controlContractModule;
+const {
+  buildControlIndex,
+  nestedControlMap,
+  normalizeControlValue,
+  publishedControlReferences,
+  validateButtonFormPrefillRelationships,
+  validateQueryControlRelationships,
+} = controlContractModule;
+const { applySemanticMotionPlan } = motionContractModule;
 
 const TEXT_NODES = new Set(['Heading', 'Text', 'MultilineHeading']);
 const EDGE_WIDTHS = ['borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth'];
@@ -56,23 +66,11 @@ export class Kit {
     this.blocked = new Set(contract.authoring?.blockedProps || []);
     this.rootComponents = new Set(contract.authoring?.topLevelRootComponents || ['Section']);
     this.controls = buildControlIndex(contract);
-    // Kontrolki zagnieżdżone repeaterów (itemControls), np. Section.backgroundLayers
-    // czy FormBlock.fields; klucz: "Komponent.propRepeatera".
-    this.repeaterItemControls = new Map();
-    for (const component of contract.components || []) {
-      for (const control of component.controls || []) {
-        if (control.type !== 'repeater' || !Array.isArray(control.itemControls)) continue;
-        for (const prop of control.props || []) {
-          const itemControls = new Map();
-          for (const itemControl of control.itemControls) {
-            for (const itemProp of itemControl.props || []) {
-              if (!itemControls.has(itemProp)) itemControls.set(itemProp, itemControl);
-            }
-          }
-          this.repeaterItemControls.set(`${component.name}.${prop}`, itemControls);
-        }
-      }
-    }
+    this.repeaterItemControls = new Map(
+      [...this.controls.entries()]
+        .map(([key, control]) => [key, nestedControlMap(control)])
+        .filter(([, controls]) => controls.size > 0)
+    );
     this.nodes = {};
     this.counter = 0;
     this.initialNotes = this.designProfile.rejectedProjectTokens.map((key) => `project-token-rejected: ${key}; provide a safe literal or published token reference`);
@@ -121,57 +119,26 @@ export class Kit {
     return new Kit(await response.json());
   }
 
-  #normalize(component, prop, value) {
+  #normalize(component, prop, value, componentProps) {
     const control = this.controls.get(`${component}.${prop}`);
     if (!control) return value;
-    if (control.type === 'repeater' && Array.isArray(value)) {
-      return this.#normalizeRepeater(component, prop, control, value);
-    }
-    return this.#normalizeControlValue(control, `${component}.${prop}`, value);
+    return this.#normalizeControlValue(
+      control,
+      `${component}.${prop}`,
+      value,
+      publishedControlReferences(this.contract, component, prop, control),
+      componentProps
+    );
   }
 
-  #normalizeControlValue(control, label, value) {
-    const result = normalizeControlValue(control, value, this.publishedReferences);
+  #normalizeControlValue(control, label, value, references, componentProps) {
+    const result = normalizeControlValue(control, value, references, { componentProps });
     if (!result.accepted) {
       this.notes.push(`${label}: ${result.reason}, pominięte`);
       return undefined;
     }
     if (result.changed) this.notes.push(`${label}: ${result.changeReason || `${JSON.stringify(value)} → ${JSON.stringify(result.value)}`}`);
     return result.value;
-  }
-
-  #normalizeRepeater(component, prop, control, value) {
-    const itemControls = this.repeaterItemControls.get(`${component}.${prop}`);
-    if (!itemControls || itemControls.size === 0) return value;
-
-    const items = [];
-    for (const [index, item] of value.entries()) {
-      const label = `${component}.${prop}[${index}]`;
-      if (!item || typeof item !== 'object' || Array.isArray(item)) {
-        this.notes.push(`${label}: pozycja repeatera musi być obiektem, pominięta`);
-        continue;
-      }
-      const out = {};
-      for (const [itemProp, raw] of Object.entries(item)) {
-        if (raw === undefined || raw === null || raw === '') continue;
-        if (!itemControls.has(itemProp)) {
-          // Wymyślony klucz potrafi przejść render PHP i wywrócić edytor,
-          // dlatego nie wchodzi do node mapy.
-          this.notes.push(`${label}.${itemProp}: klucz spoza itemControls kontraktu, pominięty`);
-          continue;
-        }
-        const normalized = this.#normalizeControlValue(itemControls.get(itemProp), `${label}.${itemProp}`, raw);
-        if (normalized !== undefined) out[itemProp] = normalized;
-      }
-      items.push(out);
-    }
-    if (typeof control.minItems === 'number' && items.length < control.minItems) {
-      this.notes.push(`${component}.${prop}: ${items.length} pozycji poniżej minItems ${control.minItems}`);
-    }
-    if (typeof control.maxItems === 'number' && items.length > control.maxItems) {
-      this.notes.push(`${component}.${prop}: ${items.length} pozycji ponad maxItems ${control.maxItems}`);
-    }
-    return items;
   }
 
   /** Dowolny komponent z kontraktu. */
@@ -187,6 +154,10 @@ export class Kit {
       this.designProfile,
       semanticRole
     );
+    if (component === 'ListBlock' && Array.isArray(resolvedProps.items)
+        && resolvedProps.items.some((item) => item && typeof item === 'object')) {
+      throw new Error('ListBlock.items przyjmuje teksty — obiekt wywraca kanwę edytora (React #31)');
+    }
     for (const [prop, raw] of Object.entries(resolvedProps)) {
       if (raw === undefined || raw === null || (raw === '' && !/^(?:alt|.*Alt)$/.test(prop))) continue;
       if (
@@ -196,7 +167,14 @@ export class Kit {
           this.controls.has(`${component}.${prop}`)
           || /(?:color|fontFamily|fontSize|lineHeight|letterSpacing|padding|margin|radius|shadow|width|height|gap)$/iu.test(prop)
         )
-        && !this.publishedReferences.has(raw.trim())
+        && !(this.controls.has(`${component}.${prop}`)
+          ? publishedControlReferences(
+            this.contract,
+            component,
+            prop,
+            this.controls.get(`${component}.${prop}`)
+          )
+          : this.publishedReferences).has(raw.trim())
       ) {
         this.notes.push(`${component}.${prop}: nieopublikowana referencja CSS ${JSON.stringify(raw)}, pominięta`);
         continue;
@@ -211,7 +189,7 @@ export class Kit {
         }
         throw new Error(`Prop spoza kontraktu: ${component}.${prop}`);
       }
-      const value = this.#normalize(component, prop, raw);
+      const value = this.#normalize(component, prop, raw, resolvedProps);
       if (value !== undefined) out[prop] = value;
     }
 
@@ -219,9 +197,6 @@ export class Kit {
     if (TEXT_NODES.has(component) && out.marginTop === undefined) out.marginTop = '0px';
     if (EDGE_WIDTHS.some((edge) => edge in out) && out.borderWidth === undefined && allowed.has('borderWidth')) {
       out.borderWidth = '0px';
-    }
-    if (component === 'ListBlock' && Array.isArray(out.items) && out.items.some((i) => i && typeof i === 'object')) {
-      throw new Error('ListBlock.items przyjmuje teksty — obiekt wywraca kanwę edytora (React #31)');
     }
     if (component === 'FormBlock' && out.formBackgroundColor === undefined) {
       this.notes.push('FormBlock bez formBackgroundColor maluje własne białe tło <form>');
@@ -339,7 +314,7 @@ export class Kit {
     );
   }
 
-  build(sections) {
+  build(sections, motionPlan = undefined, motionEvidence = {}) {
     for (const id of sections) {
       const name = this.nodes[id].type.resolvedName;
       if (!this.rootComponents.has(name)) throw new Error(`${name} nie może być dzieckiem ROOT`);
@@ -347,6 +322,21 @@ export class Kit {
     }
     this.nodes.ROOT = { type: { resolvedName: 'RootCanvas' }, isCanvas: true, props: {}, nodes: [...sections] };
     this.#validateAnchorComposition();
+    this.motionPlan = applySemanticMotionPlan(this.nodes, this.designProfile.motion, motionPlan, motionEvidence);
+    if (this.motionPlan.rejected.length > 0) {
+      throw new Error(`motion plan rejected: ${this.motionPlan.rejected.map((entry) => (
+        `${entry.recipeId || entry.nodeId || 'request'}: ${entry.reason}`
+      )).join('; ')}`);
+    }
+    const relationshipErrors = [
+      ...validateButtonFormPrefillRelationships(this.nodes, this.contract),
+      ...validateQueryControlRelationships(this.nodes, this.contract),
+    ];
+    if (relationshipErrors.length > 0) {
+      throw new Error(`relationship plan rejected: ${relationshipErrors.map((entry) => (
+        `${entry.path}: ${entry.message}`
+      )).join('; ')}`);
+    }
     return this.nodes;
   }
 
@@ -410,10 +400,10 @@ export class Kit {
     }
   }
 
-  async write(path, sections) {
-    const map = this.build(sections);
+  async write(path, sections, motionPlan = undefined, motionEvidence = {}) {
+    const map = this.build(sections, motionPlan, motionEvidence);
     await writeFile(path, JSON.stringify(map, null, 1), 'utf8');
-    const result = { path, nodes: Object.keys(map).length, notes: [...this.notes] };
+    const result = { path, nodes: Object.keys(map).length, notes: [...this.notes], motionPlan: this.motionPlan };
     this.nodes = {};
     this.counter = 0;
     this.notes = [...this.initialNotes];
@@ -486,7 +476,7 @@ function compositionContent(content, slots, path, depth = 0) {
 
 /** Expands only recipes supplied by the current full live contract. */
 export function expandCompositionPlan(contract, plan, options = {}) {
-  compositionRecord(plan, ['version', 'sections'], 'plan');
+  compositionRecord(plan, ['version', 'sections', 'motion'], 'plan');
   if (plan.version !== 1 || !Array.isArray(plan.sections) || plan.sections.length < 1 || plan.sections.length > 20) {
     throw new Error('plan: version 1 and 1–20 sections required');
   }
@@ -496,9 +486,12 @@ export function expandCompositionPlan(contract, plan, options = {}) {
   }
   const recipes = new Map();
   for (const recipe of manifest.recipes) {
-    compositionRecord(recipe, ['id', 'label', 'slots', 'tree'], 'recipe');
+    compositionRecord(recipe, ['id', 'label', 'description', 'slots', 'tree'], 'recipe');
     if (typeof recipe.id !== 'string' || !/^[a-z][a-z0-9-]{0,63}$/.test(recipe.id) || recipes.has(recipe.id)) {
       throw new Error('recipe: invalid or duplicate id');
+    }
+    if (recipe.description !== undefined && typeof recipe.description !== 'string') {
+      throw new Error(`recipe ${recipe.id}: description must be text`);
     }
     recipes.set(recipe.id, recipe);
   }
@@ -630,7 +623,8 @@ export function expandCompositionPlan(contract, plan, options = {}) {
     sections.push(...roots);
     decisions.push({ section: index, compositionId: recipe.id, rootId: roots[0] });
   }
-  return { layout: kit.build(sections), notes: kit.notes, decisions };
+  const layout = kit.build(sections, plan.motion, options.motionEvidence || {});
+  return { layout, notes: kit.notes, decisions, motionPlan: kit.motionPlan };
 }
 
 async function compositionCli() {
@@ -638,13 +632,18 @@ async function compositionCli() {
   const options = {};
   for (let index = 0; index < args.length; index += 2) {
     const flag = args[index];
-    if (!['--contract', '--plan', '--out', '--report', '--project-tokens'].includes(flag) || !args[index + 1] || options[flag]) {
-      throw new Error('Usage: layout-kit.mjs --contract full-live-contract.json --plan plan.json --out layout.json [--report report.json] [--project-tokens approved-tokens.json]');
+    if (!['--contract', '--plan', '--out', '--report', '--project-tokens', '--motion-source-document'].includes(flag) || !args[index + 1] || options[flag]) {
+      throw new Error('Usage: layout-kit.mjs --contract full-live-contract.json --plan plan.json --out layout.json [--report report.json] [--project-tokens approved-tokens.json] [--motion-source-document approved-brief.json]');
     }
     options[flag] = args[index + 1];
   }
   if (!options['--contract'] || !options['--plan'] || !options['--out']) throw new Error('contract, plan and out are required');
-  const inputKeys = ['--contract', '--plan', ...(options['--project-tokens'] ? ['--project-tokens'] : [])];
+  const inputKeys = [
+    '--contract',
+    '--plan',
+    ...(options['--project-tokens'] ? ['--project-tokens'] : []),
+    ...(options['--motion-source-document'] ? ['--motion-source-document'] : []),
+  ];
   const paths = [...inputKeys, '--out', ...(options['--report'] ? ['--report'] : [])].map((key) => resolve(options[key]));
   if (new Set(paths).size !== paths.length) throw new Error('input and output paths must be distinct');
   const identities = await Promise.all(paths.map(async (path) => {
@@ -657,12 +656,21 @@ async function compositionCli() {
     }
   }));
   if (new Set(identities).size !== identities.length) throw new Error('input and output files must be distinct; symbolic links and hard links cannot alias source files');
-  const [contract, plan, projectTokens] = await Promise.all(inputKeys.map(async (key) => {
-    const source = await readFile(options[key], 'utf8');
-    if (source.length > 10000000) throw new Error(`${key}: input budget exceeded`);
-    return JSON.parse(source);
-  }));
-  const result = expandCompositionPlan(contract, plan, { projectTokens });
+  const inputValues = Object.fromEntries(await Promise.all(inputKeys.map(async (key) => {
+    const source = await readFile(options[key]);
+    if (source.byteLength > 10000000) throw new Error(`${key}: input budget exceeded`);
+    return [key, key === '--motion-source-document' ? source : JSON.parse(source.toString('utf8'))];
+  })));
+  const contract = inputValues['--contract'];
+  const plan = inputValues['--plan'];
+  const projectTokens = inputValues['--project-tokens'];
+  const motionSourceDocument = inputValues['--motion-source-document'];
+  const result = expandCompositionPlan(contract, plan, {
+    projectTokens,
+    motionEvidence: motionSourceDocument === undefined ? {} : {
+      sourceDocumentSha256: createHash('sha256').update(motionSourceDocument).digest('hex'),
+    },
+  });
   await writeFile(options['--out'], `${JSON.stringify(result.layout, null, 2)}\n`);
   const report = { verdict: 'diagnostic_passed', nodes: Object.keys(result.layout).length, notes: result.notes, decisions: result.decisions };
   if (options['--report']) await writeFile(options['--report'], `${JSON.stringify(report, null, 2)}\n`);

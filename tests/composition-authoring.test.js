@@ -53,6 +53,18 @@ test('composition expansion is deterministic, preserves text and tokens and omit
   assert.doesNotMatch(JSON.stringify(result.layout), /compositionId|tokenProps|slotProps|typographyRole/);
 });
 
+test('composition recipes may carry the Builder 1.6 description without leaking it into nodes', async () => {
+  const { expandCompositionPlan } = await modulePromise;
+  const current = contract();
+  const recipe = current.authoring.compositions.recipes[0];
+  recipe.description = 'One-sentence English purpose published by every Builder 1.6 recipe.';
+  const result = expandCompositionPlan(current, plan());
+  assert.deepEqual(result.layout, expandCompositionPlan(contract(), plan()).layout);
+  assert.doesNotMatch(JSON.stringify(result.layout), /One-sentence English purpose|description/);
+  recipe.description = { text: 'not a string' };
+  assert.throws(() => expandCompositionPlan(current, plan()), /description must be text/);
+});
+
 test('composition rejects malformed plan, unavailable recipes, content, URL and budget violations', async () => {
   const { expandCompositionPlan } = await modulePromise;
   const cases = [

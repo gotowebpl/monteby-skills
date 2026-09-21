@@ -29,7 +29,10 @@ const {
   buildControlIndex,
   normalizeControlValue,
   publishedControlReferences,
+  validateButtonFormPrefillRelationships,
+  validateQueryControlRelationships,
 } = require('./control-contract');
+const { auditMotionLayout } = require('./motion-contract');
 
 function parseArgs(argv) {
   const args = {};
@@ -62,8 +65,8 @@ function readJson(path, label) {
  * Bring one value into the shape the control accepts.
  * Returns {value, note} — a null value means the prop must be dropped.
  */
-function normalizeValue(control, value, publishedReferences = new Set()) {
-  const result = normalizeControlValue(control, value, publishedReferences);
+function normalizeValue(control, value, publishedReferences = new Set(), componentProps = {}) {
+  const result = normalizeControlValue(control, value, publishedReferences, { componentProps });
   if (!result.accepted) return { value: null, note: result.reason };
   return {
     value: result.value,
@@ -225,9 +228,9 @@ function main() {
         continue;
       }
       const control = controls.get(`${name}.${prop}`);
-      const { value: normalized, note } = normalizeValue(
-        control || {}, value, publishedControlReferences(contract, name, prop, control),
-      );
+      const { value: normalized, note } = control
+        ? normalizeValue(control, value, publishedControlReferences(contract, name, prop, control), props)
+        : { value, note: undefined };
       if (note) {
         repairs.push({ node: nodeId, prop, message: note, dropped: normalized === null });
       }
@@ -272,12 +275,36 @@ function main() {
     }
   }
 
+  const motionAudit = auditMotionLayout(nodeMap, designProfile.motion);
+  errors.push(...motionAudit.errors.map((entry) => ({
+    node: entry.nodeId || '',
+    component: entry.component || '',
+    code: entry.code,
+    message: entry.message,
+  })));
+  const relationshipErrors = [
+    ...validateButtonFormPrefillRelationships(nodeMap, contract),
+    ...validateQueryControlRelationships(nodeMap, contract),
+  ];
+  errors.push(...relationshipErrors.map((entry) => ({
+    node: entry.path.split('.')[0],
+    prop: entry.path.split('.').slice(1).join('.'),
+    code: entry.code,
+    message: entry.message,
+  })));
+
   const report = {
     nodes: Object.keys(nodeMap).length,
     errors,
     repairs,
     warnings,
     designConflicts: designProfile.conflicts,
+    motion: {
+      available: designProfile.motion.available,
+      fallback: designProfile.motion.fallback,
+      claims: motionAudit.claims,
+      stats: motionAudit.stats,
+    },
     ok: errors.length === 0,
   };
 
@@ -290,8 +317,7 @@ function main() {
     console.log(JSON.stringify(report, null, 2));
   } else {
     console.log(`Węzły: ${report.nodes}`);
-    console.log('NIE SPRAWDZAM kształtu wartości dla kontrolek typu: spacing, color, font-picker, media, custom '
-      + '(m.in. Heading.tag, ImageBlock.src, ButtonBlock.href, Container.padding) — „0 błędów” ich nie obejmuje.');
+    console.log('Sprawdzono typy, zakresy i zamknięte polityki kontrolek, w tym linki, tagi, kolory, fonty, media i spacing.');
     console.log(`Błędy: ${errors.length} | naprawy wartości: ${repairs.length} | ostrzeżenia renderera: ${warnings.length}`);
     for (const item of errors.slice(0, 40)) {
       console.log(`  BŁĄD  ${item.node}${item.prop ? '.' + item.prop : ''}: ${item.message}`);

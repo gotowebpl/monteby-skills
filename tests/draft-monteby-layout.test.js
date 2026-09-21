@@ -6,7 +6,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
+const { createHash } = require('node:crypto');
 const test = require('node:test');
+const { buildMotionPlanBindings } = require('../monteby-site-authoring/scripts/motion-contract');
 
 const root = path.resolve(__dirname, '..');
 const draftScript = path.join(root, 'monteby-site-authoring', 'scripts', 'draft-monteby-layout.js');
@@ -171,6 +173,103 @@ test('draft layout consumes live global styles and design bindings before archet
   assert.match(serialized, /var\(--gcb-color-(?:primary|accent|text|secondary|paper|soft)\)/);
   assert.equal(serialized.includes('forbidden-copy'), false);
   assert.equal(serialized.includes('className'), false);
+});
+
+test('draft layout requires the exact approved source document for explicit motion', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'monteby-draft-motion-source-'));
+  const contractPath = path.join(directory, 'contract.json');
+  const briefPath = path.join(directory, 'visual-brief.json');
+  const sourcePath = path.join(directory, 'approved-motion-brief.json');
+  const layoutPath = path.join(directory, 'layout-draft.json');
+  const sourceDocument = '{"motion":"Reveal the opening band once."}\n';
+  const sourceDocumentSha256 = createHash('sha256').update(sourceDocument).digest('hex');
+  const liveContract = contract();
+  const section = liveContract.components.find((component) => component.name === 'Section');
+  const motionProps = ['motionPreset', 'motionDirection', 'motionDuration', 'motionRepeat'];
+  section.props.push(...motionProps);
+  section.aiProps = [...section.props];
+  section.controls.push(
+    { prop: 'motionPreset', type: 'select', options: ['none', 'slide'] },
+    { prop: 'motionDirection', type: 'select', options: ['up', 'down'] },
+    { prop: 'motionDuration', type: 'number', min: 100, max: 2000, step: 50 },
+    { prop: 'motionRepeat', type: 'select', options: ['once', 'repeat'] },
+  );
+  liveContract.authoring = {
+    capabilities: { motionRecipes: true },
+    motion: {
+      version: 1,
+      policy: {
+        defaultRepeat: 'once',
+        maxEntranceOwnersPerPage: 2,
+        maxFirstViewportEntranceOwners: 1,
+        maxPointerEffectsPerPage: 0,
+        maxPinnedScenesPerPage: 0,
+        maxBackgroundEffectsPerPage: 0,
+        maxStaggerSpanMs: 300,
+        maxEntranceDurationMs: 700,
+        maxEntranceDelayMs: 150,
+        maxEntranceDistancePx: 32,
+        forbiddenComponents: [],
+        prohibitedInputs: [],
+        rules: ['Use one entrance owner for the opening band.'],
+      },
+      recipes: [{
+        id: 'opening-reveal',
+        intent: 'reveal',
+        components: ['Section'],
+        props: {
+          motionPreset: 'slide',
+          motionDirection: 'up',
+          motionDuration: 600,
+          motionRepeat: 'once',
+        },
+      }],
+    },
+  };
+  const requests = [{
+    recipeId: 'opening-reveal',
+    intent: 'reveal',
+    firstViewport: true,
+    target: { component: 'Section', occurrence: 0 },
+  }];
+  const brief = visualBrief();
+  brief.authoringRequirements.motionPlan = {
+    version: 1,
+    source: 'explicit-brief',
+    bindings: buildMotionPlanBindings('explicit-brief', { sourceDocumentSha256 }, requests),
+    requests,
+  };
+  fs.writeFileSync(contractPath, JSON.stringify(liveContract));
+  fs.writeFileSync(briefPath, JSON.stringify(brief));
+  fs.writeFileSync(sourcePath, sourceDocument);
+
+  const missingSource = spawnSync(process.execPath, [
+    draftScript, '--contract', contractPath, '--brief-json', briefPath, '--out', layoutPath, '--json',
+  ], { encoding: 'utf8' });
+  assert.notEqual(missingSource.status, 0);
+  assert.match(missingSource.stderr, /motion plan rejected:.*sourceDocumentSha256/u);
+
+  const accepted = spawnSync(process.execPath, [
+    draftScript,
+    '--contract', contractPath,
+    '--brief-json', briefPath,
+    '--out', layoutPath,
+    '--motion-source-document', sourcePath,
+    '--json',
+  ], { encoding: 'utf8' });
+  assert.equal(accepted.status, 0, accepted.stderr || accepted.stdout);
+
+  fs.writeFileSync(sourcePath, '{"motion":"Tampered."}\n');
+  const staleSource = spawnSync(process.execPath, [
+    draftScript,
+    '--contract', contractPath,
+    '--brief-json', briefPath,
+    '--out', layoutPath,
+    '--motion-source-document', sourcePath,
+    '--json',
+  ], { encoding: 'utf8' });
+  assert.notEqual(staleSource.status, 0);
+  assert.match(staleSource.stderr, /motion plan rejected:.*current source evidence/u);
 });
 
 test('draft layout uses archetype-specific replacement media for Envato-style families', () => {

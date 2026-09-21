@@ -30,6 +30,11 @@ test('canonical verification is the only pipeline stage that emits DONE', () => 
   assert.equal(report.fidelityPassed, true);
   assert.equal(report.canonicalVerification, true);
   assert.equal(report.productReady, true);
+  assert.equal(report.qualityGates.complete, true);
+  for (const gate of ['lint', 'accessibility', 'content', 'seo', 'completeness', 'motion']) {
+    assert.equal(report.qualityGates[gate].evaluated, true, gate);
+    assert.equal(report.qualityGates[gate].passed, true, gate);
+  }
   assert.equal(report.nextAction.id, 'complete');
   assert.equal(report.nextAction.tool, '');
   assert.deepEqual(report.nextAction.args, []);
@@ -49,6 +54,188 @@ test('canonical verification is the only pipeline stage that emits DONE', () => 
   assert.equal(capture.args.includes('--require-layout'), true);
   assert.equal(benchmark.args.includes('--candidate-manifest'), true);
   assert.equal(benchmark.args.includes('--pad-to-largest'), true);
+});
+
+test('canonical motion proof uses an isolated annotated preview while public parity stays unannotated', () => {
+  const fixture = createFixture({ motion: true });
+  const result = runFixture(fixture, false);
+
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.status, 'DONE');
+  assert.equal(report.qualityGates.motion.passed, true);
+  assert.equal(report.qualityGates.motion.claimCount, 1);
+  assert.equal(report.qualityGates.motion.proofMode, 'request-scoped-annotated-preview');
+
+  const spawns = readSpawns(fixture.spawnLog);
+  const captures = spawns.filter((entry) => entry.script === 'capture-template-reference.js');
+  const preview = spawns.find((entry) => entry.script === 'wordpress-layout-client.js');
+  assert.equal(captures.length, 2);
+  assert.ok(preview);
+  assert.equal(preview.args[1], 'preview-resource');
+  assert.deepEqual(argumentValues(preview.args, '--auth-header-env'), ['MONTEBY_AUTH_HEADER']);
+
+  const publicCapture = captures.find((entry) => entry.args.includes('--url'));
+  const proofCapture = captures.find((entry) => entry.args.includes('--html-file'));
+  assert.ok(publicCapture);
+  assert.ok(proofCapture);
+  assert.equal(publicCapture.args.includes('--html-file'), false);
+  assert.equal(proofCapture.args.includes('--url'), false);
+
+  const previewInput = JSON.parse(fs.readFileSync(report.files.motionPreviewInput, 'utf8'));
+  assert.equal(previewInput.postId, 17);
+  assert.equal(previewInput.annotateNodeIds, true);
+  assert.equal(previewInput.assets, true);
+  assert.equal(previewInput.document, true);
+  assert.deepEqual(previewInput.layout, JSON.parse(fs.readFileSync(fixture.files.layout, 'utf8')));
+
+  const publicManifest = JSON.parse(fs.readFileSync(report.files.candidateManifest, 'utf8'));
+  const publicOwners = publicManifest.motionEvidence.viewports.flatMap((viewport) => viewport.owners);
+  assert.equal(publicOwners.length > 0, true, 'plain capture still observes runtime motion');
+  assert.equal(publicOwners.some((owner) => Object.hasOwn(owner, 'nodeId') || Object.hasOwn(owner, 'recipeId')), false);
+
+  const proofManifest = JSON.parse(fs.readFileSync(report.files.motionProofManifest, 'utf8'));
+  const proofOwners = proofManifest.motionEvidence.viewports.flatMap((viewport) => viewport.owners);
+  assert.equal(proofOwners.every((owner) => (
+    owner.nodeId === 'section-hero'
+    && owner.recipeId === 'hero-reveal'
+    && owner.kind === 'entrance'
+  )), true);
+  const previewDocument = fs.readFileSync(argumentValues(proofCapture.args, '--html-file')[0], 'utf8');
+  assert.match(previewDocument, /data-monteby-node-id="section-hero"/u);
+  assert.match(previewDocument, /data-monteby-motion-recipe="hero-reveal"/u);
+});
+
+test('canonical verification fails closed when the request-scoped motion preview lacks annotations', () => {
+  const fixture = createFixture({ motion: true });
+  fixture.motionAnnotationsMissing = true;
+  const result = runFixture(fixture, false);
+
+  assert.equal(result.status, 1, result.stderr || result.stdout);
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.status, 'CANONICAL_QUALITY_BLOCKED');
+  assert.equal(report.qualityGates.motion.passed, false);
+  assert.equal(report.blockers.some((blocker) => (
+    blocker.code === 'canonical_motion_annotated_preview_missing'
+  )), true);
+  const spawns = readSpawns(fixture.spawnLog);
+  assert.equal(spawns.some((entry) => (
+    entry.script === 'capture-template-reference.js' && entry.args.includes('--html-file')
+  )), false, 'unannotated preview is rejected before it can become proof');
+});
+
+for (const scenario of [
+  {
+    name: 'missing saved lint evidence',
+    blocker: 'canonical_lint_evidence_missing',
+    mutate(save) { delete save.evidence.validation; },
+  },
+  {
+    name: 'saved lint finding',
+    blocker: 'canonical_lint_findings',
+    mutate(save) {
+      save.evidence.validation.lint.push({
+        ruleId: 'empty-navigation-items',
+        level: 'warning',
+        nodeId: 'section-hero',
+        component: 'Section',
+        message: 'A lint finding remains.',
+      });
+    },
+  },
+  {
+    name: 'incomplete accessibility audit',
+    blocker: 'canonical_accessibility_failed',
+    mutate(save) {
+      save.response.accessibilityAudit.complete = false;
+      save.response.accessibilityAudit.reasons = ['budget'];
+    },
+  },
+  {
+    name: 'accessibility warning',
+    blocker: 'canonical_accessibility_failed',
+    mutate(save) {
+      save.response.accessibilityAudit.warnings = 1;
+      save.response.accessibilityAudit.findings.push({
+        rule: 'low-contrast',
+        level: 'warning',
+        nodeId: 'section-hero',
+        widget: 'Section',
+      });
+    },
+  },
+  {
+    name: 'content audit without a pass',
+    blocker: 'canonical_content_failed',
+    mutate(save) {
+      save.response.contentQualityAudit.passed = false;
+      save.response.contentQualityAudit.counts.warning = 1;
+      save.response.contentQualityAudit.findings.push({
+        code: 'missing_sources',
+        severity: 'warning',
+        path: 'content.sources',
+        nodeId: '',
+        message: 'Sources are missing.',
+      });
+    },
+  },
+  {
+    name: 'content audit without server-rendered proof',
+    blocker: 'canonical_content_failed',
+    mutate(save) { save.response.contentQualityAudit.serverRendered = false; },
+  },
+  {
+    name: 'internally inconsistent content audit',
+    blocker: 'canonical_content_evidence_invalid',
+    mutate(save) { delete save.response.contentQualityAudit.counts; },
+  },
+  {
+    name: 'SEO warning',
+    blocker: 'canonical_seo_failed',
+    mutate(save) {
+      save.response.seoGraph.findings.push({
+        code: 'editorial_verification_stale',
+        severity: 'warning',
+        path: 'editorial',
+        message: 'Review is stale.',
+      });
+    },
+  },
+]) {
+  test(`canonical verification blocks ${scenario.name} before browser work`, () => {
+    const fixture = createFixture();
+    const save = JSON.parse(fs.readFileSync(fixture.files.saveReport, 'utf8'));
+    scenario.mutate(save);
+    fs.writeFileSync(fixture.files.saveReport, JSON.stringify(save));
+
+    const result = runFixture(fixture, false);
+    const report = JSON.parse(result.stdout);
+    assert.equal(result.status, 1, result.stderr || result.stdout);
+    assert.equal(report.status, 'CANONICAL_QUALITY_BLOCKED');
+    assert.equal(report.productReady, false);
+    assert.equal(report.blockers.some((blocker) => blocker.code === scenario.blocker), true);
+    assert.equal(fs.existsSync(fixture.spawnLog), false);
+  });
+}
+
+test('canonical verification blocks incomplete public capture evidence before comparison', () => {
+  const fixture = createFixture();
+  const result = runFixture(
+    fixture,
+    false,
+    false,
+    'https://site.example.test/page/',
+    false,
+    false,
+    '',
+    true
+  );
+  const report = JSON.parse(result.stdout);
+  assert.equal(result.status, 1, result.stderr || result.stdout);
+  assert.equal(report.status, 'CANONICAL_QUALITY_BLOCKED');
+  assert.equal(report.productReady, false);
+  assert.equal(report.blockers.some((blocker) => blocker.code === 'canonical_capture_completeness_failed'), true);
+  assert.deepEqual(readSpawns(fixture.spawnLog).map((entry) => entry.script), ['capture-template-reference.js']);
 });
 
 for (const scenario of [
@@ -313,8 +500,9 @@ test('canonical verification rejects a same-origin URL for a different page', ()
   assert.equal(fs.existsSync(fixture.spawnLog), false, 'no browser or benchmark action runs');
 });
 
-function createFixture() {
+function createFixture(options = {}) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'monteby-canonical-verification-'));
+  const motion = options.motion === true;
   const files = {
     layout: path.join(directory, 'layout.json'),
     contract: path.join(directory, 'contract.json'),
@@ -335,14 +523,56 @@ function createFixture() {
     'section-hero': {
       type: { resolvedName: 'Section' },
       isCanvas: true,
-      props: {},
+      props: motion ? { motionPreset: 'slide' } : {},
       parent: 'ROOT',
       nodes: [],
     },
   };
   const layoutSha256 = createHash('sha256').update(JSON.stringify(nodeMap)).digest('hex');
   fs.writeFileSync(files.layout, JSON.stringify(nodeMap));
-  fs.writeFileSync(files.contract, JSON.stringify({ components: [] }));
+  fs.writeFileSync(files.contract, JSON.stringify({
+    components: motion ? [{
+      name: 'Section',
+      props: ['motionPreset'],
+      aiProps: ['motionPreset'],
+      controls: [{ prop: 'motionPreset', type: 'select', options: ['none', 'slide'] }],
+    }] : [],
+    authoring: {
+      capabilities: motion ? { annotatedRender: true, motionRecipes: true } : {},
+      lint: { version: 1, rules: [] },
+      ...(motion ? {
+        motion: {
+          version: 1,
+          policy: {
+            defaultRepeat: 'once',
+            maxEntranceOwnersPerPage: 2,
+            maxFirstViewportEntranceOwners: 2,
+            maxPointerEffectsPerPage: 1,
+            maxPinnedScenesPerPage: 0,
+            maxBackgroundEffectsPerPage: 1,
+            maxStaggerSpanMs: 300,
+            maxEntranceDurationMs: 700,
+            maxEntranceDelayMs: 150,
+            maxEntranceDistancePx: 32,
+            forbiddenComponents: [],
+            prohibitedInputs: [],
+            rules: [],
+          },
+          recipes: [{
+            id: 'hero-reveal',
+            intent: 'reveal',
+            components: ['Section'],
+            props: { motionPreset: 'slide' },
+          }],
+        },
+      } : {}),
+    },
+    layoutPersistence: {
+      accessibilityAudit: { responseField: 'accessibilityAudit' },
+      contentQualityAudit: { responseField: 'contentQualityAudit' },
+      seo: { graphPreview: { responseField: 'seoGraph' } },
+    },
+  }));
   fs.writeFileSync(files.plan, JSON.stringify({
     schemaVersion: 1,
     artifact: 'monteby-layout-plan',
@@ -421,6 +651,37 @@ function createFixture() {
       pageId: 17,
       publicPageUrl: 'https://site.example.test/page/',
       layoutSha256,
+      validation: {
+        valid: true,
+        lint: [],
+      },
+    },
+    response: {
+      accessibilityAudit: {
+        findings: [],
+        reasons: [],
+        errors: 0,
+        warnings: 0,
+        complete: true,
+      },
+      contentQualityAudit: {
+        role: 'none',
+        requirements: [],
+        findings: [],
+        counts: { error: 0, warning: 0, info: 0 },
+        reasons: [],
+        complete: true,
+        passed: true,
+        serverRendered: true,
+      },
+      seoGraph: {
+        outputMode: 'builder-exact',
+        owner: { owner: 'builder' },
+        role: { effective: 'none' },
+        findings: [],
+        complete: true,
+        serverRendered: true,
+      },
     },
   }));
   fs.writeFileSync(files.previewReport, JSON.stringify({
@@ -506,6 +767,7 @@ function createFixture() {
 const childProcess = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
+const { createHash } = require('node:crypto');
 const original = childProcess.spawnSync;
 
 function value(args, name) {
@@ -515,19 +777,120 @@ function value(args, name) {
 
 childProcess.spawnSync = function canonicalHarness(command, args, options) {
   const script = Array.isArray(args) && args.length > 0 ? path.basename(String(args[0])) : '';
-  if (!['capture-template-reference.js', 'run-visual-benchmark.js'].includes(script)) {
+  if (!['capture-template-reference.js', 'run-visual-benchmark.js', 'wordpress-layout-client.js'].includes(script)) {
     return original.call(this, command, args, options);
   }
   fs.appendFileSync(process.env.MONTEBY_CANONICAL_SPAWN_LOG, JSON.stringify({ script, args }) + '\\n');
+  if (script === 'wordpress-layout-client.js') {
+    if (args[1] !== 'preview-resource') {
+      return original.call(this, command, args, options);
+    }
+    const inputFile = value(args, '--input');
+    const reportFile = value(args, '--out');
+    const input = JSON.parse(fs.readFileSync(inputFile, 'utf8'));
+    const extension = path.extname(reportFile);
+    const base = path.join(path.dirname(reportFile), path.basename(reportFile, extension));
+    const previewFile = base + '-preview.html';
+    const documentFile = base + '-document.html';
+    const annotations = process.env.MONTEBY_CANONICAL_MOTION_ANNOTATIONS_MISSING === '1'
+      ? ''
+      : ' data-monteby-node-id="section-hero" data-monteby-motion-recipe="hero-reveal"';
+    const fragment = '<section' + annotations + ' data-gw-motion="slide">Motion proof</section>';
+    const document = '<!doctype html><html><head><title>Motion proof</title></head><body>' + fragment + '</body></html>';
+    fs.mkdirSync(path.dirname(reportFile), { recursive: true });
+    fs.writeFileSync(previewFile, fragment);
+    fs.writeFileSync(documentFile, document);
+    const digest = (value) => createHash('sha256').update(value).digest('hex');
+    const report = {
+      schemaVersion: 1,
+      ok: true,
+      stage: 'preview-resource',
+      code: 'PREVIEW_RESOURCE_OK',
+      artifacts: { input: inputFile, preview: previewFile, document: documentFile, report: reportFile },
+      evidence: {
+        inputSha256: digest(JSON.stringify(input)),
+        inputLayoutSha256: digest(JSON.stringify(input.layout)),
+        htmlSha256: digest(fragment),
+        outputHtmlSha256: digest(fragment),
+        documentSha256: digest(document),
+        htmlBytes: Buffer.byteLength(fragment),
+        postId: input.postId,
+        nodeId: '',
+        document: input.document === true,
+        globalTemplates: false,
+      },
+    };
+    fs.writeFileSync(reportFile, JSON.stringify(report));
+    return { status: 0, stdout: JSON.stringify(report), stderr: '' };
+  }
   if (script === 'capture-template-reference.js') {
     const outDir = value(args, '--out-dir');
     fs.mkdirSync(outDir, { recursive: true });
     const subpixel = process.env.MONTEBY_CANONICAL_SUBPIXEL === '1';
+    const incomplete = process.env.MONTEBY_CANONICAL_CAPTURE_INCOMPLETE === '1';
+    const annotated = value(args, '--html-file') !== '';
     if (subpixel) fs.writeFileSync(path.join(outDir, 'desktop.png'), 'stable-page-pixels');
     fs.writeFileSync(path.join(outDir, 'reference-manifest.json'), JSON.stringify({
       sourceUrl: value(args, '--url'),
+      captureStatus: incomplete ? 'partial' : 'complete',
+      evidenceCompleteness: {
+        mode: 'full-page',
+        status: incomplete ? 'partial' : 'complete',
+        complete: !incomplete,
+        essentialGeometryTruncated: incomplete,
+        viewports: ['desktop', 'tablet', 'mobile'].map((label) => ({
+          label,
+          status: incomplete && label === 'mobile' ? 'partial' : 'complete',
+          complete: !(incomplete && label === 'mobile'),
+        })),
+      },
       screenshots: subpixel ? [{ label: 'desktop', file: 'desktop.png' }] : [],
       layouts: [],
+      motionEvidence: {
+        schemaVersion: 1,
+        normalized: true,
+        viewports: ['desktop', 'tablet', 'mobile'].map((label) => ({
+          label,
+          schemaVersion: 1,
+          normalized: true,
+          owners: annotated
+            ? [{ nodeId: 'section-hero', recipeId: 'hero-reveal', kind: 'entrance', firstViewport: true }]
+            : [{ kind: 'entrance', firstViewport: true }],
+          checks: {
+            reducedMotionStatic: true,
+            noJavaScriptStatic: true,
+            coarsePointerStatic: true,
+            keyboardOperable: true,
+            wheelInterception: false,
+          },
+          environments: {
+            normalFinePointer: {
+              status: 'passed',
+              javaScript: true,
+              reducedMotion: false,
+              coarsePointer: false,
+              keyboardIntercepted: false,
+              wheelIntercepted: false,
+              positiveByOwner: annotated ? [{
+                probeId: '1',
+                nodeId: 'section-hero',
+                recipeId: 'hero-reveal',
+                kind: 'entrance',
+                attemptedCount: 1,
+                passedCount: 1,
+                passed: true,
+                samples: [{
+                  nodeId: 'section-hero',
+                  recipeId: 'hero-reveal',
+                  kind: 'entrance',
+                  mechanism: 'entrance-transition',
+                  passed: true,
+                }],
+              }] : [],
+            },
+          },
+        })),
+      },
     }));
     return { status: 0, stdout: 'reference_manifest=ok\\n', stderr: '' };
   }
@@ -644,7 +1007,8 @@ function runFixture(
   publicPageUrl = 'https://site.example.test/page/',
   incompleteZero = false,
   subpixel = false,
-  authorizationFile = ''
+  authorizationFile = '',
+  captureIncomplete = false
 ) {
   return spawnSync(process.execPath, [
     script,
@@ -668,6 +1032,8 @@ function runFixture(
       MONTEBY_CANONICAL_BUDGET_FAIL: budgetFail ? '1' : '0',
       MONTEBY_CANONICAL_INCOMPLETE_ZERO: incompleteZero ? '1' : '0',
       MONTEBY_CANONICAL_SUBPIXEL: subpixel ? '1' : '0',
+      MONTEBY_CANONICAL_CAPTURE_INCOMPLETE: captureIncomplete ? '1' : '0',
+      MONTEBY_CANONICAL_MOTION_ANNOTATIONS_MISSING: fixture.motionAnnotationsMissing ? '1' : '0',
     },
   });
 }

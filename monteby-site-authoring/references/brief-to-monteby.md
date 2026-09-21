@@ -6,8 +6,10 @@ z już zapisanej strony na kolejne adresy.
 
 Tryb `owned-html-reconstruction` i jego zakaz ręcznego buildera **tu nie
 obowiązują** — nie ma czego mierzyć, więc nie ma referencyjnej trasy pomiarowej.
-Kanoniczną trasą jest `layout-kit.mjs`, a bramką jakości `normalize-layout.js`
-plus pomiar zapisanej strony.
+Na Builderze ≥ 1.6 kanoniczną trasą rozwinięcia jest serwer
+(`POST /compositions/plan`, sekcja niżej); `layout-kit.mjs` pozostaje trasą
+offline i awaryjną dla starszych kontraktów. Bramką jakości jest
+`normalize-layout.js` plus pomiar zapisanej strony.
 
 ## Nowa kompozycja z briefu: plan danych
 
@@ -79,6 +81,61 @@ Do stron demonstracyjnych preferuj zdjęcia stockowe z zatwierdzonego źródła 
 walidacja URL nie potwierdza praw do obrazu. Jeśli wymaganego slotu brakuje,
 wybierz inną dostępną kompozycję lub zgłoś brak. Nie podstawiaj pustego pola.
 
+### Rozwinięcie po stronie serwera (Builder ≥ 1.6)
+
+Sprawdź odpowiednią bramkę z
+`references/site-contract-compatibility.json`: `compositionPlan` przed
+rozwinięciem całego planu albo `compositionInstantiate` przed rozwinięciem
+jednej receptury. Obie wymagają `productVersion >= 1.6.0` oraz właściwego
+deskryptora w `authoring.compositions.resources`; sama flaga capability nie
+autoryzuje zapamiętanego adresu. Wtedy serwer, a nie lokalny kit, jest źródłem
+prawdy dla identyfikatorów węzłów, odwołań do tokenów i reguł slotów. Adres
+zasobu czytaj z deskryptora, który przeszedł bramkę. Oba zasoby są tylko do
+odczytu (`edit_pages`, bez tokenu zapisu) i niczego nie zapisują.
+
+- `POST /wp-json/monteby/v1/compositions/plan { plan, postId? }` rozwija cały
+  plan (1–20 sekcji, wspólny licznik ID per receptura, budżet 1000 węzłów),
+  wymusza dokładnie jeden H1 (`h1_missing`, `h1_multiple`) i rozwiązywalne,
+  unikalne kotwice (`invalid_anchor_reference`, `unresolved_anchor`), uruchamia
+  pełną walidację i lint, a zwraca `{ valid, layout, sections, errors, lint,
+  decisions }`. Zwrócony `layout` zapisuj przez wersjonowany
+  `PUT /pages/{id}/layout` z `expectedModifiedGmt`.
+- `POST /wp-json/monteby/v1/compositions/instantiate { recipeId, slots,
+  parentId?, index?, idPrefix?, postId? }` rozwija jedną recepturę i zwraca
+  `{ valid, rootNodeId, nodes, operation, errors, lint, decisions }`;
+  `operation` to gotowe `insert_tree` dla `patch-validate` → `patch-save`
+  (`references/partial-layout-operations.md`). `parentId` inny niż `ROOT`
+  wymaga `postId`, aby serwer zweryfikował rodzica.
+
+Reguły serwera: identyfikatory to deterministyczne
+`<idPrefix lub recipeId>-<n>` w kolejności pre-order (z `postId` licznik
+startuje za istniejącymi ID, `decisions.idStart`); `tokenProps` rozwiązują się
+przez `designTokens` do `var(--monteby-token-…)` (`missing_token`); tekst
+zostaje dosłownie (≤ 20000 znaków); `media` to dokładnie `{ src, alt }` z
+`http(s)`; `link` to dokładnie `{ href, label }` z `http(s)`, `mailto:`, `tel:`
+lub adresem względnym od korzenia; lista `items` musi mieścić się w
+`minItems`–`maxItems` (poza zakresem to `invalid_slot`, nigdy przycięcie);
+nieobecny opcjonalny slot zostawia propy nieustawione; brak wymaganego to
+`missing_slot`, nieznany — `unknown_slot`, niebezpieczny URL — `unsafe_url`.
+Nieznana receptura to `404 monteby_site_authoring_unknown_composition`.
+Odpowiedź `400` niesie ten sam kształt z `errors[{ code, message, path,
+slot? }]` — popraw wskazany slot w planie, nie w zwróconych węzłach. `lint[]`
+czytaj jak uwagi kitu: każda pozycja wymaga decyzji i nie zmienia `valid`.
+
+Każda receptura w kontrakcie 1.6 niesie jednozdaniowe `description` obok `id`
+i `label` (`?mode=authoring` redukuje receptury do tych trzech pól). Używaj go
+do wyboru kompozycji; nie trafia do node mapy. Po rozwinięciu obowiązuje ta
+sama ścieżka co niżej: pre-flight `normalize-layout.js`, wersjonowany zapis
+i bramka „Zapis i ocena".
+
+### Trasa offline: `layout-kit.mjs`
+
+Obowiązuje, gdy bramka nie jest dostępna (starszy Builder to
+`blocked_plugin_version`, Builder 1.6 bez właściwego deskryptora to
+`blocked_contract_inconsistency`) albo gdy pracujesz bez połączenia z witryną.
+Nie mieszaj obu tras w jednym zapisie: ID i tokeny z kitu nie muszą być równe
+serwerowym.
+
 ```bash
 node monteby-site-authoring/scripts/layout-kit.mjs \
   --contract .monteby/contract.json \
@@ -99,6 +156,8 @@ Następnie wyrenderuj cały pierwszy szkic raz, przeczytaj uwagi i wykonaj
 pre-flight, `/validate`, wersjonowany zapis oraz bramkę WordPress/PHP poniżej.
 Podgląd po każdej sekcji jest potrzebny przy ręcznej adaptacji wzorca, nie przy
 niezmienionej opublikowanej recepturze.
+
+### Zapis i ocena
 
 Oceń zapis na 1440/834/390: czy cała treść jest widoczna, tytuł ma właściwą
 hierarchię i mieści się w kolumnie, media są załadowane i poprawnie wykadrowane,
@@ -250,8 +309,11 @@ nie rozstrzyga, weź je ze strony wzorcowej i zapisz w briefie na przyszłość:
 - ruch: używaj wyłącznie kontrolek opublikowanych przez żywy kontrakt, jeżeli
   brief wymaga animacji. Nowa kompozycja nie wymaga CSS-u motywu potomnego.
   Brak wymaganego zachowania jest luką Builder/Core; nie zastępuj go klasami
-  ani skryptem. Sprawdź w kanonicznym podglądzie działanie i preferencję
-  ograniczenia ruchu.
+  ani skryptem. Plan motion ma jawne źródło `explicit-brief`, live recipe id,
+  zgodny semantic intent i deterministyczny cel; sama kategoria/archetyp strony
+  nie wystarcza. Sprawdź limity z `authoring.motion.policy`, zakaz ruchu
+  nawigacji/formularzy, `autoplay: false`, statyczny fallback reduced-motion,
+  no-JS i coarse pointer oraz brak przechwytywania wheel/klawiatury.
 
 
 ## Treść ekspercka

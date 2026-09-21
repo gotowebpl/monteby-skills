@@ -50,19 +50,47 @@ async function writeJson(target, value) {
   await fs.rename(temporary, target);
 }
 
-function defaultExecute(args) {
-  const result = spawnSync(process.execPath, [CLIENT, ...args], { encoding: 'utf8', env: process.env });
+async function defaultExecute(args, client = CLIENT) {
+  const outputIndex = args.lastIndexOf('--out');
+  const reportFile = outputIndex >= 0 ? args[outputIndex + 1] : '';
+  if (!reportFile || reportFile.startsWith('--')) {
+    throw new Error(`Canonical client command ${args[0]} has no report output path`);
+  }
+  await fs.unlink(reportFile).catch((error) => {
+    if (error?.code !== 'ENOENT') throw error;
+  });
+  const result = spawnSync(process.execPath, [client, ...args], {
+    encoding: 'utf8',
+    env: process.env,
+    stdio: ['ignore', 'ignore', 'pipe'],
+    maxBuffer: 1024 * 1024,
+  });
+  if (result.error || result.signal || ![0, 1].includes(result.status)) {
+    throw new Error(`Canonical client did not complete deterministically for ${args[0]}`);
+  }
   let report;
   try {
-    report = JSON.parse(result.stdout);
+    report = JSON.parse(await fs.readFile(reportFile, 'utf8'));
   } catch {
-    throw new Error(`Canonical client returned unreadable output for ${args[0]}`);
+    throw new Error(`Canonical client left no readable report for ${args[0]}`);
+  }
+  if (typeof report?.ok !== 'boolean' || (result.status === 0) !== report.ok) {
+    throw new Error(`Canonical client exit status disagrees with its report for ${args[0]}`);
   }
   return report;
 }
 
+function reportMatches(report, { stage, code, site, pageId }) {
+  return report?.schemaVersion === 1
+    && report.ok === true
+    && report.stage === stage
+    && report.code === code
+    && report.scope?.site === site
+    && report.scope?.pageId === pageId;
+}
+
 function reportDigest(report, key) {
-  const value = String(report?.[key] || report?.evidence?.[key] || '');
+  const value = String(report?.[key] || report?.evidence?.[key] || report?.response?.[key] || '');
   if (!/^[a-f0-9]{64}$/u.test(value)) throw new Error(`Preflight report is missing ${key}`);
   return value;
 }
@@ -79,7 +107,16 @@ async function runBatch(planValue, outDir, { resume = false, execute = defaultEx
     }
     if (ledger.phase === 'blocked') {
       const blocked = ledger.pages.find((page) => page.status === 'blocked');
-      if (!blocked || blocked.stage !== 'patch-save' || !blocked.operationsSha256 || !blocked.candidateLayoutSha256) {
+      if (
+        !blocked
+        || blocked.stage !== 'patch-save'
+        || blocked.writeOutcome !== 'not-applied'
+        || !blocked.operationsSha256
+        || !blocked.layoutSha256
+        || !blocked.currentLayoutSha256
+        || !blocked.candidateLayoutSha256
+        || !blocked.compiledHtmlSha256
+      ) {
         throw new Error('Blocked ledger has no exact conflict evidence');
       }
       ledger.pages = ledger.pages.map((page) => (
@@ -89,6 +126,12 @@ async function runBatch(planValue, outDir, { resume = false, execute = defaultEx
       await writeJson(ledgerFile, ledger);
     }
   } else {
+    try {
+      await fs.stat(ledgerFile);
+      throw new Error('Batch ledger already exists; inspect and reconcile it, then use --resume or remove it explicitly');
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error;
+    }
     ledger = {
       schemaVersion: 1,
       artifact: 'monteby-layout-batch-ledger',
@@ -110,7 +153,9 @@ async function runBatch(planValue, outDir, { resume = false, execute = defaultEx
         'snapshot', '--site', plan.site, '--page-id', String(page.pageId), '--out-dir', pageDir,
         '--out', path.join(pageDir, 'snapshot-report.json'),
       ]);
-      if (!snapshotReport?.ok) {
+      if (!reportMatches(snapshotReport, {
+        stage: 'snapshot', code: 'SNAPSHOT_OK', site: plan.site, pageId: page.pageId,
+      })) {
         ledger.pages[index] = { pageId: page.pageId, status: 'blocked', stage: 'snapshot', code: snapshotReport?.code || 'UNKNOWN' };
         await writeJson(ledgerFile, ledger);
         return ledger;
@@ -120,16 +165,26 @@ async function runBatch(planValue, outDir, { resume = false, execute = defaultEx
         'patch-validate', '--site', plan.site, '--page-id', String(page.pageId), '--operations', page.operations,
         '--out-dir', pageDir, '--out', patchReportFile,
       ]);
-      if (!patchReport?.ok) {
+      if (!reportMatches(patchReport, {
+        stage: 'patch-validate', code: 'PATCH_VALIDATION_OK', site: plan.site, pageId: page.pageId,
+      }) || patchReport.evidence?.site !== plan.site || patchReport.evidence?.pageId !== page.pageId) {
         ledger.pages[index] = { pageId: page.pageId, status: 'blocked', stage: 'patch-validate', code: patchReport?.code || 'UNKNOWN' };
         await writeJson(ledgerFile, ledger);
         return ledger;
+      }
+      const layoutSha256 = reportDigest(patchReport.evidence, 'layoutSha256');
+      const currentLayoutSha256 = reportDigest(patchReport.response, 'currentLayoutSha256');
+      if (layoutSha256 !== currentLayoutSha256) {
+        throw new Error(`Patch preflight layout evidence disagrees for page ${page.pageId}`);
       }
       ledger.pages[index] = {
         pageId: page.pageId,
         status: 'preflighted',
         operationsSha256: reportDigest(patchReport, 'operationsSha256'),
+        layoutSha256,
+        currentLayoutSha256,
         candidateLayoutSha256: reportDigest(patchReport, 'candidateLayoutSha256'),
+        compiledHtmlSha256: reportDigest(patchReport, 'compiledHtmlSha256'),
         pageDir,
         patchReport: patchReportFile,
       };
@@ -146,15 +201,80 @@ async function runBatch(planValue, outDir, { resume = false, execute = defaultEx
     if (state.status !== 'preflighted') {
       throw new Error(`Page ${page.pageId} has no complete preflight evidence`);
     }
-    const saveReport = await execute([
-      'patch-save', '--site', plan.site, '--page-id', String(page.pageId), '--operations', page.operations,
-      '--out-dir', state.pageDir, '--patch-report', state.patchReport,
-      '--expected-operations-sha256', state.operationsSha256,
-      '--expected-candidate-layout-sha256', state.candidateLayoutSha256,
-      '--out', path.join(state.pageDir, 'patch-save-report.json'),
-    ]);
+    let saveReport;
+    try {
+      saveReport = await execute([
+        'patch-save', '--site', plan.site, '--page-id', String(page.pageId), '--operations', page.operations,
+        '--out-dir', state.pageDir, '--patch-report', state.patchReport,
+        '--expected-operations-sha256', state.operationsSha256,
+        '--expected-candidate-layout-sha256', state.candidateLayoutSha256,
+        '--expected-compiled-html-sha256', state.compiledHtmlSha256,
+        '--out', path.join(state.pageDir, 'patch-save-report.json'),
+      ]);
+    } catch {
+      ledger.pages[index] = {
+        ...state, status: 'blocked', stage: 'patch-save', code: 'PATCH_SAVE_OUTCOME_UNKNOWN', writeOutcome: 'unknown',
+      };
+      ledger.phase = 'blocked';
+      await writeJson(ledgerFile, ledger);
+      return ledger;
+    }
     if (!saveReport?.ok) {
-      ledger.pages[index] = { ...state, status: 'blocked', stage: 'patch-save', code: saveReport?.code || 'UNKNOWN' };
+      const code = saveReport?.code || 'UNKNOWN';
+      const writeOutcome = ['REST_CONFLICT', 'REST_PRECONDITION_REQUIRED'].includes(code)
+        ? 'not-applied'
+        : 'unknown';
+      ledger.pages[index] = { ...state, status: 'blocked', stage: 'patch-save', code, writeOutcome };
+      ledger.phase = 'blocked';
+      await writeJson(ledgerFile, ledger);
+      return ledger;
+    }
+    if (
+      !reportMatches(saveReport, {
+        stage: 'patch-save', code: 'PATCH_SAVE_OK', site: plan.site, pageId: page.pageId,
+      })
+      || saveReport.evidence?.site !== plan.site
+      || saveReport.evidence?.pageId !== page.pageId
+    ) {
+      ledger.pages[index] = {
+        ...state,
+        status: 'blocked',
+        stage: 'patch-save',
+        code: 'PATCH_SAVE_EVIDENCE_INVALID',
+        writeOutcome: 'unknown',
+      };
+      ledger.phase = 'blocked';
+      await writeJson(ledgerFile, ledger);
+      return ledger;
+    }
+    let savedCandidateLayoutSha256;
+    let savedCompiledHtmlSha256;
+    try {
+      savedCandidateLayoutSha256 = reportDigest(saveReport, 'candidateLayoutSha256');
+      savedCompiledHtmlSha256 = reportDigest(saveReport, 'compiledHtmlSha256');
+    } catch {
+      ledger.pages[index] = {
+        ...state,
+        status: 'blocked',
+        stage: 'patch-save',
+        code: 'PATCH_SAVE_EVIDENCE_INVALID',
+        writeOutcome: 'unknown',
+      };
+      ledger.phase = 'blocked';
+      await writeJson(ledgerFile, ledger);
+      return ledger;
+    }
+    if (
+      savedCandidateLayoutSha256 !== state.candidateLayoutSha256
+      || savedCompiledHtmlSha256 !== state.compiledHtmlSha256
+    ) {
+      ledger.pages[index] = {
+        ...state,
+        status: 'blocked',
+        stage: 'patch-save',
+        code: 'PATCH_SAVE_EVIDENCE_INVALID',
+        writeOutcome: 'unknown',
+      };
       ledger.phase = 'blocked';
       await writeJson(ledgerFile, ledger);
       return ledger;
@@ -198,4 +318,4 @@ async function main(argv = process.argv.slice(2)) {
 
 if (require.main === module) main().then((code) => { process.exitCode = code; });
 
-module.exports = { batchPlan, canonicalJson, main, parseArgs, runBatch };
+module.exports = { batchPlan, canonicalJson, defaultExecute, main, parseArgs, runBatch };

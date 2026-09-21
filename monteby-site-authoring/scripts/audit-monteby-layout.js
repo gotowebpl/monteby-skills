@@ -3,7 +3,15 @@
 
 const fs = require('fs');
 const path = require('path');
-const { publishedControlReferences, normalizeControlValue } = require('./control-contract');
+const {
+  buildControlIndex,
+  collectControlMetadata,
+  publishedControlReferences,
+  normalizeControlValue,
+  validateButtonFormPrefillRelationships,
+  validateQueryControlRelationships,
+} = require('./control-contract');
+const { buildResolvedMotionProfile, auditMotionLayout } = require('./motion-contract');
 
 const BLOCKED_PROPS = new Set([
   'classname',
@@ -147,6 +155,7 @@ function buildContractIndex(contractPayload) {
     : contractPayload.components || contractPayload.widgets || contractPayload.catalog || [];
   const entries = Array.isArray(raw) ? raw : Object.values(raw);
   const index = new Map();
+  const controlIndex = buildControlIndex(contractPayload);
 
   for (const entry of entries) {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
@@ -158,6 +167,10 @@ function buildContractIndex(contractPayload) {
     }
 
     const controlMetadata = collectControlMetadata([entry.controls, entry.schema]);
+    for (const prop of controlMetadata.props) {
+      const exactControl = controlIndex.get(`${name}.${prop}`);
+      if (exactControl) controlMetadata.propRules.set(prop, exactControl);
+    }
     const aiProps = arrayOfStrings(entry.aiProps);
     const allowedProps = unique(aiProps.concat(controlMetadata.props)).filter((prop) => !isBlockedAuthoringProp(prop));
     const allowedParents = unique(arrayOfStrings(entry.allowedParents));
@@ -182,186 +195,12 @@ function buildContractIndex(contractPayload) {
   return index;
 }
 
-function objectKeys(value) {
-  return value && typeof value === 'object' && !Array.isArray(value) ? Object.keys(value) : [];
-}
-
 function arrayOfStrings(value) {
   return Array.isArray(value) ? value.filter((item) => typeof item === 'string') : [];
 }
 
 function unique(items) {
   return [...new Set(items.filter(Boolean))];
-}
-
-function collectControlMetadata(value) {
-  const props = [];
-  const propOptions = new Map();
-  const propRules = new Map();
-  const repeaterItemProps = new Map();
-
-  visit(value, (item) => {
-    if (!item || typeof item !== 'object' || Array.isArray(item)) {
-      return;
-    }
-    if (typeof item.type !== 'string' || !item.type.trim()) {
-      return;
-    }
-    const itemProps = [];
-    if (typeof item.prop === 'string') {
-      itemProps.push(item.prop);
-    }
-    if (Array.isArray(item.props)) {
-      itemProps.push(...arrayOfStrings(item.props));
-    }
-    if (item.spacingProps && typeof item.spacingProps === 'object') {
-      itemProps.push(...objectKeys(item.spacingProps).map((key) => item.spacingProps[key]).filter((prop) => typeof prop === 'string'));
-    }
-
-    props.push(...itemProps);
-
-    if (itemProps.length > 0) {
-      const rule = { type: item.type };
-      if (typeof item.min === 'number') {
-        rule.min = item.min;
-      }
-      if (typeof item.max === 'number') {
-        rule.max = item.max;
-      }
-      if (typeof item.step === 'number') {
-        rule.step = item.step;
-      }
-      if (Array.isArray(item.units)) {
-        rule.units = item.units.filter((unit) => typeof unit === 'string');
-      }
-
-      for (const prop of itemProps) {
-        propRules.set(prop, { ...(propRules.get(prop) || {}), ...rule });
-      }
-
-      if (item.type === 'repeater') {
-        const itemPropsMetadata = repeaterItemPropNames(item);
-        if (itemPropsMetadata) {
-          for (const prop of itemProps) {
-            repeaterItemProps.set(prop, itemPropsMetadata);
-          }
-        }
-      }
-    }
-
-    const optionValues = collectOptionValues(item.options);
-    if (optionValues.length > 0) {
-      for (const prop of itemProps) {
-        const existing = propOptions.get(prop) || new Set();
-        for (const optionValue of optionValues) {
-          existing.add(optionValue);
-        }
-        propOptions.set(prop, existing);
-      }
-    }
-  });
-
-  return { props, propOptions, propRules, repeaterItemProps };
-}
-
-function repeaterItemPropNames(control) {
-  const hasItemControls = Object.prototype.hasOwnProperty.call(control, 'itemControls');
-  const hasItemFields = Object.prototype.hasOwnProperty.call(control, 'itemFields');
-  if (!hasItemControls && !hasItemFields) {
-    return null;
-  }
-
-  const names = new Set();
-  const stack = [];
-  if (hasItemControls) {
-    stack.push({ value: control.itemControls, fieldMap: false });
-  }
-  if (hasItemFields) {
-    stack.push({ value: control.itemFields, fieldMap: true });
-  }
-
-  while (stack.length > 0) {
-    const entry = stack.pop();
-    const metadata = entry?.value;
-    if (typeof metadata === 'string') {
-      if (entry.fieldMap && metadata.trim()) {
-        names.add(metadata.trim());
-      }
-      continue;
-    }
-    if (Array.isArray(metadata)) {
-      for (const item of metadata) {
-        stack.push({ value: item, fieldMap: entry.fieldMap });
-      }
-      continue;
-    }
-    if (!metadata || typeof metadata !== 'object') {
-      continue;
-    }
-
-    const directProps = [];
-    if (typeof metadata.prop === 'string') {
-      directProps.push(metadata.prop);
-    }
-    if (Array.isArray(metadata.props)) {
-      directProps.push(...arrayOfStrings(metadata.props));
-    }
-    if (metadata.spacingProps && typeof metadata.spacingProps === 'object') {
-      directProps.push(...objectKeys(metadata.spacingProps)
-        .map((key) => metadata.spacingProps[key])
-        .filter((prop) => typeof prop === 'string'));
-    }
-    for (const prop of directProps.map((prop) => prop.trim()).filter(Boolean)) {
-      names.add(prop);
-    }
-
-    if (Array.isArray(metadata.sections)) {
-      for (const section of metadata.sections) {
-        stack.push({ value: section?.fields, fieldMap: false });
-      }
-    }
-    if (Object.prototype.hasOwnProperty.call(metadata, 'fields')) {
-      stack.push({ value: metadata.fields, fieldMap: entry.fieldMap });
-    }
-
-    if (entry.fieldMap && directProps.length === 0 && !metadata.type && !metadata.fields && !metadata.sections) {
-      for (const [key, descriptor] of Object.entries(metadata)) {
-        if (descriptor && (typeof descriptor === 'object' || typeof descriptor === 'string')) {
-          names.add(key);
-        }
-      }
-    }
-  }
-
-  return names;
-}
-
-function collectOptionValues(options) {
-  if (Array.isArray(options)) {
-    return uniqueOptionValues(options.map(optionValue).filter((value) => value !== null));
-  }
-
-  if (options && typeof options === 'object') {
-    return uniqueOptionValues(Object.values(options).map(optionValue).filter((value) => value !== null));
-  }
-
-  return [];
-}
-
-function uniqueOptionValues(items) {
-  return [...new Set(items.filter((item) => typeof item !== 'undefined' && item !== null))];
-}
-
-function optionValue(option) {
-  if (isScalar(option)) {
-    return normalizeComparableValue(option);
-  }
-
-  if (option && typeof option === 'object' && Object.prototype.hasOwnProperty.call(option, 'value') && isScalar(option.value)) {
-    return normalizeComparableValue(option.value);
-  }
-
-  return null;
 }
 
 function isScalar(value) {
@@ -416,6 +255,23 @@ function audit(nodeMap, contractIndex, referenceManifest, minMediaSurfaces, opti
   }
 
   auditGraphIntegrity(report, nodeMap);
+  const relationshipFindings = [
+    ...validateButtonFormPrefillRelationships(nodeMap, options.liveContract),
+    ...validateQueryControlRelationships(nodeMap, options.liveContract),
+  ];
+  for (const finding of relationshipFindings) {
+    error(report, finding.code, `${finding.path}: ${finding.message}`);
+  }
+  const motionAudit = auditMotionLayout(nodeMap, options.motionProfile);
+  report.motion = {
+    available: options.motionProfile?.available === true,
+    fallback: options.motionProfile?.fallback || '',
+    claims: motionAudit.claims,
+    stats: motionAudit.stats,
+  };
+  for (const finding of motionAudit.errors) {
+    error(report, finding.code, finding.message);
+  }
   auditReferenceProvenance(report, referenceManifest, options);
   auditReferenceMedia(report, nodeMap, referenceManifest, minMediaSurfaces, options);
 
@@ -496,6 +352,7 @@ function auditProps(report, nodeId, type, props, contract) {
   }
 
   for (const [prop, value] of Object.entries(props)) {
+    const propErrorCount = report.errors.length;
     if (isBlockedAuthoringProp(prop)) {
       error(report, 'blocked_prop', `${nodeId} (${type}) uses blocked prop "${prop}".`);
       continue;
@@ -505,20 +362,21 @@ function auditProps(report, nodeId, type, props, contract) {
     }
     if (contract && typeof value === 'string' && /^var\s*\(/iu.test(value.trim())) {
       const normalized = normalizeControlValue(
-        contract.propRules.get(prop) || {}, value, contract.propReferences.get(prop),
+        contract.propRules.get(prop) || {}, value, contract.propReferences.get(prop), { componentProps: props },
       );
       if (!normalized.accepted) {
         error(report, 'invalid_prop_value', `${nodeId} (${type}) uses CSS reference "${value}" not published for prop "${prop}".`);
       }
       continue;
     }
+    if (value === '' && !contract?.propRules?.has(prop)) continue;
     if (contract && contract.propOptions && contract.propOptions.has(prop) && isScalar(value) && value !== '') {
       const allowedValues = contract.propOptions.get(prop);
       if (!allowedValues.has(normalizeComparableValue(value))) {
         error(report, 'invalid_prop_value', `${nodeId} (${type}) uses invalid value "${value}" for prop "${prop}". Allowed: ${[...allowedValues].join(', ')}.`);
       }
     }
-    if (contract && contract.propRules && contract.propRules.has(prop) && value !== '') {
+    if (contract && contract.propRules && contract.propRules.has(prop)) {
       const rule = contract.propRules.get(prop);
       const hasDefault = contract.defaults && Object.prototype.hasOwnProperty.call(contract.defaults, prop);
       const defaultValue = hasDefault ? contract.defaults[prop] : undefined;
@@ -571,6 +429,24 @@ function auditProps(report, nodeId, type, props, contract) {
         }
       }
     });
+    if (contract?.propRules?.has(prop) && report.errors.length === propErrorCount) {
+      const rule = contract.propRules.get(prop);
+      const normalized = normalizeControlValue(
+        rule,
+        value,
+        contract.propReferences.get(prop),
+        { componentProps: props },
+      );
+      if (!normalized.accepted) {
+        error(
+          report,
+          normalized.contractError ? 'invalid_control_contract' : 'invalid_prop_value',
+          `${nodeId} (${type}) uses invalid value for prop "${prop}": ${normalized.reason}.`
+        );
+      } else if (['object', 'repeater'].includes(rule.type) && normalized.changed) {
+        error(report, 'invalid_prop_value', `${nodeId} (${type}) uses a nested value for prop "${prop}" that is not contract-normalized.`);
+      }
+    }
   }
 }
 
@@ -1809,6 +1685,8 @@ function main() {
       requireRealReference: options.requireRealReference,
       requireMarketplaceMedia: options.requireMarketplaceMedia,
       referenceManifestPath: options.referenceManifest,
+      motionProfile: buildResolvedMotionProfile(contract),
+      liveContract: contract,
     }
   );
   printReport(report, options.json);

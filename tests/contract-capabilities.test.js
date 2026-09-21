@@ -60,3 +60,117 @@ test('composition gate requires Builder 1.5.1 and the declared live composition 
   }
   assert.equal(evaluateFeatureGate({ productVersion: '1.5.1', authoring: { compositions: { version: 1 } } }, 'compositions', manifest).ok, true);
 });
+
+test('global styles PATCH gate requires Builder 1.6.0 and the advertised patch method', () => {
+  assert.equal(evaluateFeatureGate({ productVersion: '1.5.3', globalStyles: { resource: { patchMethod: 'PATCH' } } }, 'globalStylesPatch', manifest).code, 'blocked_plugin_version');
+  for (const resource of [undefined, {}, { patchMethod: 'PUT' }]) {
+    assert.equal(evaluateFeatureGate({ productVersion: '1.6.0', globalStyles: { resource } }, 'globalStylesPatch', manifest).code, 'blocked_contract_inconsistency');
+  }
+  assert.deepEqual(evaluateFeatureGate({ productVersion: '1.6.0', globalStyles: { resource: { patchMethod: 'PATCH' } } }, 'globalStylesPatch', manifest), {
+    ok: true,
+    code: 'feature_available',
+    productVersion: '1.6.0',
+    featureName: 'globalStylesPatch',
+  });
+});
+
+test('design profile gate requires Builder 1.6.0 and the declared live profile version', () => {
+  assert.equal(evaluateFeatureGate({ productVersion: '1.5.3', authoring: { designProfiles: { version: 1 } } }, 'designProfiles', manifest).code, 'blocked_plugin_version');
+  for (const designProfiles of [undefined, {}, { version: 2 }]) {
+    assert.equal(evaluateFeatureGate({ productVersion: '1.6.0', authoring: { designProfiles } }, 'designProfiles', manifest).code, 'blocked_contract_inconsistency');
+  }
+  assert.equal(evaluateFeatureGate({ productVersion: '1.6.0', authoring: { designProfiles: { version: 1 } } }, 'designProfiles', manifest).ok, true);
+});
+
+test('motion authoring requires both the versioned recipe catalog and advertised capability', () => {
+  const contract = {
+    productVersion: '1.6.0',
+    authoring: { capabilities: { motionRecipes: true }, motion: { version: 1 } },
+  };
+  assert.equal(evaluateFeatureGate(contract, 'motionAuthoring', manifest).ok, true);
+  assert.equal(evaluateFeatureGate(contract, 'motionRecipes', manifest).ok, true);
+  contract.authoring.capabilities.motionRecipes = false;
+  assert.equal(evaluateFeatureGate(contract, 'motionRecipes', manifest).code, 'blocked_contract_inconsistency');
+});
+
+test('contract projection gates validate the response that was actually requested', () => {
+  const projections = {
+    contractLightProjection: 'light',
+    contractDesignProjection: 'design',
+    contractAuthoringProjection: 'authoring',
+    contractCatalogsProjection: 'catalogs',
+  };
+  for (const [featureName, mode] of Object.entries(projections)) {
+    assert.equal(evaluateFeatureGate({ productVersion: '1.6.0', mode }, featureName, manifest).ok, true);
+    assert.equal(evaluateFeatureGate({ productVersion: '1.6.0', mode: 'full' }, featureName, manifest).code, 'blocked_contract_inconsistency');
+  }
+  assert.equal(evaluateFeatureGate({
+    productVersion: '1.6.0',
+    mode: 'authoring',
+    componentsMode: 'summary',
+  }, 'contractComponentsSummary', manifest).ok, true);
+});
+
+test('composition instantiation, composition plan and revision restore require advertised live resources', () => {
+  const contract = {
+    productVersion: '1.6.0',
+    authoring: { compositions: { resources: {
+      instantiate: { method: 'POST' },
+      plan: { method: 'POST' },
+    } } },
+    layoutPersistence: { resources: { restoreRevision: { method: 'POST' } } },
+  };
+  assert.equal(evaluateFeatureGate(contract, 'compositionInstantiate', manifest).ok, true);
+  assert.equal(evaluateFeatureGate(contract, 'compositionPlan', manifest).ok, true);
+  assert.equal(evaluateFeatureGate(contract, 'revisionRestore', manifest).ok, true);
+  delete contract.authoring.compositions.resources.instantiate;
+  assert.equal(evaluateFeatureGate(contract, 'compositionInstantiate', manifest).code, 'blocked_contract_inconsistency');
+  delete contract.layoutPersistence.resources.restoreRevision;
+  assert.equal(evaluateFeatureGate(contract, 'revisionRestore', manifest).code, 'blocked_contract_inconsistency');
+});
+
+test('abilities use the REST fallback when the host WordPress version cannot register them', () => {
+  assert.equal(evaluateFeatureGate({ productVersion: '1.5.3' }, 'abilities', manifest).code, 'blocked_plugin_version');
+  assert.deepEqual(evaluateFeatureGate({
+    productVersion: '1.6.0',
+    authoring: { capabilities: { abilities: false } },
+  }, 'abilities', manifest), {
+    ok: false,
+    code: 'feature_unavailable',
+    productVersion: '1.6.0',
+    featureName: 'abilities',
+    fallback: 'rest-only',
+  });
+  assert.equal(evaluateFeatureGate({
+    productVersion: '1.6.0',
+    authoring: { capabilities: { abilities: true } },
+  }, 'abilities', manifest).ok, true);
+  assert.equal(evaluateFeatureGate({
+    productVersion: '1.6.0',
+    authoring: { capabilities: {} },
+  }, 'abilities', manifest).code, 'blocked_contract_inconsistency');
+  assert.equal(evaluateFeatureGate({
+    productVersion: '1.6.0',
+    authoring: { capabilities: { abilities: 'false' } },
+  }, 'abilities', manifest).code, 'blocked_contract_inconsistency');
+  assert.equal(evaluateFeatureGate({
+    productVersion: '1.6.0',
+    authoring: { capabilities: { providerRenderedWidgetSave: false } },
+  }, 'providerRenderedWidgetSave', manifest).code, 'blocked_contract_inconsistency');
+});
+
+test('every Builder 1.6 gate is optional, names a fallback, and blocks older plugins by version', () => {
+  const gates = ['contractLightProjection', 'contractDesignProjection', 'contractAuthoringProjection',
+    'contractCatalogsProjection', 'contractComponentsSummary', 'annotatedRender', 'renderLayoutFilter',
+    'renderGlobalStylesFilter', 'renderGlobalTemplateFilter', 'previewGlobalTemplates',
+    'compositionInstantiate', 'compositionPlan', 'revisionRestore', 'bulkCreate', 'globalStylesPatch',
+    'designProfiles', 'motionAuthoring', 'motionRecipes', 'contractComponent', 'abilities'];
+  for (const name of gates) {
+    const gate = manifest.featureGates[name];
+    assert.equal(gate.minimumBuilderVersion, '1.6.0', `${name} minimum`);
+    assert.equal(gate.optional, true, `${name} optional`);
+    assert.match(gate.fallback, /^[a-z][a-z0-9-]+$/, `${name} fallback slug`);
+    assert.equal(evaluateFeatureGate({ productVersion: '1.5.3' }, name, manifest).code, 'blocked_plugin_version');
+    assert.equal(evaluateFeatureGate({ productVersion: '1.6.0' }, name, manifest).code, 'blocked_contract_inconsistency');
+  }
+});

@@ -1,5 +1,7 @@
 'use strict';
 
+const { buildResolvedMotionProfile } = require('./motion-contract');
+
 const SAFE_ID_PATTERN = /^[a-z0-9_-]+$/;
 const COLOR_PROP_PATTERN = /(?:^|(?:background|border|button|input|label|text|accent|focus|checkbox))color$/i;
 const LOCAL_TYPOGRAPHY_PROPS = new Set([
@@ -224,6 +226,7 @@ function buildResolvedDesignProfile(contract, projectTokens = {}) {
     layout: isRecord(contract?.designTokens?.layout) ? { ...contract.designTokens.layout } : {},
     typographyPresets: typographyPresets(globalStyles, projectTokens),
     componentProps: componentProps(contract),
+    motion: buildResolvedMotionProfile(contract),
     conflicts,
     customCSSConsumed: false,
     rejectedProjectTokens,

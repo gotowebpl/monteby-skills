@@ -989,6 +989,11 @@ function initialReport(options) {
     fidelityPassed: false,
     canonicalVerification: false,
     productReady: false,
+    qualityGates: {
+      evaluated: false,
+      complete: false,
+      boundary: 'canonical-saved-and-public-evidence',
+    },
     canonicalViewportCoverage: {
       required: CANONICAL_VIEWPORTS,
       requested: requestedViewports,
@@ -1112,6 +1117,7 @@ function writeIterationMarkdown(report) {
     `- Final fidelity passed: ${report.fidelityPassed ? 'yes' : 'no'}`,
     `- Canonical WordPress verification: ${report.canonicalVerification ? 'yes' : 'no'}`,
     `- Product ready / REST verified: ${report.productReady ? 'yes' : 'no'}`,
+    `- Canonical quality gates: ${report.qualityGates?.complete ? 'complete' : 'not evaluated'}`,
     `- Canonical viewport coverage: ${report.canonicalViewportCoverage?.complete ? 'complete' : 'incomplete'}`,
     `- Missing canonical viewports: ${(report.canonicalViewportCoverage?.missingLabels || []).join(', ') || 'none'}`,
     `- Label: ${report.label}`,
@@ -1976,6 +1982,11 @@ function finish(report, status, blockers = []) {
   report.fidelityPassed = false;
   report.canonicalVerification = false;
   report.productReady = false;
+  report.qualityGates = {
+    evaluated: false,
+    complete: false,
+    boundary: 'canonical-saved-and-public-evidence',
+  };
   report.repairQueue = buildRepairQueue(report);
   report.nextAction = nextActionFor(report);
   persist(report);

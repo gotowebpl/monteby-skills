@@ -37,6 +37,109 @@ pass, execute the runner's fresh `snapshot_canonical_page` action and from that
 point follow every `nextAction` without exception. The bootstrap snapshot is
 never reused for save.
 
+### Builder 1.6 discovery and document resources
+
+Each item is gated in `references/site-contract-compatibility.json`
+(`productVersion >= 1.6.0` plus the named capability); an older Builder keeps
+the full-contract flow and the fallback named there. Discover every route from
+the live contract's `layoutPersistence.resources`; never remember it.
+
+- Per-turn discovery reads
+  `GET /wp-json/monteby/v1/contract?mode=authoring&components=summary`
+  (`componentsMode: summary`: name, label, categoryLabel, isCanvas,
+  allowedParents, aiHints) and fetches one schema on demand from
+  `GET /wp-json/monteby/v1/contract/components/{name}`
+  (`layoutPersistence.resources.contractComponent`, own private `ETag`,
+  `404 monteby_site_authoring_unknown_component`). The compiler,
+  `normalize-layout.js` and the Kit still consume the full contract file; a
+  summary projection is a prompt catalog, not a validator input.
+- Evaluate the projection gate against the response that was requested, not
+  against a remembered full contract: `contractLightProjection`,
+  `contractDesignProjection`, `contractAuthoringProjection`,
+  `contractCatalogsProjection`, and `contractComponentsSummary` verify the
+  returned `mode`/`componentsMode`. A missing projection falls back to the full
+  live contract; it never authorizes cached schema from another site.
+- `GET /wp-json/monteby/v1/contract?mode=catalogs` returns only `iconCatalog`
+  and `fontCatalog` with their `ETag`; fetch them once per run and revalidate
+  with `If-None-Match`. The server validates `icon-svg` props as published
+  Material Symbols names and `font-picker` props as `fontCatalog` values
+  (system `_system_*` tokens, Font Library choices, registered Google
+  families, `var(--gcb-font-*)`); an invented name is `invalid_prop_value`,
+  never a browser fallback. Author only values present in the fetched
+  catalogs.
+- `GET /wp-json/monteby/v1/pages/{id}/context` answers `postId`, `postType`,
+  `documentType`, `title`, `slug`, `status`, `viewUrl`, `editUrl`,
+  `hasLayout`, `layoutState`, `nodeCount`, `postModifiedGmt`, `presentation`,
+  `effectiveLayout`, `headerPostId` and `footerPostId` before a layout read;
+  `GET /wp-json/monteby/v1/site/pages` (`hasLayout`, `postType`, `page`,
+  `perPage` up to 100) lists editable documents newest change first. Use them
+  for scope discovery; the versioned layout resource remains the snapshot
+  identity source for `layout-before.json`.
+  `layoutPersistence.templatePostType` (`gotoweb_template`) and
+  `documentTypes` name the vocabulary of every `documentType` field.
+- `POST /wp-json/monteby/v1/site/pages/bulk { requestId?, items[] }`
+  (`layoutPersistence.resources.bulkCreate`, `maxItems` 25) creates several
+  documents in one write; each item is `{ title, slug?, status?, postType?,
+  layout?, seo?, presentation? }` and is validated before the first post
+  exists. Always send a `requestId` (`[A-Za-z0-9_-]{1,64}`): a repeat with
+  the same id answers `replayed: true` with the original `created[]` and
+  creates nothing, so a timeout never duplicates pages.
+  `400 monteby_site_authoring_invalid_bulk_items` lists
+  `{ itemIndex, code, message }` per failing item and creates nothing;
+  `monteby_site_authoring_bulk_create_failed` names the failed `itemIndex`
+  and the `created` items that stay, so reconcile before any resend. Without
+  the gate, create pages one at a time through the sequential
+  `batch-layout-client.js` path. Menus are not written here.
+- `POST /wp-json/gotoweb-craft/v1/settings/template-create { type, title?,
+  layout? }` validates the layout against the live contract before the post
+  exists, persists it as the first revision and returns `id`, `editUrl`,
+  `documentType`, `revisionId` and `postModifiedGmt`, so the next versioned
+  layout PUT has its precondition without a read. Creation never activates
+  the template; selection stays a separate `selectionResource` PUT.
+- On WordPress 6.9+ with `authoring.capabilities.abilities: true`, Builder
+  registers the same operations as `monteby/*` abilities
+  (`authoring.abilities.names`). They are an alternative transport for the
+  identical contract, gates and preconditions. A Builder 1.6 contract that
+  explicitly publishes `abilities: false` reports `feature_unavailable` and
+  uses the legal `rest-only` fallback; a missing or malformed value remains
+  `blocked_contract_inconsistency`.
+- Before using server composition planning or revision restore, require the
+  `compositionPlan` or `revisionRestore` gate respectively. These gates verify
+  the resource descriptors published by the current live contract; an absent
+  restore descriptor falls back to an explicit versioned layout save and must
+  never be replaced by a direct post-meta write.
+
+### Trusted request-scoped render filters
+
+The `renderLayoutFilter`, `renderGlobalStylesFilter` and
+`renderGlobalTemplateFilter` gates describe PHP integration seams, not an
+alternative authoring transport. Use them only inside trusted WordPress code
+that has already authenticated the request and checked the relevant edit or
+design capability. Scope every callback to one intended preview request and
+exact post, document type or template role; never enable one from an arbitrary
+public query parameter, cookie or page payload. Remove the callback after the
+request when the host process can outlive it.
+
+- `monteby/render/layout_json` may return a fully validated candidate JSON only
+  for the exact `(postId, documentType)` requested. It does not replace REST
+  layout reads or the editor document. Without `renderLayoutFilter`, use the
+  official REST preview and the versioned save flow; do not patch post meta.
+- `monteby/render/global_styles` may return a complete validated candidate only
+  for the intended `front`, `preview` or `editor` context. Ordinary authoring
+  should prefer the advertised `POST /monteby/v1/preview` `globalStyles`
+  candidate. Without `renderGlobalStylesFilter`, preview using stored styles
+  and report that the site-wide candidate could not be rendered.
+- `monteby/render/global_template_post_id` may select only an existing,
+  published template of the requested `header` or `footer` role. Without
+  `renderGlobalTemplateFilter`, retain the stored active selection; use
+  `previewGlobalTemplates` only to frame a document with that stored chrome.
+
+Candidate renders must not persist layouts, selections or styles. They bypass
+normal render/font-profile caches and must not populate them. A filtered public
+request is diagnostic evidence only: canonical completion still requires the
+approved versioned write, fresh read and saved WordPress/PHP render. If a gate
+is absent, use its named fallback and never install a remembered hook or route.
+
 ## Required inputs
 
 Local visual work requires:
@@ -125,10 +228,10 @@ Every artifact is JSON unless its name says otherwise.
 | `layout-draft.json` | `draft-monteby-layout.js` | contract-valid generated node map |
 | `layout.json` | iteration runner | current candidate under repair |
 | `visual-iteration-report.json` | `run-visual-iteration.js` | complete repair queue, exactly one next action, SHA-256 bindings for plan, candidate, both contract files, and both manifests |
-| `layout-before.json` | `wordpress-layout-client.js snapshot` | scoped site/document envelope from the layout resource: `id`, `postType`, `viewUrl`, optional `renderContextUrl`, node map, presentation, and `postModifiedGmt` |
-| validation report | `wordpress-layout-client.js validate` | server accepted the exact candidate SHA-256 |
-| save report | `wordpress-layout-client.js save` | scoped site/page, same SHA-256, conflict check, successful save |
-| PHP preview + report | `wordpress-layout-client.js preview` | scoped `PREVIEW_OK`, same save report and SHA-256 |
+| `layout-before.json` | `wordpress-layout-client.js snapshot` | scoped site/document envelope from the advertised layout resource: requested `id`, `postType`, `viewUrl`, optional `renderContextUrl`, exact node map, matching descriptor-named layout digest, presentation, and version token |
+| validation report | `wordpress-layout-client.js validate` | advertised validation resource accepted the exact candidate SHA-256 and returned `valid: true` with its evaluated `lint` array |
+| save report | `wordpress-layout-client.js save` | scoped site/page identity, submitted and canonical validated-candidate SHA-256, token-plus-digest conflict check, valid descriptor-named response token, saved-response representation SHA-256, and canonical readback with the same token and saved representation SHA-256 |
+| PHP preview + report | `wordpress-layout-client.js preview` | scoped `PREVIEW_OK` that rendered the exact canonical readback representation from the save report |
 | final screenshots/diffs | capture and benchmark scripts | all canonical viewports after the canonical save; zero aggregate and per-viewport mismatch |
 
 An artifact is not optional because a later step appears possible without it.
@@ -299,24 +402,50 @@ output. Execute that action directly; no separate queue-applied gate exists.
 ### CANONICAL_SNAPSHOT
 
 Snapshot the exact live page immediately before validation/save. This step is
-read-only. Store presentation settings and `postModifiedGmt`.
+read-only. Store presentation settings, the requested numeric document `id`,
+the token from the field named by the live `layoutPersistence.versionField`
+(currently `postModifiedGmt`), and the matching canonical layout digest named
+by `layoutDigestField`.
 
 ### REST_VALIDATE
 
-Send the exact candidate node map to the canonical validation endpoint. A local
-audit does not replace server validation.
+Send the exact candidate node map through the validation method, path, carrier,
+and context field advertised in the live `layoutPersistence` descriptor. The
+current Builder's `/monteby/v1/validate`, `nodeMap`, and `postId` names are
+examples, not fixed client constants. Missing or unsupported descriptors stop
+the run; a local audit does not replace server validation. Require the response
+to contain `valid: true` and an evaluated `lint` array.
 
 For a bounded existing-node edit, use the separate operation branch documented
 in `partial-layout-operations.md`: `patch-validate -> patch-save -> canonical
 review`. Enter it only after `CANONICAL_SNAPSHOT`. Its preflight must bind the
-snapshot version, exact operation batch, candidate layout, and compiled output;
+snapshot version and layout digest, exact operation batch, candidate layout,
+and compiled output; apply sends every descriptor-named precondition, including
+the compiled-output digest;
 it does not permit skipping the canonical review after apply.
 
 ### SAVE
 
-Before PUT, fetch the page again and compare `postModifiedGmt` with the
-snapshot. If it differs, stop with a conflict and make no write. Preserve the
-live presentation unless the user explicitly supplied a presentation override.
+Before the advertised write, fetch the page again and compare both the token
+named by `layoutPersistence.versionField` and the canonical digest named by
+`layoutDigestField` with the snapshot. If either differs, stop with a conflict
+and make no write. This catches a second write inside the timestamp token's
+resolution. Send both values through the descriptor's `writePreconditionField`
+and `writeDigestPreconditionField`. Current Builder names the version fields
+`postModifiedGmt` and `expectedModifiedGmt`; another compatible descriptor may
+name them differently. Preserve the live presentation unless the user explicitly
+supplied a presentation override.
+
+After a successful write require a non-empty token and exact saved
+representation, then read the canonical layout through the same descriptor.
+The token may equal the previous token only when the representation proves a
+no-op. The readback token must equal the write-response token and the readback
+node-map SHA-256 must equal the write-response representation SHA-256. Retain
+the submitted and canonical validated-candidate SHA-256 separately, because a
+declared migration may change the persisted representation. Every response in
+this chain must identify the requested page. An arbitrary `2xx` or
+`{ "saved": true }` is not sufficient evidence, and a failed or mismatched
+readback must never trigger an automatic repeat write.
 
 Never implement “fetch and repeat” after HTTP 409/428. Reconcile against the
 snapshot first.
@@ -329,8 +458,9 @@ another write; this is not a database-wide transaction.
 
 ### PHP_PREVIEW
 
-Render through WordPress/PHP after save. The saved REST response and a local
-preview are not sufficient.
+Render the exact canonical readback representation through WordPress/PHP after
+save. Do not re-submit the local pre-save candidate. The saved REST response and
+a local preview are not sufficient.
 
 ### FINAL_CAPTURE and FINAL_COMPARE
 
@@ -350,8 +480,17 @@ mismatch into a pass.
 - the candidate passes local contract and graph validation;
 - local full-page comparison passes at all canonical viewports;
 - the server validates the exact node map;
-- save succeeds without a concurrency conflict;
-- validate, save, and preview bind the same node-map SHA-256 and site/page;
+- save succeeds without a concurrency conflict and returns a valid version
+  token; an unchanged coarse-resolution token is accepted only when exact source/candidate
+  digest preconditions and canonical readback prove the write (and patch apply also proves the
+  exact preflighted compiled HTML digest);
+- the canonical readback carries that token and the exact saved-response
+  representation SHA-256, while the report separately retains the validated
+  candidate SHA-256;
+- the save evidence preserves the server's `valid: true` result and `lint`
+  array;
+- validate and save bind the submitted and canonical candidate SHA-256 to the
+  same site/page, while preview binds the exact canonical readback SHA-256;
 - the plan, candidate, source/copied contract, and reference/target manifests
   still match the SHA-256 bindings recorded by the passing local report;
 - the confirmed public URL shares the saved site's origin and is not the remote

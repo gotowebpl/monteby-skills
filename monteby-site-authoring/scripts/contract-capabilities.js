@@ -62,6 +62,15 @@ function evaluateFeatureGate(contract, featureName, compatibilityManifest) {
     ? Boolean(advertised) && typeof advertised === 'object' && !Array.isArray(advertised)
     : advertised === gate.expectedValue;
   if (!capabilityMatches) {
+    if (Object.hasOwn(gate, 'unavailableValue') && advertised === gate.unavailableValue) {
+      return {
+        ok: false,
+        code: 'feature_unavailable',
+        productVersion,
+        featureName,
+        fallback: gate.fallback,
+      };
+    }
     return {
       ok: false,
       code: 'blocked_contract_inconsistency',

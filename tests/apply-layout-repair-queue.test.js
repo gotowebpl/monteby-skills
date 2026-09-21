@@ -726,3 +726,70 @@ test('keeps every unknown repairQueue blocker hard and writes no candidate', () 
   assert.equal(report.blockers.length, 31);
   assert.equal(fs.existsSync(fixture.out), false);
 });
+
+test('repair queue never restores or invents motion from the measured source layout', () => {
+  const sourceLayout = {
+    ROOT: { type: { resolvedName: 'ROOT' }, nodes: ['section-a', 'section-b'], props: {} },
+    'section-a': node('Section', 'ROOT', [], { minHeight: '100px' }),
+    'section-b': node('Section', 'ROOT', [], { minHeight: '200px', motionPreset: 'slide' }),
+  };
+  const candidateLayout = {
+    ROOT: { type: { resolvedName: 'ROOT' }, nodes: ['section-a'], props: {} },
+    'section-a': node('Section', 'ROOT', [], { minHeight: '100px' }),
+  };
+  const bands = ['section-a', 'section-b'].map((generatedSectionId, order) => ({
+    order,
+    generatedSectionId,
+    viewports: {
+      desktop: viewport(100 + order * 100, 20),
+      tablet: viewport(90 + order * 100, 18),
+      mobile: viewport(80 + order * 100, 16),
+    },
+  }));
+  const contract = sectionContract();
+  contract.components[0].props = [...contract.components[0].aiProps, 'motionPreset'];
+  contract.components[0].aiProps.push('motionPreset');
+  contract.components[0].controls = [{ prop: 'motionPreset', type: 'select', options: ['none', 'slide'] }];
+  contract.authoring = {
+    capabilities: { motionRecipes: true },
+    motion: {
+      version: 1,
+      policy: {
+        defaultRepeat: 'once',
+        maxEntranceOwnersPerPage: 1,
+        maxFirstViewportEntranceOwners: 1,
+        maxPointerEffectsPerPage: 0,
+        maxPinnedScenesPerPage: 0,
+        maxBackgroundEffectsPerPage: 0,
+        maxStaggerSpanMs: 0,
+        maxEntranceDurationMs: 700,
+        maxEntranceDelayMs: 150,
+        maxEntranceDistancePx: 32,
+        forbiddenComponents: [],
+        prohibitedInputs: [],
+        rules: [],
+      },
+      recipes: [{ id: 'section-reveal', intent: 'reveal', components: ['Section'], props: { motionPreset: 'slide' } }],
+    },
+  };
+  const fixture = createFixture({
+    sourceLayout,
+    candidateLayout,
+    bands,
+    contract,
+    repairQueue: [{
+      code: 'restore_measured_band',
+      viewport: 'desktop',
+      referenceIndex: 1,
+      sectionId: 'section-b',
+      evidence: { sourceSectionId: 'section-b' },
+    }],
+  });
+
+  const result = runFixture(fixture);
+  assert.equal(result.status, 1, result.stderr || result.stdout);
+  const report = JSON.parse(result.stdout);
+  assert.equal(report.status, 'REPAIR_BLOCKED');
+  assert.equal(report.blockers[0].code, 'MOTION_REPAIR_MUTATION');
+  assert.equal(fs.existsSync(fixture.out), false);
+});
