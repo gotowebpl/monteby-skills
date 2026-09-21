@@ -189,13 +189,32 @@ function buildResolvedMotionProfile(contract) {
   }
 
   const recipeById = new Map(recipes.map((recipe) => [recipe.id, recipe]));
+  const motionSections = new Set();
   const propNamesByComponent = new Map();
   for (const recipe of recipes) {
     for (const component of recipe.components) {
       const propNames = propNamesByComponent.get(component) || new Set();
-      Object.keys(recipe.props).forEach((prop) => propNames.add(prop));
+      Object.keys(recipe.props).forEach((prop) => {
+        propNames.add(prop);
+        const section = controls.get(`${component}.${prop}`)?.section;
+        if (typeof section === 'string' && section) motionSections.add(section);
+      });
       propNamesByComponent.set(component, propNames);
     }
+  }
+  for (const [path, control] of controls) {
+    if (typeof control?.section !== 'string' || !motionSections.has(control.section)) continue;
+    const separator = path.indexOf('.');
+    if (separator < 1 || separator === path.length - 1) continue;
+    const component = path.slice(0, separator);
+    const prop = path.slice(separator + 1);
+    const propNames = propNamesByComponent.get(component) || new Set();
+    propNames.add(prop);
+    propNamesByComponent.set(component, propNames);
+  }
+  const propNames = new Set();
+  for (const componentProps of propNamesByComponent.values()) {
+    componentProps.forEach((prop) => propNames.add(prop));
   }
   return {
     available: recipes.length > 0,
@@ -204,7 +223,7 @@ function buildResolvedMotionProfile(contract) {
     policy: normalizePolicy(published.policy),
     recipes: Object.freeze(recipes),
     recipeById,
-    propNames: new Set(recipes.flatMap((recipe) => Object.keys(recipe.props))),
+    propNames,
     propNamesByComponent,
     rejectedRecipes,
   };

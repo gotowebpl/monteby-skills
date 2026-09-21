@@ -1368,10 +1368,30 @@ function httpFailureResult(stage, response, artifacts = {}) {
   let nextAction = 'Inspect the REST response and correct the request before running it again.';
 
   if (status === 409) {
-    code = 'REST_CONFLICT';
-    nextAction = brandingWrite
-      ? 'Take a new branding snapshot, review the newer identity, and issue one explicit save without retrying automatically.'
-      : 'Take a new snapshot, reconcile the remote layout and version token, revalidate, and run save again explicitly.';
+    const serverCode = isObject(response.data) && typeof response.data.code === 'string'
+      ? response.data.code
+      : '';
+    if (/(?:^|_)classic_conversion_required$/u.test(serverCode)) {
+      code = 'REST_CLASSIC_CONVERSION_REQUIRED';
+      nextAction = 'Stop the layout write. Preview and confirm conversion through the official classic-content conversion workflow before taking a new Monteby snapshot.';
+    } else if (/(?:^|_)(?:write_)?busy$/u.test(serverCode)) {
+      code = 'REST_WRITE_BUSY';
+      nextAction = 'Wait for the active write to finish, then fetch the canonical resource and repeat preflight before one explicit mutation.';
+    } else if (/(?:corrupt|invalid_stored_layout)/u.test(serverCode)) {
+      code = 'REST_CORRUPT_RESOURCE';
+      nextAction = 'Stop authoring and recover or repair the stored layout through the official recovery workflow before taking a new snapshot.';
+    } else if (/(?:runtime_integrity|theme_incompatible)/u.test(serverCode)) {
+      code = 'REST_ENVIRONMENT_INCOMPATIBLE';
+      nextAction = 'Repair Builder and Theme compatibility or runtime integrity, verify site health, then start discovery again.';
+    } else if (/(?:^|_)conflict$/u.test(serverCode) && !/(?:^|_)backup_conflict$/u.test(serverCode)) {
+      code = 'REST_CONFLICT';
+      nextAction = brandingWrite
+        ? 'Take a new branding snapshot, review the newer identity, and issue one explicit save without retrying automatically.'
+        : 'Take a new snapshot, reconcile the remote resource and version token, revalidate, and run the mutation again explicitly.';
+    } else {
+      code = 'REST_REQUEST_BLOCKED';
+      nextAction = 'Inspect the named server error and resolve that resource state explicitly. Do not treat this response as an editor conflict or retry the mutation.';
+    }
   } else if (status === 428) {
     code = 'REST_PRECONDITION_REQUIRED';
     nextAction = brandingWrite

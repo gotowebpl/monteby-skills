@@ -269,6 +269,23 @@ test('resolved motion profile accepts only recipes that round-trip through live 
   );
 });
 
+test('resolved motion profile accepts defaultless controls beside a partial value schema map', () => {
+  const live = contract();
+  live.components[0].defaults = { motionRepeat: 'once' };
+  live.components[0].valueSchemas = {
+    motionRepeat: { type: 'string', const: 'once' },
+  };
+  live.components[1].defaults = { pointerStrength: 14 };
+  live.components[1].valueSchemas = {
+    pointerStrength: { type: 'number', const: 14 },
+  };
+
+  const profile = buildResolvedMotionProfile(live);
+
+  assert.deepEqual(profile.recipes.map((recipe) => recipe.id), ['hero-reveal', 'magnetic-cta']);
+  assert.deepEqual(profile.rejectedRecipes.map((recipe) => recipe.id), ['invalid-missing-control']);
+});
+
 test('resolved motion profile fails closed for invalid policy semantics and published bounds', () => {
   for (const [prop, value] of [
     ['maxEntranceOwnersPerPage', 0],
@@ -443,6 +460,31 @@ test('motion audit requires one exact active recipe signature while tolerating n
   assert.equal(
     auditMotionLayout(wrongOwner, profile).errors.some((entry) => entry.code === 'motion_recipe_unmatched'),
     true
+  );
+
+  const advanced = contract();
+  advanced.components[0].controls = advanced.components[0].controls.map((entry) => ({
+    ...entry,
+    section: 'Motion',
+  }));
+  advanced.components[0].props.push('motionBlur');
+  advanced.components[0].aiProps.push('motionBlur');
+  advanced.components[0].controls.push(control('motionBlur', 'toggle', { section: 'Motion' }));
+  const advancedProfile = buildResolvedMotionProfile(advanced);
+  const blurred = layout();
+  Object.assign(blurred['section-1'].props, advancedProfile.recipeById.get('hero-reveal').props, {
+    motionBlur: true,
+  });
+  const advancedAudit = auditMotionLayout(blurred, advancedProfile);
+  assert.equal(
+    advancedAudit.errors.some((entry) => entry.code === 'motion_recipe_unmatched'),
+    true,
+    'an active live control from a published motion section must invalidate exact recipe identity'
+  );
+  assert.equal(
+    motionSignature(blurred, advancedProfile)[0].props.motionBlur,
+    true,
+    'the canonical signature must disclose the unmatched live motion control'
   );
 });
 

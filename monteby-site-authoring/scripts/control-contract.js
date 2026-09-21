@@ -894,7 +894,10 @@ function validatePublishedValueSchema(control, value) {
       defaultMatch: context?.hasDefault === true && sameJsonValue(value, context.defaultValue),
     };
   }
-  if (!isRecord(context.valueSchema) || !context.hasDefault) {
+  if (!context.hasDefault) {
+    return { valid: true, defaultMatch: false };
+  }
+  if (!isRecord(context.valueSchema)) {
     return { valid: false, contractError: true, reason: 'component valueSchemas do not cover the published default' };
   }
   const defaultSchema = schemaValidation(context.defaultValue, context.valueSchema, `${context.componentName}.${context.prop}.default`);

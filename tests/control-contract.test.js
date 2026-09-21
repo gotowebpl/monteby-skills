@@ -143,6 +143,26 @@ test('valueSchemas prove exact defaults without narrowing non-default authoring 
   const result = normalizeControlValue(missingSchema, 'Copy');
   assert.equal(result.accepted, false);
   assert.equal(result.contractError, true);
+
+  const intentionallyDefaultless = buildControlIndex({
+    components: [{
+      name: 'Section',
+      defaults: { tag: 'section' },
+      valueSchemas: { tag: { type: 'string', const: 'section' } },
+      controls: [
+        { type: 'text', props: ['anchorId'], maxLength: 64 },
+        { type: 'select', props: ['sectionMotionTarget'], options: ['element', 'content'] },
+      ],
+    }],
+  });
+  assert.deepEqual(normalizeControlValue(
+    intentionallyDefaultless.get('Section.anchorId'),
+    'hero',
+  ), { accepted: true, value: 'hero' });
+  assert.deepEqual(normalizeControlValue(
+    intentionallyDefaultless.get('Section.sectionMotionTarget'),
+    'content',
+  ), { accepted: true, value: 'content' });
 });
 
 test('host bindings enforce exact sources, prefixes, targets, schemas, and bounded media references', () => {

@@ -1731,10 +1731,10 @@ test('save blocks a presentation override when the live page exposes no presenta
   assert.deepEqual(server.errors, []);
 });
 
-test('save maps PUT 428 and 409 to stable non-retryable codes without retrying', async (t) => {
-  for (const [status, code] of [
-    [428, 'REST_PRECONDITION_REQUIRED'],
-    [409, 'REST_CONFLICT'],
+test('save maps PUT 428 and an explicit revision conflict to stable non-retryable codes without retrying', async (t) => {
+  for (const [status, code, serverCode] of [
+    [428, 'REST_PRECONDITION_REQUIRED', 'monteby_site_authoring_precondition_required'],
+    [409, 'REST_CONFLICT', 'monteby_site_authoring_layout_conflict'],
   ]) {
     const directory = tempDir(t);
     const layoutFile = path.join(directory, `layout-${status}.json`);
@@ -1760,8 +1760,7 @@ test('save maps PUT 428 and 409 to stable non-retryable codes without retrying',
         });
       } else {
         await readBody(request);
-        response.writeHead(status, { 'Content-Type': 'text/plain' });
-        response.end();
+        sendJson(response, status, { code: serverCode });
       }
     });
     writeJson(snapshotFile, pageSnapshot(server.site, 21, { postModifiedGmt: 'v1' }));
@@ -1787,6 +1786,56 @@ test('save maps PUT 428 and 409 to stable non-retryable codes without retrying',
       'POST /wp-json/monteby/v1/validate',
       'PUT /wp-json/monteby/v1/pages/21/layout',
     ]);
+    assert.deepEqual(server.errors, []);
+  }
+});
+
+test('save classifies non-concurrency 409 responses without entering the editor-conflict loop', async (t) => {
+  for (const [serverCode, expectedCode] of [
+    ['monteby_site_authoring_write_busy', 'REST_WRITE_BUSY'],
+    ['monteby_site_authoring_classic_conversion_required', 'REST_CLASSIC_CONVERSION_REQUIRED'],
+    ['monteby_site_authoring_corrupt_layout', 'REST_CORRUPT_RESOURCE'],
+    ['monteby_builder_theme_incompatible', 'REST_ENVIRONMENT_INCOMPATIBLE'],
+    ['monteby_site_authoring_bulk_replay_unverifiable', 'REST_REQUEST_BLOCKED'],
+  ]) {
+    const directory = tempDir(t);
+    const layoutFile = path.join(directory, `${expectedCode}.json`);
+    const snapshotFile = path.join(directory, `${expectedCode}-snapshot.json`);
+    writeJson(layoutFile, NODE_MAP);
+    let putCount = 0;
+    const server = await startServer(t, async (request, response) => {
+      if (request.url.endsWith('/contract')) return sendJson(response, 200, layoutContract());
+      if (request.method === 'GET') {
+        return sendJson(response, 200, {
+          ...layoutResponse(server.site, 21, 'v1'),
+          presentation: { layout: 'default', disableGlobalTemplates: false },
+        });
+      }
+      if (request.url.endsWith('/validate')) {
+        await readBody(request);
+        return sendJson(response, 200, {
+          valid: true,
+          lint: [],
+          nodeMap: NODE_MAP,
+          candidateLayoutSha256: LAYOUT_SHA256,
+        });
+      }
+      putCount += 1;
+      await readBody(request);
+      return sendJson(response, 409, { code: serverCode });
+    });
+    writeJson(snapshotFile, pageSnapshot(server.site, 21, { postModifiedGmt: 'v1' }));
+
+    const execution = await runClient([
+      'save', '--site', server.site, '--page-id', '21', '--layout', layoutFile,
+      '--snapshot', snapshotFile, '--expected-layout-sha256', LAYOUT_SHA256,
+      '--out', path.join(directory, `${expectedCode}-report.json`),
+    ]);
+
+    assertEnvelope(execution.result, { ok: false, stage: 'save', code: expectedCode });
+    assert.equal(execution.result.retryable, false);
+    assert.equal(execution.result.nextAction.id, 'blocked_client_error');
+    assert.equal(putCount, 1);
     assert.deepEqual(server.errors, []);
   }
 });
@@ -2650,7 +2699,9 @@ test('branding-save never retries revision conflicts or missing preconditions', 
       if (request.url.endsWith('/contract')) return sendJson(response, 200, brandingContract());
       if (request.method === 'GET') return sendJson(response, 200, brandingDocument());
       putCount += 1;
-      return sendJson(response, status, { code: `branding_${status}` });
+      return sendJson(response, status, {
+        code: status === 409 ? 'monteby_site_branding_conflict' : 'monteby_site_branding_precondition_required',
+      });
     });
     writeJson(snapshotFile, brandingSnapshot(server.site));
 
