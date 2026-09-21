@@ -664,7 +664,7 @@ function validateHostBinding(control, value, options) {
   const effective = isRecord(binding) ? binding : { source: controlSource };
   const supportedBindingFields = new Set([
     'source', 'valueField', 'dependsOn', 'emptyValue', 'prefix', 'kind', 'target',
-    'itemFields', 'schema', 'taxonomySource', 'termSource', 'assignedWhen',
+    'itemFields', 'schema', 'taxonomySource', 'termSource', 'assignedWhen', 'excludeValues',
   ]);
   const unsupportedBindingFields = Object.keys(effective).filter((key) => !supportedBindingFields.has(key));
   if (unsupportedBindingFields.length > 0) {
@@ -686,6 +686,11 @@ function validateHostBinding(control, value, options) {
   if (isRecord(effective.itemFields)
       && Object.values(effective.itemFields).some((itemBinding) => !isRecord(itemBinding))) {
     return { valid: false, contractError: true, reason: 'host binding itemFields entries must be objects' };
+  }
+  if (hasOwn(effective, 'excludeValues')
+      && (!Array.isArray(effective.excludeValues)
+        || effective.excludeValues.some((item) => !['string', 'number', 'boolean'].includes(typeof item)))) {
+    return { valid: false, contractError: true, reason: 'host binding excludeValues must be a scalar array' };
   }
   if (hasOwn(effective, 'assignedWhen')) {
     const assigned = effective.assignedWhen;
@@ -760,7 +765,10 @@ function validateHostBinding(control, value, options) {
       isRecord(choice) && choice.target === effective.target
     ));
   }
-  const matchingValues = publishedChoiceValues(matchingChoices, effective);
+  const excludedValues = Array.isArray(effective.excludeValues) ? effective.excludeValues : [];
+  const matchingValues = publishedChoiceValues(matchingChoices, effective)?.filter((choice) => (
+    !excludedValues.some((excluded) => sameJsonValue(excluded, choice))
+  ));
   return matchingValues?.some((choice) => sameJsonValue(choice, value))
     ? { valid: true }
     : { valid: false, reason: 'value is outside the exact published host choices' };

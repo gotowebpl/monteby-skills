@@ -150,6 +150,7 @@ test('host bindings enforce exact sources, prefixes, targets, schemas, and bound
     dynamicFields: {
       fields: [
         { key: 'post_title', target: 'text' },
+        { key: 'custom_field', target: 'text' },
         { key: 'field_gallery:photos', target: 'media' },
       ],
     },
@@ -181,6 +182,7 @@ test('host bindings enforce exact sources, prefixes, targets, schemas, and bound
             valueField: 'key',
             kind: 'dynamic-field',
             target: 'text',
+            excludeValues: ['custom_field'],
           },
         },
         controls: [{
@@ -218,6 +220,7 @@ test('host bindings enforce exact sources, prefixes, targets, schemas, and bound
   assert.equal(normalizeControlValue(gallery, 'field_gallery:photos').accepted, true);
   assert.equal(normalizeControlValue(gallery, 'post_title').accepted, false);
   assert.equal(normalizeControlValue(formDynamicValue, 'post_title').accepted, true);
+  assert.equal(normalizeControlValue(formDynamicValue, 'custom_field').accepted, false);
   assert.equal(normalizeControlValue(formDynamicValue, 'field_gallery:photos').accepted, false);
   assert.equal(normalizeControlValue(postType, 'post').accepted, true);
   assert.equal(normalizeControlValue(postType, '').accepted, false);
@@ -267,6 +270,23 @@ test('malformed controls and host bindings fail closed', () => {
     }],
   }).get('QueryLoop.postType');
   assert.equal(normalizeControlValue(sourceMismatch, 'post').contractError, true);
+
+  const malformedExclusion = buildControlIndex({
+    dynamicFields: { fields: [{ key: 'post_title', target: 'text' }] },
+    components: [{
+      name: 'FormBlock',
+      hostScopedProps: ['fields[].dynamicValue'],
+      hostBindings: {
+        'fields[].dynamicValue': {
+          source: 'dynamicFields.fields', kind: 'dynamic-field', target: 'text', excludeValues: 'post_title',
+        },
+      },
+      controls: [{
+        type: 'repeater', props: ['fields'], itemControls: [{ type: 'host-choice', props: ['dynamicValue'], source: 'dynamicFields.fields' }],
+      }],
+    }],
+  }).get('FormBlock.fields');
+  assert.equal(normalizeControlValue(nestedControlMap(malformedExclusion).get('dynamicValue'), 'post_title').contractError, true);
 
   for (const componentMetadata of [
     { hostScopedProps: 'postType' },
