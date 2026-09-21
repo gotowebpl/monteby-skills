@@ -5,8 +5,10 @@ const {
   normalizeControlValue,
   publishedControlReferences,
 } = require('./control-contract');
+const { canonicalSha256 } = require('./wordpress-layout-client');
 
 const MOTION_PLAN_SOURCES = new Set(['explicit-brief', 'measured-reference']);
+const SHA256_PATTERN = /^[a-f0-9]{64}$/u;
 const MOTION_FORBIDDEN_COMPONENT_FALLBACK = Object.freeze([]);
 const NON_CONTENT_COMPONENTS = new Set(['DecorativeShape', 'Divider', 'Spacer']);
 const STATE_COLLECTIONS = Object.freeze({
@@ -28,6 +30,80 @@ const REQUIRED_POLICY_BOUNDS = Object.freeze({
 
 function isRecord(value) {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
+}
+
+function normalizedViewportTargets(value) {
+  if (!Array.isArray(value)) return [];
+  return value.map((target) => ({
+    label: typeof target?.label === 'string' ? target.label.trim() : '',
+    width: Number.isFinite(Number(target?.width)) ? Number(target.width) : 0,
+    height: Number.isFinite(Number(target?.height)) ? Number(target.height) : 0,
+  })).filter((target) => target.label && target.width > 0 && target.height > 0);
+}
+
+function buildMotionPlanBindings(source, evidence, requests = []) {
+  if (!Array.isArray(requests)) throw new Error('motion plan requests must be an array');
+  const motionRequestsSha256 = canonicalSha256(requests);
+  if (source === 'explicit-brief') {
+    const sourceDocumentSha256 = String(evidence?.sourceDocumentSha256 || '');
+    if (!SHA256_PATTERN.test(sourceDocumentSha256)) {
+      throw new Error('explicit-brief motion requires an exact sourceDocumentSha256');
+    }
+    return { sourceDocumentSha256, motionRequestsSha256 };
+  }
+  if (source !== 'measured-reference') {
+    throw new Error('motion binding source must be explicit-brief or measured-reference');
+  }
+  const referenceManifestSha256 = String(evidence?.referenceManifestSha256 || '');
+  const motionEvidence = evidence?.motionEvidence;
+  const rawViewportTargets = evidence?.viewportTargets;
+  const viewportTargets = normalizedViewportTargets(rawViewportTargets);
+  if (!SHA256_PATTERN.test(referenceManifestSha256)) {
+    throw new Error('measured-reference motion requires an exact referenceManifestSha256');
+  }
+  if (!isRecord(motionEvidence) || motionEvidence.schemaVersion !== 1 || motionEvidence.normalized !== true) {
+    throw new Error('measured-reference motion requires normalized motionEvidence version 1');
+  }
+  if (!Array.isArray(rawViewportTargets)
+      || viewportTargets.length === 0
+      || viewportTargets.length !== rawViewportTargets.length) {
+    throw new Error('measured-reference motion requires measured viewport targets');
+  }
+  const targetLabels = viewportTargets.map((target) => target.label);
+  const evidenceLabels = Array.isArray(motionEvidence.viewports)
+    ? motionEvidence.viewports.map((viewport) => String(viewport?.label || '').trim())
+    : [];
+  if (
+    new Set(targetLabels).size !== targetLabels.length
+    || new Set(evidenceLabels).size !== evidenceLabels.length
+    || targetLabels.length !== evidenceLabels.length
+    || targetLabels.some((label) => !evidenceLabels.includes(label))
+  ) {
+    throw new Error('motionEvidence viewports must match the measured viewport target identity');
+  }
+  return {
+    referenceManifestSha256,
+    motionEvidenceSha256: canonicalSha256(motionEvidence),
+    viewportTargetsSha256: canonicalSha256(viewportTargets),
+    motionRequestsSha256,
+  };
+}
+
+function motionPlanBindingError(plan, evidence) {
+  let expected;
+  try {
+    expected = buildMotionPlanBindings(plan.source, evidence, plan.requests);
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+  if (!isRecord(plan.bindings)) return 'motion plan bindings are required';
+  if (
+    Object.keys(plan.bindings).length !== Object.keys(expected).length
+    || Object.entries(expected).some(([key, value]) => plan.bindings[key] !== value)
+  ) {
+    return 'motion plan bindings do not match the current source evidence';
+  }
+  return '';
 }
 
 function finiteNonNegativeInteger(value) {
@@ -292,11 +368,47 @@ function hasMotionProps(profile, component, props) {
   ));
 }
 
-function firstViewportNodeIds(nodeMap) {
+function firstBandNodeIds(nodeMap) {
   const firstRoot = Array.isArray(nodeMap?.ROOT?.nodes) ? nodeMap.ROOT.nodes[0] : '';
   if (!firstRoot) return new Set();
   const scoped = { ...nodeMap, ROOT: { ...(nodeMap.ROOT || {}), nodes: [firstRoot] } };
   return new Set(orderedNodeIds(scoped));
+}
+
+function measuredViewportScope(nodeId, evidence) {
+  const targets = normalizedViewportTargets(evidence?.viewportTargets);
+  const viewports = Array.isArray(evidence?.motionEvidence?.viewports)
+    ? evidence.motionEvidence.viewports
+    : [];
+  if (targets.length === 0 || viewports.length === 0) return '';
+  const byLabel = new Map(viewports.map((viewport) => [String(viewport?.label || '').trim(), viewport]));
+  const observations = [];
+  for (const target of targets) {
+    const viewport = byLabel.get(target.label);
+    const owner = Array.isArray(viewport?.owners)
+      ? viewport.owners.find((candidate) => candidate?.nodeId === nodeId)
+      : null;
+    const top = Number(owner?.rect?.top);
+    const bottom = Number(owner?.rect?.bottom);
+    if (!owner || !Number.isFinite(top) || !Number.isFinite(bottom) || bottom < top) return '';
+    observations.push(top < target.height && bottom > 0);
+  }
+  if (observations.every(Boolean)) return 'first-viewport';
+  if (observations.some(Boolean)) return 'mixed-viewport';
+  return 'after-first-viewport';
+}
+
+function viewportScope(nodeMap, nodeId, evidence) {
+  const measured = measuredViewportScope(nodeId, evidence);
+  if (measured) return { scope: measured, proven: true };
+  return {
+    scope: firstBandNodeIds(nodeMap).has(nodeId) ? 'first-band' : 'after-first-band',
+    proven: false,
+  };
+}
+
+function countsAgainstFirstViewportBudget(scope) {
+  return ['first-viewport', 'mixed-viewport', 'first-band'].includes(scope);
 }
 
 function motionGroupSize(node) {
@@ -398,12 +510,11 @@ function motionPrerequisiteErrors(nodeMap, nodeId, node, component, props, recip
   return errors;
 }
 
-function auditMotionLayout(nodeMap, profile) {
+function auditMotionLayout(nodeMap, profile, evidence = {}) {
   const errors = [];
   const claims = [];
   if (!profile?.available) return { ok: true, errors, claims, stats: { owners: 0 } };
   const forbidden = new Set(profile.policy.forbiddenComponents);
-  const firstViewport = firstViewportNodeIds(nodeMap);
   const entranceOwners = [];
   const pointerOwners = [];
   const pinnedOwners = [];
@@ -440,7 +551,16 @@ function auditMotionLayout(nodeMap, profile) {
     if (props.autoplay === true) {
       errors.push({ code: 'motion_autoplay_enabled', nodeId, component, message: `${nodeId} (${component}) enables autoplay while claiming a live motion recipe; generated motion must remain user-controlled.` });
     }
-    const claim = { nodeId, component, recipeId: recipe.id, intent: recipe.intent, kind: recipe.kind, firstViewport: firstViewport.has(nodeId) };
+    const nodeViewport = viewportScope(nodeMap, nodeId, evidence);
+    const claim = {
+      nodeId,
+      component,
+      recipeId: recipe.id,
+      intent: recipe.intent,
+      kind: recipe.kind,
+      viewportScope: nodeViewport.scope,
+      viewportProven: nodeViewport.proven,
+    };
     claims.push(claim);
     if (recipe.kind === 'entrance') entranceOwners.push(claim);
     if (recipe.kind === 'pointer') pointerOwners.push(claim);
@@ -481,7 +601,7 @@ function auditMotionLayout(nodeMap, profile) {
 
   const budgets = [
     ['motion_entrance_budget_exceeded', entranceOwners, profile.policy.maxEntranceOwnersPerPage, 'entrance owners'],
-    ['motion_first_viewport_budget_exceeded', entranceOwners.filter((claim) => claim.firstViewport), profile.policy.maxFirstViewportEntranceOwners, 'first-viewport entrance owners'],
+    ['motion_first_viewport_budget_exceeded', entranceOwners.filter((claim) => countsAgainstFirstViewportBudget(claim.viewportScope)), profile.policy.maxFirstViewportEntranceOwners, 'measured first-viewport or conservative first-band entrance owners'],
     ['motion_pointer_budget_exceeded', pointerOwners, profile.policy.maxPointerEffectsPerPage, 'pointer effects'],
     ['motion_pinned_budget_exceeded', pinnedOwners, profile.policy.maxPinnedScenesPerPage, 'pinned scenes'],
     ['motion_background_budget_exceeded', backgroundOwners, profile.policy.maxBackgroundEffectsPerPage, 'background effects'],
@@ -496,7 +616,12 @@ function auditMotionLayout(nodeMap, profile) {
     stats: {
       owners: claims.length,
       entranceOwners: entranceOwners.length,
-      firstViewportEntranceOwners: entranceOwners.filter((claim) => claim.firstViewport).length,
+      firstViewportEntranceOwners: entranceOwners.filter((claim) => (
+        ['first-viewport', 'mixed-viewport'].includes(claim.viewportScope)
+      )).length,
+      conservativeFirstBandEntranceOwners: entranceOwners.filter((claim) => (
+        claim.viewportScope === 'first-band'
+      )).length,
       pointerEffects: pointerOwners.length,
       pinnedScenes: pinnedOwners.length,
       backgroundEffects: backgroundOwners.length,
@@ -512,10 +637,19 @@ function targetNodeId(nodeMap, target) {
   return matches[target.occurrence] || '';
 }
 
-function applySemanticMotionPlan(nodeMap, profile, plan) {
+function applySemanticMotionPlan(nodeMap, profile, plan, evidence = {}) {
   if (!isRecord(plan) || plan.version !== 1 || !MOTION_PLAN_SOURCES.has(plan.source) || !Array.isArray(plan.requests)) {
     if (plan === undefined || plan === null) return { applied: [], rejected: [], source: '', version: 0 };
     throw new Error('motion plan requires version 1, an explicit/measured source, and requests');
+  }
+  const bindingError = motionPlanBindingError(plan, evidence);
+  if (bindingError) {
+    return {
+      applied: [],
+      rejected: [{ recipeId: '', nodeId: '', reason: bindingError, code: 'motion_evidence_binding_invalid' }],
+      source: plan.source,
+      version: 1,
+    };
   }
   if (!profile?.available) {
     return {
@@ -527,20 +661,23 @@ function applySemanticMotionPlan(nodeMap, profile, plan) {
   }
   const staged = new Map();
   const targetedNodes = new Set();
-  const firstViewportNodes = firstViewportNodeIds(nodeMap);
   const applied = [];
   const rejected = [];
   for (const request of plan.requests) {
     const recipe = profile.recipeById.get(request?.recipeId);
     const nodeId = targetNodeId(nodeMap, request?.target);
     const component = nodeType(nodeMap[nodeId]);
+    const nodeViewport = viewportScope(nodeMap, nodeId, evidence);
+    const budgetedAsFirstViewport = countsAgainstFirstViewportBudget(nodeViewport.scope);
     let reason = '';
     if (!recipe) reason = 'recipe unavailable in live contract';
     else if (!nodeId) reason = 'deterministic target did not resolve';
     else if (request.intent !== recipe.intent) reason = 'semantic intent does not match live recipe';
     else if (!recipe.components.includes(component)) reason = 'target component is incompatible with live recipe';
     else if (typeof request.firstViewport !== 'boolean') reason = 'firstViewport evidence must be explicit';
-    else if (request.firstViewport !== firstViewportNodes.has(nodeId)) reason = 'firstViewport evidence does not match the deterministic root scope';
+    else if (request.firstViewport !== budgetedAsFirstViewport) reason = nodeViewport.proven
+      ? 'firstViewport evidence does not match measured viewport geometry'
+      : 'firstViewport evidence does not match the conservative first-band scope';
     else if (targetedNodes.has(nodeId)) reason = 'a node may own only one semantic motion recipe';
     if (reason) {
       rejected.push({ recipeId: String(request?.recipeId || ''), nodeId, reason });
@@ -548,7 +685,15 @@ function applySemanticMotionPlan(nodeMap, profile, plan) {
     }
     targetedNodes.add(nodeId);
     staged.set(nodeId, { ...(nodeMap[nodeId].props || {}), ...recipe.props });
-    applied.push({ nodeId, component, recipeId: recipe.id, intent: recipe.intent, kind: recipe.kind, firstViewport: request.firstViewport });
+    applied.push({
+      nodeId,
+      component,
+      recipeId: recipe.id,
+      intent: recipe.intent,
+      kind: recipe.kind,
+      viewportScope: nodeViewport.scope,
+      viewportProven: nodeViewport.proven,
+    });
   }
 
   if (rejected.length > 0) {
@@ -560,7 +705,7 @@ function applySemanticMotionPlan(nodeMap, profile, plan) {
     props: staged.has(id) ? staged.get(id) : node?.props,
     nodes: Array.isArray(node?.nodes) ? [...node.nodes] : node?.nodes,
   }]));
-  const audit = auditMotionLayout(clone, profile);
+  const audit = auditMotionLayout(clone, profile, evidence);
   if (!audit.ok) {
     return {
       applied: [],
@@ -597,6 +742,7 @@ module.exports = {
   applySemanticMotionPlan,
   auditMotionLayout,
   buildResolvedMotionProfile,
+  buildMotionPlanBindings,
   motionSignature,
   orderedNodeIds,
   recipeForNode,

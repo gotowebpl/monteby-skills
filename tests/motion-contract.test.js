@@ -10,6 +10,7 @@ const test = require('node:test');
 const {
   applySemanticMotionPlan,
   auditMotionLayout,
+  buildMotionPlanBindings,
   buildResolvedMotionProfile,
   motionSignature,
   recipeForNode,
@@ -100,6 +101,20 @@ function layout() {
     'section-1': { type: { resolvedName: 'Section' }, isCanvas: true, props: {}, parent: 'ROOT', nodes: ['button-1', 'button-2'] },
     'button-1': { type: { resolvedName: 'ButtonBlock' }, isCanvas: false, props: {}, parent: 'section-1', nodes: [] },
     'button-2': { type: { resolvedName: 'ButtonBlock' }, isCanvas: false, props: {}, parent: 'section-1', nodes: [] },
+  };
+}
+
+function explicitMotionEvidence() {
+  return { sourceDocumentSha256: 'a'.repeat(64) };
+}
+
+function explicitMotionPlan(requests) {
+  const evidence = explicitMotionEvidence();
+  return {
+    version: 1,
+    source: 'explicit-brief',
+    bindings: buildMotionPlanBindings('explicit-brief', evidence, requests),
+    requests,
   };
 }
 
@@ -325,17 +340,14 @@ test('resolved motion profile fails closed for invalid policy semantics and publ
 test('semantic motion plan is deterministic, source-bound, and uses exact live recipe props', () => {
   const nodeMap = layout();
   const profile = buildResolvedMotionProfile(contract());
-  const plan = {
-    version: 1,
-    source: 'explicit-brief',
-    requests: [{
+  const evidence = explicitMotionEvidence();
+  const plan = explicitMotionPlan([{
       recipeId: 'magnetic-cta',
       intent: 'pointer',
       firstViewport: true,
       target: { component: 'ButtonBlock', occurrence: 1 },
-    }],
-  };
-  const first = applySemanticMotionPlan(nodeMap, profile, plan);
+  }]);
+  const first = applySemanticMotionPlan(nodeMap, profile, plan, evidence);
   assert.deepEqual(first.rejected, []);
   assert.equal(first.applied[0].nodeId, 'button-2');
   assert.deepEqual(nodeMap['button-2'].props, { pointerEffect: 'magnetic', pointerStrength: 12 });
@@ -346,29 +358,189 @@ test('semantic motion plan is deterministic, source-bound, and uses exact live r
   }]);
 
   const secondLayout = layout();
-  const second = applySemanticMotionPlan(secondLayout, profile, plan);
+  const second = applySemanticMotionPlan(secondLayout, profile, plan, evidence);
   assert.deepEqual(second, first);
   assert.deepEqual(secondLayout, nodeMap);
 });
 
-test('layout kit applies only an explicit semantic plan through the resolved live profile', async () => {
-  const { Kit } = await import('../monteby-site-authoring/scripts/layout-kit.mjs');
-  const kit = new Kit(contract());
-  const first = kit.node('ButtonBlock');
-  const second = kit.node('ButtonBlock');
-  const section = kit.node('Section', {}, [first, second]);
-  const nodeMap = kit.build([section], {
+test('semantic motion plans fail closed when source evidence is missing, stale, or tampered', () => {
+  const profile = buildResolvedMotionProfile(contract());
+  const request = {
+    recipeId: 'magnetic-cta',
+    intent: 'pointer',
+    firstViewport: true,
+    target: { component: 'ButtonBlock', occurrence: 0 },
+  };
+  const unbound = {
     version: 1,
     source: 'explicit-brief',
-    requests: [{
+    requests: [request],
+  };
+  const missing = applySemanticMotionPlan(layout(), profile, unbound, explicitMotionEvidence());
+  assert.equal(missing.rejected[0].code, 'motion_evidence_binding_invalid');
+
+  const plan = explicitMotionPlan([request]);
+  const stale = applySemanticMotionPlan(layout(), profile, plan, { sourceDocumentSha256: 'b'.repeat(64) });
+  assert.equal(stale.rejected[0].code, 'motion_evidence_binding_invalid');
+
+  const tampered = structuredClone(plan);
+  tampered.bindings.unexpected = 'c'.repeat(64);
+  const rejected = applySemanticMotionPlan(layout(), profile, tampered, explicitMotionEvidence());
+  assert.equal(rejected.rejected[0].code, 'motion_evidence_binding_invalid');
+  const tamperedRequest = structuredClone(plan);
+  tamperedRequest.requests[0].target.occurrence = 1;
+  assert.equal(
+    applySemanticMotionPlan(layout(), profile, tamperedRequest, explicitMotionEvidence()).rejected[0].code,
+    'motion_evidence_binding_invalid'
+  );
+
+  assert.throws(() => buildMotionPlanBindings('measured-reference', {
+    referenceManifestSha256: 'd'.repeat(64),
+    motionEvidence: {
+      schemaVersion: 1,
+      normalized: true,
+      viewports: [{ label: 'desktop', owners: [] }],
+    },
+    viewportTargets: [{ label: 'mobile', width: 390, height: 844 }],
+  }, []), /must match the measured viewport target identity/);
+  assert.throws(() => buildMotionPlanBindings('measured-reference', {
+    referenceManifestSha256: 'd'.repeat(64),
+    motionEvidence: {
+      schemaVersion: 1,
+      normalized: true,
+      viewports: [{ label: 'desktop', owners: [] }],
+    },
+    viewportTargets: [
+      { label: 'desktop', width: 1440, height: 900 },
+      { label: 'mobile', width: 390, height: 0 },
+    ],
+  }, []), /requires measured viewport targets/);
+});
+
+test('measured viewport evidence replaces conservative first-band inference without overstating proof', () => {
+  const live = contract();
+  live.authoring.motion.policy.maxEntranceOwnersPerPage = 3;
+  live.authoring.motion.policy.maxFirstViewportEntranceOwners = 1;
+  const profile = buildResolvedMotionProfile(live);
+  const nodeMap = layout();
+  nodeMap.ROOT.nodes.push('section-2');
+  nodeMap['section-2'] = {
+    type: { resolvedName: 'Section' },
+    isCanvas: true,
+    props: {},
+    parent: 'ROOT',
+    nodes: [],
+  };
+  Object.assign(nodeMap['section-1'].props, profile.recipeById.get('hero-reveal').props);
+  Object.assign(nodeMap['section-2'].props, profile.recipeById.get('hero-reveal').props);
+
+  const conservative = auditMotionLayout(nodeMap, profile);
+  assert.equal(conservative.claims[0].viewportScope, 'first-band');
+  assert.equal(conservative.claims[0].viewportProven, false);
+  assert.equal(conservative.claims[1].viewportScope, 'after-first-band');
+  assert.equal(conservative.stats.firstViewportEntranceOwners, 0);
+  assert.equal(conservative.stats.conservativeFirstBandEntranceOwners, 1);
+
+  const evidence = {
+    referenceManifestSha256: 'd'.repeat(64),
+    viewportTargets: [
+      { label: 'desktop', width: 1440, height: 900 },
+      { label: 'mobile', width: 390, height: 844 },
+    ],
+    motionEvidence: {
+      schemaVersion: 1,
+      normalized: true,
+      viewports: [
+        {
+          label: 'desktop',
+          owners: [
+            { nodeId: 'section-1', rect: { top: 920, bottom: 1500 } },
+            { nodeId: 'section-2', rect: { top: 120, bottom: 820 } },
+          ],
+        },
+        {
+          label: 'mobile',
+          owners: [
+            { nodeId: 'section-1', rect: { top: 860, bottom: 1500 } },
+            { nodeId: 'section-2', rect: { top: 90, bottom: 800 } },
+          ],
+        },
+      ],
+    },
+  };
+  const measured = auditMotionLayout(nodeMap, profile, evidence);
+  assert.equal(measured.claims[0].viewportScope, 'after-first-viewport');
+  assert.equal(measured.claims[0].viewportProven, true);
+  assert.equal(measured.claims[1].viewportScope, 'first-viewport');
+  assert.equal(measured.claims[1].viewportProven, true);
+  assert.equal(measured.stats.firstViewportEntranceOwners, 1);
+  assert.equal(measured.stats.conservativeFirstBandEntranceOwners, 0);
+
+  const targetLayout = layout();
+  targetLayout.ROOT.nodes.push('section-2');
+  targetLayout['section-2'] = {
+    type: { resolvedName: 'Section' },
+    isCanvas: true,
+    props: {},
+    parent: 'ROOT',
+    nodes: ['section-2-copy', 'section-2-action'],
+  };
+  targetLayout['section-2-copy'] = {
+    type: { resolvedName: 'Text' }, isCanvas: false, props: { text: 'Copy' }, parent: 'section-2', nodes: [],
+  };
+  targetLayout['section-2-action'] = {
+    type: { resolvedName: 'Text' }, isCanvas: false, props: { text: 'Action' }, parent: 'section-2', nodes: [],
+  };
+  const requests = [{
+    recipeId: 'hero-reveal',
+    intent: 'sequence',
+    firstViewport: true,
+    target: { nodeId: 'section-2' },
+  }];
+  const plan = {
+    version: 1,
+    source: 'measured-reference',
+    bindings: buildMotionPlanBindings('measured-reference', evidence, requests),
+    requests,
+  };
+  const applied = applySemanticMotionPlan(targetLayout, profile, plan, evidence);
+  assert.deepEqual(applied.rejected, []);
+  assert.equal(applied.applied[0].viewportScope, 'first-viewport');
+  assert.equal(applied.applied[0].viewportProven, true);
+
+  const changedEvidence = structuredClone(evidence);
+  changedEvidence.motionEvidence.viewports[0].owners[1].rect.top = 901;
+  assert.equal(
+    applySemanticMotionPlan(layout(), profile, plan, changedEvidence).rejected[0].code,
+    'motion_evidence_binding_invalid'
+  );
+});
+
+test('layout kit applies only an explicit semantic plan through the resolved live profile', async () => {
+  const { Kit } = await import('../monteby-site-authoring/scripts/layout-kit.mjs');
+  const evidence = explicitMotionEvidence();
+  const requests = [{
       recipeId: 'hero-reveal',
       intent: 'sequence',
       firstViewport: true,
       target: { component: 'Section', occurrence: 0 },
-    }],
-  });
-  assert.equal(nodeMap[section].props.motionPreset, 'slide');
-  assert.equal(kit.motionPlan.applied[0].recipeId, 'hero-reveal');
+  }];
+  const plan = explicitMotionPlan(requests);
+  const createKit = () => {
+    const kit = new Kit(contract());
+    const first = kit.node('ButtonBlock');
+    const second = kit.node('ButtonBlock');
+    return { kit, section: kit.node('Section', {}, [first, second]) };
+  };
+  const accepted = createKit();
+  const nodeMap = accepted.kit.build([accepted.section], plan, evidence);
+  assert.equal(nodeMap[accepted.section].props.motionPreset, 'slide');
+  assert.equal(accepted.kit.motionPlan.applied[0].recipeId, 'hero-reveal');
+
+  const unbound = createKit();
+  assert.throws(() => unbound.kit.build([unbound.section], plan), /motion plan rejected:.*sourceDocumentSha256/u);
+  const stale = createKit();
+  assert.throws(() => stale.kit.build([stale.section], plan, { sourceDocumentSha256: 'b'.repeat(64) }), /current source evidence/u);
 });
 
 test('motion audit enforces stagger ownership, budgets, forbidden components, and autoplay off', () => {
@@ -637,16 +809,13 @@ test('semantic slider motion never preserves an existing autoplay setting', () =
     nodes: [],
   };
   const before = JSON.stringify(nodeMap);
-  const result = applySemanticMotionPlan(nodeMap, profile, {
-    version: 1,
-    source: 'explicit-brief',
-    requests: [{
+  const evidence = explicitMotionEvidence();
+  const result = applySemanticMotionPlan(nodeMap, profile, explicitMotionPlan([{
       recipeId: 'slider-slide',
       intent: 'slider',
       firstViewport: true,
       target: { nodeId: 'slider-1' },
-    }],
-  });
+  }]), evidence);
 
   assert.equal(result.applied.length, 0);
   assert.equal(result.rejected.some((entry) => entry.code === 'motion_autoplay_enabled'), true);

@@ -6,7 +6,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
+const { createHash } = require('node:crypto');
 const test = require('node:test');
+const { buildMotionPlanBindings } = require('../monteby-site-authoring/scripts/motion-contract');
 
 const root = path.resolve(__dirname, '..');
 const briefScript = path.join(root, 'monteby-site-authoring', 'scripts', 'write-visual-brief.js');
@@ -70,6 +72,19 @@ test('visual brief extracts target hierarchy, media roles, and visual tokens', (
     requiredMediaRoles: [
       { role: 'hero', minSurfaces: 1, placement: 'firstViewport' },
     ],
+    motionEvidence: {
+      schemaVersion: 1,
+      normalized: true,
+      viewports: [
+        { label: 'desktop', owners: [{ structureKey: 'body.0', firstViewport: true }] },
+        { label: 'mobile', owners: [{ structureKey: 'body.0', firstViewport: true }] },
+      ],
+    },
+    motionPlan: {
+      version: 1,
+      source: 'measured-reference',
+      requests: [],
+    },
   }));
   fs.writeFileSync(layoutPath, JSON.stringify({
     viewport: {
@@ -192,6 +207,15 @@ test('visual brief extracts target hierarchy, media roles, and visual tokens', (
   assert.equal(report.authoringRequirements.priorityMediaSamples[0].firstViewportArea, 396800);
   assert.equal(report.authoringRequirements.preserveSourceText, true);
   assert.equal(report.authoringRequirements.reuseSourceMedia, true);
+  assert.deepEqual(report.authoringRequirements.motionPlan.bindings, buildMotionPlanBindings(
+    'measured-reference',
+    {
+      referenceManifestSha256: createHash('sha256').update(fs.readFileSync(manifestPath)).digest('hex'),
+      motionEvidence: report.authoringRequirements.motionEvidence,
+      viewportTargets: report.authoringRequirements.viewportTargets,
+    },
+    report.authoringRequirements.motionPlan.requests
+  ));
   assert.equal(fs.existsSync(markdownPath), true);
   const markdown = fs.readFileSync(markdownPath, 'utf8');
   assert.match(markdown, /Monteby Visual Authoring Brief/);

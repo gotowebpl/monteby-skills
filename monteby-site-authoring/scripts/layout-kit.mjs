@@ -30,6 +30,7 @@
  */
 
 import { readFile, realpath, stat, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { basename, dirname, join, resolve } from 'node:path';
 import designProfileModule from './resolved-design-profile.js';
@@ -153,6 +154,10 @@ export class Kit {
       this.designProfile,
       semanticRole
     );
+    if (component === 'ListBlock' && Array.isArray(resolvedProps.items)
+        && resolvedProps.items.some((item) => item && typeof item === 'object')) {
+      throw new Error('ListBlock.items przyjmuje teksty — obiekt wywraca kanwę edytora (React #31)');
+    }
     for (const [prop, raw] of Object.entries(resolvedProps)) {
       if (raw === undefined || raw === null || (raw === '' && !/^(?:alt|.*Alt)$/.test(prop))) continue;
       if (
@@ -192,9 +197,6 @@ export class Kit {
     if (TEXT_NODES.has(component) && out.marginTop === undefined) out.marginTop = '0px';
     if (EDGE_WIDTHS.some((edge) => edge in out) && out.borderWidth === undefined && allowed.has('borderWidth')) {
       out.borderWidth = '0px';
-    }
-    if (component === 'ListBlock' && Array.isArray(out.items) && out.items.some((i) => i && typeof i === 'object')) {
-      throw new Error('ListBlock.items przyjmuje teksty — obiekt wywraca kanwę edytora (React #31)');
     }
     if (component === 'FormBlock' && out.formBackgroundColor === undefined) {
       this.notes.push('FormBlock bez formBackgroundColor maluje własne białe tło <form>');
@@ -312,7 +314,7 @@ export class Kit {
     );
   }
 
-  build(sections, motionPlan = undefined) {
+  build(sections, motionPlan = undefined, motionEvidence = {}) {
     for (const id of sections) {
       const name = this.nodes[id].type.resolvedName;
       if (!this.rootComponents.has(name)) throw new Error(`${name} nie może być dzieckiem ROOT`);
@@ -320,7 +322,7 @@ export class Kit {
     }
     this.nodes.ROOT = { type: { resolvedName: 'RootCanvas' }, isCanvas: true, props: {}, nodes: [...sections] };
     this.#validateAnchorComposition();
-    this.motionPlan = applySemanticMotionPlan(this.nodes, this.designProfile.motion, motionPlan);
+    this.motionPlan = applySemanticMotionPlan(this.nodes, this.designProfile.motion, motionPlan, motionEvidence);
     if (this.motionPlan.rejected.length > 0) {
       throw new Error(`motion plan rejected: ${this.motionPlan.rejected.map((entry) => (
         `${entry.recipeId || entry.nodeId || 'request'}: ${entry.reason}`
@@ -398,8 +400,8 @@ export class Kit {
     }
   }
 
-  async write(path, sections, motionPlan = undefined) {
-    const map = this.build(sections, motionPlan);
+  async write(path, sections, motionPlan = undefined, motionEvidence = {}) {
+    const map = this.build(sections, motionPlan, motionEvidence);
     await writeFile(path, JSON.stringify(map, null, 1), 'utf8');
     const result = { path, nodes: Object.keys(map).length, notes: [...this.notes], motionPlan: this.motionPlan };
     this.nodes = {};
@@ -621,7 +623,7 @@ export function expandCompositionPlan(contract, plan, options = {}) {
     sections.push(...roots);
     decisions.push({ section: index, compositionId: recipe.id, rootId: roots[0] });
   }
-  const layout = kit.build(sections, plan.motion);
+  const layout = kit.build(sections, plan.motion, options.motionEvidence || {});
   return { layout, notes: kit.notes, decisions, motionPlan: kit.motionPlan };
 }
 
@@ -630,13 +632,18 @@ async function compositionCli() {
   const options = {};
   for (let index = 0; index < args.length; index += 2) {
     const flag = args[index];
-    if (!['--contract', '--plan', '--out', '--report', '--project-tokens'].includes(flag) || !args[index + 1] || options[flag]) {
-      throw new Error('Usage: layout-kit.mjs --contract full-live-contract.json --plan plan.json --out layout.json [--report report.json] [--project-tokens approved-tokens.json]');
+    if (!['--contract', '--plan', '--out', '--report', '--project-tokens', '--motion-source-document'].includes(flag) || !args[index + 1] || options[flag]) {
+      throw new Error('Usage: layout-kit.mjs --contract full-live-contract.json --plan plan.json --out layout.json [--report report.json] [--project-tokens approved-tokens.json] [--motion-source-document approved-brief.json]');
     }
     options[flag] = args[index + 1];
   }
   if (!options['--contract'] || !options['--plan'] || !options['--out']) throw new Error('contract, plan and out are required');
-  const inputKeys = ['--contract', '--plan', ...(options['--project-tokens'] ? ['--project-tokens'] : [])];
+  const inputKeys = [
+    '--contract',
+    '--plan',
+    ...(options['--project-tokens'] ? ['--project-tokens'] : []),
+    ...(options['--motion-source-document'] ? ['--motion-source-document'] : []),
+  ];
   const paths = [...inputKeys, '--out', ...(options['--report'] ? ['--report'] : [])].map((key) => resolve(options[key]));
   if (new Set(paths).size !== paths.length) throw new Error('input and output paths must be distinct');
   const identities = await Promise.all(paths.map(async (path) => {
@@ -649,12 +656,21 @@ async function compositionCli() {
     }
   }));
   if (new Set(identities).size !== identities.length) throw new Error('input and output files must be distinct; symbolic links and hard links cannot alias source files');
-  const [contract, plan, projectTokens] = await Promise.all(inputKeys.map(async (key) => {
-    const source = await readFile(options[key], 'utf8');
-    if (source.length > 10000000) throw new Error(`${key}: input budget exceeded`);
-    return JSON.parse(source);
-  }));
-  const result = expandCompositionPlan(contract, plan, { projectTokens });
+  const inputValues = Object.fromEntries(await Promise.all(inputKeys.map(async (key) => {
+    const source = await readFile(options[key]);
+    if (source.byteLength > 10000000) throw new Error(`${key}: input budget exceeded`);
+    return [key, key === '--motion-source-document' ? source : JSON.parse(source.toString('utf8'))];
+  })));
+  const contract = inputValues['--contract'];
+  const plan = inputValues['--plan'];
+  const projectTokens = inputValues['--project-tokens'];
+  const motionSourceDocument = inputValues['--motion-source-document'];
+  const result = expandCompositionPlan(contract, plan, {
+    projectTokens,
+    motionEvidence: motionSourceDocument === undefined ? {} : {
+      sourceDocumentSha256: createHash('sha256').update(motionSourceDocument).digest('hex'),
+    },
+  });
   await writeFile(options['--out'], `${JSON.stringify(result.layout, null, 2)}\n`);
   const report = { verdict: 'diagnostic_passed', nodes: Object.keys(result.layout).length, notes: result.notes, decisions: result.decisions };
   if (options['--report']) await writeFile(options['--report'], `${JSON.stringify(report, null, 2)}\n`);

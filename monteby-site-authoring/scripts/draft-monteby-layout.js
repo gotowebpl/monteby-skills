@@ -205,6 +205,7 @@ function parseArgs(argv) {
     planOut: '',
     referenceManifest: '',
     iconMapping: '',
+    motionSourceDocument: '',
     minMediaSurfaces: null,
     requireRealReference: false,
     requireMarketplaceMedia: false,
@@ -228,6 +229,8 @@ function parseArgs(argv) {
       options.referenceManifest = path.resolve(requiredValue(argv, index += 1, arg));
     } else if (arg === '--icon-mapping') {
       options.iconMapping = path.resolve(requiredValue(argv, index += 1, arg));
+    } else if (arg === '--motion-source-document') {
+      options.motionSourceDocument = path.resolve(requiredValue(argv, index += 1, arg));
     } else if (arg === '--min-media-surfaces') {
       options.minMediaSurfaces = parseNonNegativeInteger(requiredValue(argv, index += 1, arg), arg);
     } else if (arg === '--require-real-reference') {
@@ -277,7 +280,7 @@ function requiredValue(argv, index, arg) {
 
 function printHelp() {
   console.log(`Usage:
-  draft-monteby-layout.js --contract contract.json (--start-report benchmark-start-report.json | --brief-json visual-brief.json) --out layout-draft.json [--plan-out mechanical-layout-plan.json] [--reference-manifest reference-manifest.json] [--icon-mapping icon-mapping.json] [--require-real-reference] [--require-marketplace-media] [--preserve-source-text] [--json]
+  draft-monteby-layout.js --contract contract.json (--start-report benchmark-start-report.json | --brief-json visual-brief.json) --out layout-draft.json [--plan-out mechanical-layout-plan.json] [--reference-manifest reference-manifest.json] [--icon-mapping icon-mapping.json] [--motion-source-document approved-brief.json] [--require-real-reference] [--require-marketplace-media] [--preserve-source-text] [--json]
 
 Writes a clean Monteby JSON draft from a visual brief and live contract. When --plan-out is provided, it also writes a mechanical section-mapping plan. When --reference-manifest is provided, the draft is immediately audited for blocked props, placement, and replacement media roles. This is a first-pass scaffold only; do not treat it as a pixel-perfect result.`);
 }
@@ -322,11 +325,9 @@ function briefWithReferenceMediaRequirements(brief, referenceManifest, options =
   const motionEvidence = referenceManifest?.motionEvidence && typeof referenceManifest.motionEvidence === 'object'
     ? referenceManifest.motionEvidence
     : undefined;
-  const measuredMotionPlan = referenceManifest?.motionPlan?.source === 'measured-reference'
-    ? referenceManifest.motionPlan
-    : undefined;
+  const motionPlan = brief.authoringRequirements?.motionPlan;
 
-  if (requiredMediaRoles.length === 0 && requiresRealReference === false && !referenceGeometry && !motionEvidence && !measuredMotionPlan) {
+  if (requiredMediaRoles.length === 0 && requiresRealReference === false && !referenceGeometry && !motionEvidence && !motionPlan) {
     return brief;
   }
 
@@ -343,8 +344,41 @@ function briefWithReferenceMediaRequirements(brief, referenceManifest, options =
       referenceGeometry: referenceGeometry || undefined,
       iconMapping: options.validatedIconMapping || undefined,
       motionEvidence,
-      motionPlan: brief.authoringRequirements?.motionPlan || measuredMotionPlan,
+      motionPlan,
     },
+  };
+}
+
+function motionEvidenceContext(referenceManifest, manifestPath, sourceDocumentPath) {
+  if (sourceDocumentPath) {
+    return {
+      sourceDocumentSha256: createHash('sha256').update(fs.readFileSync(sourceDocumentPath)).digest('hex'),
+    };
+  }
+  if (!referenceManifest || !manifestPath) return {};
+  const manifestDirectory = path.dirname(manifestPath);
+  const entries = Array.isArray(referenceManifest.layouts)
+    ? referenceManifest.layouts
+    : Array.isArray(referenceManifest.layoutCapture?.layouts)
+      ? referenceManifest.layoutCapture.layouts
+      : referenceManifest.layout
+        ? [{ label: 'desktop', file: referenceManifest.layout }]
+        : [];
+  const viewportTargets = entries.flatMap((entry) => {
+    if (!entry?.file) return [];
+    const file = path.resolve(manifestDirectory, String(entry.file));
+    if (!fs.existsSync(file)) return [];
+    const layout = readJson(file);
+    return [{
+      label: String(entry.label || 'desktop').trim(),
+      width: Number(layout?.viewport?.width || entry.width || 0),
+      height: Number(layout?.viewport?.height || entry.height || 0),
+    }];
+  });
+  return {
+    referenceManifestSha256: createHash('sha256').update(fs.readFileSync(manifestPath)).digest('hex'),
+    motionEvidence: referenceManifest.motionEvidence,
+    viewportTargets,
   };
 }
 
@@ -2582,7 +2616,8 @@ function draftLayout(contractIndex, brief, contractPayload = {}, qualityContext 
   const motionPlan = applySemanticMotionPlan(
     context.nodeMap,
     designProfile.motion,
-    brief.authoringRequirements?.motionPlan
+    brief.authoringRequirements?.motionPlan,
+    qualityContext.motionEvidence || {}
   );
   if (motionPlan.rejected.length > 0) {
     throw new Error(`motion plan rejected: ${motionPlan.rejected.map((entry) => (
@@ -9025,7 +9060,17 @@ function main() {
       }).values()];
     }
     const brief = briefWithReferenceMediaRequirements(readBrief(options), referenceManifest, options);
-    const draft = draftLayout(buildContractIndex(contract), brief, contract, { options, referenceManifest });
+    const planSource = brief.authoringRequirements?.motionPlan?.source;
+    const motionEvidence = planSource === 'explicit-brief'
+      ? motionEvidenceContext(null, '', options.motionSourceDocument)
+      : planSource === 'measured-reference'
+        ? motionEvidenceContext(referenceManifest, options.referenceManifest, '')
+        : {};
+    const draft = draftLayout(buildContractIndex(contract), brief, contract, {
+      options,
+      referenceManifest,
+      motionEvidence,
+    });
     const expectedContentLedger = referenceManifest?.contentLedger;
     const contentLedgerComparison = options.preserveSourceText && expectedContentLedger
       ? compareContentLedgers(
