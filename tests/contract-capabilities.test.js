@@ -82,10 +82,42 @@ test('design profile gate requires Builder 1.6.0 and the declared live profile v
   assert.equal(evaluateFeatureGate({ productVersion: '1.6.0', authoring: { designProfiles: { version: 1 } } }, 'designProfiles', manifest).ok, true);
 });
 
+test('contract projection gates validate the response that was actually requested', () => {
+  const projections = {
+    contractLightProjection: 'light',
+    contractDesignProjection: 'design',
+    contractAuthoringProjection: 'authoring',
+    contractCatalogsProjection: 'catalogs',
+  };
+  for (const [featureName, mode] of Object.entries(projections)) {
+    assert.equal(evaluateFeatureGate({ productVersion: '1.6.0', mode }, featureName, manifest).ok, true);
+    assert.equal(evaluateFeatureGate({ productVersion: '1.6.0', mode: 'full' }, featureName, manifest).code, 'blocked_contract_inconsistency');
+  }
+  assert.equal(evaluateFeatureGate({
+    productVersion: '1.6.0',
+    mode: 'authoring',
+    componentsMode: 'summary',
+  }, 'contractComponentsSummary', manifest).ok, true);
+});
+
+test('composition plan and revision restore require advertised live resources', () => {
+  const contract = {
+    productVersion: '1.6.0',
+    authoring: { compositions: { resources: { plan: { method: 'POST' } } } },
+    layoutPersistence: { resources: { restoreRevision: { method: 'POST' } } },
+  };
+  assert.equal(evaluateFeatureGate(contract, 'compositionPlan', manifest).ok, true);
+  assert.equal(evaluateFeatureGate(contract, 'revisionRestore', manifest).ok, true);
+  delete contract.layoutPersistence.resources.restoreRevision;
+  assert.equal(evaluateFeatureGate(contract, 'revisionRestore', manifest).code, 'blocked_contract_inconsistency');
+});
+
 test('every Builder 1.6 gate is optional, names a fallback, and blocks older plugins by version', () => {
-  const gates = ['annotatedRender', 'renderLayoutFilter', 'renderGlobalStylesFilter', 'renderGlobalTemplateFilter',
-    'previewGlobalTemplates', 'compositionInstantiate', 'bulkCreate', 'globalStylesPatch', 'designProfiles',
-    'contractComponent', 'abilities'];
+  const gates = ['contractLightProjection', 'contractDesignProjection', 'contractAuthoringProjection',
+    'contractCatalogsProjection', 'contractComponentsSummary', 'annotatedRender', 'renderLayoutFilter',
+    'renderGlobalStylesFilter', 'renderGlobalTemplateFilter', 'previewGlobalTemplates',
+    'compositionInstantiate', 'compositionPlan', 'revisionRestore', 'bulkCreate', 'globalStylesPatch',
+    'designProfiles', 'contractComponent', 'abilities'];
   for (const name of gates) {
     const gate = manifest.featureGates[name];
     assert.equal(gate.minimumBuilderVersion, '1.6.0', `${name} minimum`);

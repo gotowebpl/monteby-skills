@@ -53,6 +53,12 @@ the live contract's `layoutPersistence.resources`; never remember it.
   `404 monteby_site_authoring_unknown_component`). The compiler,
   `normalize-layout.js` and the Kit still consume the full contract file; a
   summary projection is a prompt catalog, not a validator input.
+- Evaluate the projection gate against the response that was requested, not
+  against a remembered full contract: `contractLightProjection`,
+  `contractDesignProjection`, `contractAuthoringProjection`,
+  `contractCatalogsProjection`, and `contractComponentsSummary` verify the
+  returned `mode`/`componentsMode`. A missing projection falls back to the full
+  live contract; it never authorizes cached schema from another site.
 - `GET /wp-json/monteby/v1/contract?mode=catalogs` returns only `iconCatalog`
   and `fontCatalog` with their `ETag`; fetch them once per run and revalidate
   with `If-None-Match`. The server validates `icon-svg` props as published
@@ -94,6 +100,11 @@ the live contract's `layoutPersistence.resources`; never remember it.
   registers the same operations as `monteby/*` abilities
   (`authoring.abilities.names`). They are an alternative transport for the
   identical contract, gates and preconditions; the fallback is `rest-only`.
+- Before using server composition planning or revision restore, require the
+  `compositionPlan` or `revisionRestore` gate respectively. These gates verify
+  the resource descriptors published by the current live contract; an absent
+  restore descriptor falls back to an explicit versioned layout save and must
+  never be replaced by a direct post-meta write.
 
 ## Required inputs
 
