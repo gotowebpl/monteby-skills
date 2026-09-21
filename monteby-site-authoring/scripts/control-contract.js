@@ -1,5 +1,7 @@
 'use strict';
 
+const { validateIconCatalog } = require('./icon-mapping');
+
 function isRecord(value) {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
 }
@@ -512,6 +514,13 @@ function snap(value, step, base = 0) {
 
 function publishedControlReferences(contract, component, prop, control = {}) {
   const references = new Set();
+  if (control?.type === 'icon-svg') {
+    try {
+      for (const icon of validateIconCatalog(contract).icons) references.add(icon);
+    } catch {
+      return references;
+    }
+  }
   const tokens = isRecord(contract?.designTokens?.tokens) ? contract.designTokens.tokens : {};
   const binding = contract?.designTokens?.bindings?.[component]?.[prop];
   const boundReference = typeof binding === 'string' ? tokens[binding]?.reference : undefined;
@@ -1087,7 +1096,7 @@ function normalizeControlValue(control, value, publishedReferences = new Set(), 
   if (!publishedSchema.valid) {
     return { accepted: false, contractError: true, reason: publishedSchema.reason };
   }
-  if (publishedSchema.defaultMatch) return { accepted: true, value };
+  if (publishedSchema.defaultMatch && type !== 'icon-svg') return { accepted: true, value };
 
   const host = validateHostBinding(control, value, options);
   if (!host.valid) {
@@ -1099,6 +1108,33 @@ function normalizeControlValue(control, value, publishedReferences = new Set(), 
     return publishedReferences.has(reference)
       ? { accepted: true, value: reference }
       : { accepted: false, reason: `nieopublikowana referencja CSS ${label}` };
+  }
+  if (type === 'icon-svg') {
+    if (typeof value !== 'string') {
+      return { accepted: false, reason: `${label} nie jest nazwą natywnej ikony` };
+    }
+    let iconCatalog;
+    try {
+      iconCatalog = validateIconCatalog(control[CONTROL_CONTEXT]?.contract);
+    } catch {
+      return {
+        accepted: false,
+        contractError: true,
+        reason: 'kontrolka icon-svg nie ma kompletnego katalogu ikon związanego SHA',
+      };
+    }
+    const icon = value.trim();
+    if (icon === '') return { accepted: true, value: '' };
+    if (icon.length > 64 || !/^[a-z0-9_]+$/u.test(icon)) {
+      return { accepted: false, reason: `${label} nie jest nazwą Material Symbols` };
+    }
+    return iconCatalog.iconSet.has(icon)
+      ? {
+        accepted: true,
+        value: icon,
+        ...(icon !== value ? { changed: true, changeReason: `${JSON.stringify(value)} → ${JSON.stringify(icon)}` } : {}),
+      }
+      : { accepted: false, reason: `${JSON.stringify(icon)} nie występuje w bieżącym iconCatalog` };
   }
   if (value === '' && control.allowEmpty === true) return { accepted: true, value: '' };
   if (values.length > 0 && ['custom', 'select', 'segment'].includes(type)

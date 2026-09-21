@@ -2,6 +2,7 @@
 
 const assert = require('node:assert/strict');
 const test = require('node:test');
+const { sha256 } = require('../monteby-site-authoring/scripts/icon-mapping');
 const {
   buildControlIndex,
   collectControlMetadata,
@@ -38,6 +39,72 @@ test('shared control normalization accepts only published references and follows
     new Set(['var(--gcb-color-accent)']),
   ).accepted, true);
   assert.equal(normalizeControlValue({ type: 'color' }, 'var(--private-token)').accepted, false);
+});
+
+test('icon controls accept only exact names from the SHA-bound live catalog', () => {
+  const icons = ['arrow_forward', 'menu'];
+  const contract = {
+    iconCatalog: { version: 1, sha256: sha256(JSON.stringify(icons)), icons },
+    components: [{
+      name: 'FormBlock',
+      defaults: { submitIcon: '' },
+      valueSchemas: { submitIcon: { type: 'string', const: '' } },
+      controls: [{ type: 'icon-svg', props: ['submitIcon'] }],
+    }],
+  };
+  const control = buildControlIndex(contract).get('FormBlock.submitIcon');
+  const references = publishedControlReferences(contract, 'FormBlock', 'submitIcon', control);
+
+  assert.deepEqual([...references], icons);
+  assert.deepEqual(normalizeControlValue(control, ' arrow_forward ', references), {
+    accepted: true,
+    value: 'arrow_forward',
+    changed: true,
+    changeReason: '" arrow_forward " → "arrow_forward"',
+  });
+  assert.equal(normalizeControlValue(control, 'unknown_icon', references).accepted, false);
+  assert.equal(normalizeControlValue(control, '<svg><path d="M0 0"/></svg>', references).accepted, false);
+  assert.equal(normalizeControlValue(control, 'M0 0', references).accepted, false);
+  assert.deepEqual(normalizeControlValue(control, '', references), { accepted: true, value: '' });
+
+  const nestedContract = {
+    ...contract,
+    components: [{
+      name: 'IconList',
+      controls: [{
+        type: 'repeater',
+        props: ['items'],
+        itemControls: [{ type: 'icon-svg', props: ['icon'] }],
+      }],
+    }],
+  };
+  const itemsControl = buildControlIndex(nestedContract).get('IconList.items');
+  assert.equal(normalizeControlValue(itemsControl, [{ icon: 'menu' }]).accepted, true);
+  assert.equal(normalizeControlValue(itemsControl, [{ icon: 'unknown_icon' }]).accepted, false);
+});
+
+test('icon controls fail closed when the live catalog is missing or not SHA-complete', () => {
+  for (const iconCatalog of [
+    undefined,
+    { version: 1, icons: ['arrow_forward'] },
+    { version: 1, sha256: '0'.repeat(64), icons: ['arrow_forward'] },
+  ]) {
+    const contract = {
+      ...(iconCatalog ? { iconCatalog } : {}),
+      components: [{
+        name: 'FormBlock',
+        controls: [{ type: 'icon-svg', props: ['submitIcon'], allowEmpty: true }],
+      }],
+    };
+    const control = buildControlIndex(contract).get('FormBlock.submitIcon');
+    const references = publishedControlReferences(contract, 'FormBlock', 'submitIcon', control);
+
+    assert.equal(references.size, 0);
+    const result = normalizeControlValue(control, 'arrow_forward', new Set(['arrow_forward']));
+    assert.equal(result.accepted, false);
+    assert.equal(result.contractError, true);
+    assert.equal(normalizeControlValue(control, '', references).contractError, true);
+  }
 });
 
 test('control metadata keeps nested fields contextual and enforces nested bounds', () => {
