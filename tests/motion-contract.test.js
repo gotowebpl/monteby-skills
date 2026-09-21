@@ -12,6 +12,7 @@ const {
   auditMotionLayout,
   buildResolvedMotionProfile,
   motionSignature,
+  recipeForNode,
 } = require('../monteby-site-authoring/scripts/motion-contract');
 const { buildResolvedDesignProfile } = require('../monteby-site-authoring/scripts/resolved-design-profile');
 const { validateCanonicalMotionEvidence } = require('../monteby-site-authoring/scripts/run-canonical-verification');
@@ -471,9 +472,26 @@ test('motion audit requires one exact active recipe signature while tolerating n
   advanced.components[0].props.push('motionBlur');
   advanced.components[0].aiProps.push('motionBlur');
   advanced.components[0].controls.push(control('motionBlur', 'toggle', { section: 'Motion' }));
+  advanced.components[0].defaults = {
+    motionPreset: 'none',
+    motionDirection: 'up',
+    motionDuration: 700,
+    motionStagger: 0,
+    motionRepeat: 'once',
+    motionBlur: false,
+  };
   const advancedProfile = buildResolvedMotionProfile(advanced);
+  const defaultedProps = {
+    ...advanced.components[0].defaults,
+    ...advancedProfile.recipeById.get('hero-reveal').props,
+  };
+  assert.equal(
+    recipeForNode(advancedProfile, 'Section', defaultedProps)?.id,
+    'hero-reveal',
+    'published component defaults must not invalidate an otherwise exact recipe'
+  );
   const blurred = layout();
-  Object.assign(blurred['section-1'].props, advancedProfile.recipeById.get('hero-reveal').props, {
+  Object.assign(blurred['section-1'].props, defaultedProps, {
     motionBlur: true,
   });
   const advancedAudit = auditMotionLayout(blurred, advancedProfile);

@@ -119,6 +119,7 @@ function buildResolvedMotionProfile(contract) {
       recipeById: new Map(),
       propNames: new Set(),
       propNamesByComponent: new Map(),
+      defaultPropsByComponent: new Map(),
       rejectedRecipes: [{
         id: '',
         reasons: policyErrors.length > 0
@@ -219,6 +220,10 @@ function buildResolvedMotionProfile(contract) {
   for (const componentProps of propNamesByComponent.values()) {
     componentProps.forEach((prop) => propNames.add(prop));
   }
+  const defaultPropsByComponent = new Map([...components].map(([name, component]) => [
+    name,
+    isRecord(component.defaults) ? component.defaults : {},
+  ]));
   return {
     available: recipes.length > 0,
     version: 1,
@@ -228,6 +233,7 @@ function buildResolvedMotionProfile(contract) {
     recipeById,
     propNames,
     propNamesByComponent,
+    defaultPropsByComponent,
     rejectedRecipes,
   };
 }
@@ -251,6 +257,7 @@ function orderedNodeIds(nodeMap) {
 
 function recipeForNode(profile, component, props) {
   const publishedProps = profile.propNamesByComponent?.get(component) || new Set();
+  const defaultProps = profile.defaultPropsByComponent?.get(component) || {};
   const matches = profile.recipes.filter((recipe) => (
     recipe.components.includes(component)
     && Object.entries(recipe.props).every(([prop, value]) => (
@@ -259,6 +266,7 @@ function recipeForNode(profile, component, props) {
     && Object.entries(props).every(([prop, value]) => (
       !publishedProps.has(prop)
       || Object.hasOwn(recipe.props, prop)
+      || (Object.hasOwn(defaultProps, prop) && Object.is(value, defaultProps[prop]))
       || motionPropIsInactive(value)
     ))
   ));
