@@ -266,10 +266,12 @@ or `post_content` directly.
 
 A successful write is not proven by an arbitrary `2xx` or `{ "saved": true }`.
 Require a token and exact saved representation, then read through the same descriptor.
-The token may stay unchanged only for a proven no-op. The readback token must equal the
-write response token and the readback node-map SHA-256 must equal the saved
-write-response representation SHA-256. Keep the separately validated candidate
-SHA-256, preview the exact readback, and preserve validation `lint` in `SAVE_OK`.
+The token may stay unchanged when the host version field has coarse resolution, but only
+after the write used the exact source and candidate digest preconditions and both the
+write response and canonical readback prove the exact candidate representation. Patch
+apply also requires the exact preflighted compiled HTML digest. The readback token must
+equal the write response token. Keep the separately validated candidate SHA-256, preview
+the exact readback, and preserve validation `lint` in `SAVE_OK`.
 
 Apply the same rule to partial writes: never retry `409` or `428`, never apply
 without a successful preflight, and never reuse a preflight after the page or

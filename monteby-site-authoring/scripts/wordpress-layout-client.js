@@ -2372,10 +2372,6 @@ async function runSave(options, authHeader) {
     || !savedEvidence.validRepresentation
     || savedDocument?.[pageResource.candidateDigestField] !== validatedCandidateSha256
     || savedEvidence.declaredDigest !== validatedCandidateSha256
-    || (
-      savedVersion === freshVersion
-      && savedEvidence.declaredDigest !== freshEvidence.declaredDigest
-    )
   ) {
     return createResult({
       ok: false,
@@ -2694,10 +2690,6 @@ async function runPatchSave(options, authHeader) {
     || !savedEvidence.validIdentity
     || !savedEvidence.validRepresentation
     || savedEvidence.declaredDigest !== options.expectedCandidateLayoutSha256
-    || (
-      savedVersion === prepared.expectedVersionToken
-      && savedEvidence.declaredDigest !== prepared.expectedLayoutSha256
-    )
   ) {
     return createResult({
       ok: false, stage: 'patch-save', code: 'PATCH_SAVE_EVIDENCE_INVALID',
@@ -2848,7 +2840,6 @@ function previewSaveEvidence(saveReport, options, candidateSha256, artifacts) {
       === (saveReport.evidence.versionToken !== saveReport.evidence.previousVersionToken)
     && saveReport.evidence.layoutChanged
       === (saveReport.evidence.savedLayoutSha256 !== saveReport.evidence.previousLayoutSha256)
-    && (saveReport.evidence.versionAdvanced || !saveReport.evidence.layoutChanged)
     && saveReport.evidence?.validation?.valid === true
     && Array.isArray(saveReport.evidence?.validation?.lint);
   if (!valid) {

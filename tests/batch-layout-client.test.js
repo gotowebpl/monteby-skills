@@ -179,6 +179,10 @@ test('batch never retries a patch whose post-write readback was uncertain', asyn
 
   const report = await runBatch(plan, directory, { execute });
   assert.equal(report.pages[0].writeOutcome, 'unknown');
+  await assert.rejects(
+    runBatch(plan, directory, { execute }),
+    /Batch ledger already exists/
+  );
   await assert.rejects(runBatch(plan, directory, { resume: true, execute }), /no exact conflict evidence/);
   assert.equal(saveCount, 1);
 });

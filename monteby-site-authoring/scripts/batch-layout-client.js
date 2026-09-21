@@ -126,6 +126,12 @@ async function runBatch(planValue, outDir, { resume = false, execute = defaultEx
       await writeJson(ledgerFile, ledger);
     }
   } else {
+    try {
+      await fs.stat(ledgerFile);
+      throw new Error('Batch ledger already exists; inspect and reconcile it, then use --resume or remove it explicitly');
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error;
+    }
     ledger = {
       schemaVersion: 1,
       artifact: 'monteby-layout-batch-ledger',

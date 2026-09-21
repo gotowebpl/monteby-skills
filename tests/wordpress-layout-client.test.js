@@ -1210,63 +1210,111 @@ test('save accepts a fully proven no-op without a version advance', async (t) =>
   assert.deepEqual(server.errors, []);
 });
 
-test('save rejects a changed representation without a version advance and mismatched candidate proof', async (t) => {
-  for (const scenario of ['same-token-change', 'candidate-mismatch']) {
-    const directory = tempDir(t);
-    const changedNodeMap = {
-      ...NODE_MAP,
-      'section-1': {
-        ...NODE_MAP['section-1'],
-        props: { background: '#111111' },
-      },
-    };
-    const changedSha256 = nodeMapSha256(changedNodeMap);
-    const layoutFile = path.join(directory, `${scenario}-layout.json`);
-    const snapshotFile = path.join(directory, `${scenario}-snapshot.json`);
-    writeJson(layoutFile, changedNodeMap);
-    let writeCompleted = false;
-    const server = await startServer(t, async (request, response) => {
-      if (request.url.endsWith('/contract')) return sendJson(response, 200, layoutContract());
-      if (request.url.endsWith('/validate')) {
-        return sendJson(response, 200, {
-          valid: true,
-          lint: [],
-          nodeMap: changedNodeMap,
-          candidateLayoutSha256: changedSha256,
-        });
-      }
-      if (request.method === 'PUT') {
-        writeCompleted = true;
-        await readBody(request);
-        return sendJson(response, 200, {
-          ...layoutResponse(server.site, 17, scenario === 'same-token-change' ? 'v1' : 'v2', changedNodeMap),
-          saved: true,
-          candidateLayoutSha256: scenario === 'candidate-mismatch'
-            ? '0'.repeat(64)
-            : changedSha256,
-        });
-      }
-      return sendJson(response, 200, layoutResponse(
-        server.site,
-        17,
-        writeCompleted ? 'v2' : 'v1',
-        writeCompleted ? changedNodeMap : NODE_MAP
-      ));
-    });
-    writeJson(snapshotFile, pageSnapshot(server.site, 17, {
-      postModifiedGmt: 'v1', nodeMap: NODE_MAP,
-    }));
+test('save accepts a same-token change only with exact candidate and canonical readback proof', async (t) => {
+  const directory = tempDir(t);
+  const changedNodeMap = {
+    ...NODE_MAP,
+    'section-1': {
+      ...NODE_MAP['section-1'],
+      props: { background: '#111111' },
+    },
+  };
+  const changedSha256 = nodeMapSha256(changedNodeMap);
+  const layoutFile = path.join(directory, 'same-token-layout.json');
+  const snapshotFile = path.join(directory, 'same-token-snapshot.json');
+  writeJson(layoutFile, changedNodeMap);
+  let writeCompleted = false;
+  const server = await startServer(t, async (request, response) => {
+    if (request.url.endsWith('/contract')) return sendJson(response, 200, layoutContract());
+    if (request.url.endsWith('/validate')) {
+      return sendJson(response, 200, {
+        valid: true,
+        lint: [],
+        nodeMap: changedNodeMap,
+        candidateLayoutSha256: changedSha256,
+      });
+    }
+    if (request.method === 'PUT') {
+      writeCompleted = true;
+      await readBody(request);
+      return sendJson(response, 200, {
+        ...layoutResponse(server.site, 17, 'v1', changedNodeMap),
+        saved: true,
+        candidateLayoutSha256: changedSha256,
+      });
+    }
+    return sendJson(response, 200, layoutResponse(
+      server.site,
+      17,
+      'v1',
+      writeCompleted ? changedNodeMap : NODE_MAP
+    ));
+  });
+  writeJson(snapshotFile, pageSnapshot(server.site, 17, {
+    postModifiedGmt: 'v1', nodeMap: NODE_MAP,
+  }));
 
-    const execution = await runClient([
-      'save', '--site', server.site, '--page-id', '17', '--layout', layoutFile,
-      '--snapshot', snapshotFile, '--expected-layout-sha256', changedSha256,
-      '--out', path.join(directory, `${scenario}.json`),
-    ]);
+  const execution = await runClient([
+    'save', '--site', server.site, '--page-id', '17', '--layout', layoutFile,
+    '--snapshot', snapshotFile, '--expected-layout-sha256', changedSha256,
+    '--out', path.join(directory, 'same-token.json'),
+  ]);
 
-    assert.equal(execution.exitCode, 1);
-    assertEnvelope(execution.result, { ok: false, stage: 'save', code: 'SAVE_EVIDENCE_INVALID' });
-    assert.deepEqual(server.errors, []);
-  }
+  assert.equal(execution.exitCode, 0, JSON.stringify(execution.result));
+  assertEnvelope(execution.result, { ok: true, stage: 'save', code: 'SAVE_OK' });
+  assert.equal(execution.result.evidence.versionAdvanced, false);
+  assert.equal(execution.result.evidence.layoutChanged, true);
+  assert.equal(execution.result.evidence.savedLayoutSha256, changedSha256);
+  assert.equal(execution.result.evidence.readbackLayoutSha256, changedSha256);
+  assert.deepEqual(server.errors, []);
+});
+
+test('save rejects a mismatched candidate proof even when the canonical representation changed', async (t) => {
+  const directory = tempDir(t);
+  const changedNodeMap = {
+    ...NODE_MAP,
+    'section-1': {
+      ...NODE_MAP['section-1'],
+      props: { background: '#111111' },
+    },
+  };
+  const changedSha256 = nodeMapSha256(changedNodeMap);
+  const layoutFile = path.join(directory, 'candidate-mismatch-layout.json');
+  const snapshotFile = path.join(directory, 'candidate-mismatch-snapshot.json');
+  writeJson(layoutFile, changedNodeMap);
+  const server = await startServer(t, async (request, response) => {
+    if (request.url.endsWith('/contract')) return sendJson(response, 200, layoutContract());
+    if (request.url.endsWith('/validate')) {
+      return sendJson(response, 200, {
+        valid: true,
+        lint: [],
+        nodeMap: changedNodeMap,
+        candidateLayoutSha256: changedSha256,
+      });
+    }
+    if (request.method === 'PUT') {
+      await readBody(request);
+      return sendJson(response, 200, {
+        ...layoutResponse(server.site, 17, 'v2', changedNodeMap),
+        saved: true,
+        candidateLayoutSha256: '0'.repeat(64),
+      });
+    }
+    return sendJson(response, 200, layoutResponse(server.site, 17, 'v1', NODE_MAP));
+  });
+  writeJson(snapshotFile, pageSnapshot(server.site, 17, {
+    postModifiedGmt: 'v1', nodeMap: NODE_MAP,
+  }));
+
+  const execution = await runClient([
+    'save', '--site', server.site, '--page-id', '17', '--layout', layoutFile,
+    '--snapshot', snapshotFile, '--expected-layout-sha256', changedSha256,
+    '--out', path.join(directory, 'candidate-mismatch.json'),
+  ]);
+
+  assert.equal(execution.exitCode, 1);
+  assertEnvelope(execution.result, { ok: false, stage: 'save', code: 'SAVE_EVIDENCE_INVALID' });
+  assert.deepEqual(server.errors, []);
 });
 
 test('save rejects an unknown presentation layout before making a request', async (t) => {
@@ -1529,7 +1577,7 @@ test('patch workflows reject ambiguous routes and colliding proof fields before 
   }
 });
 
-test('patch-save applies only the exact preflighted batch and sends both server preconditions', async (t) => {
+test('patch-save accepts a same-token change only with exact candidate, compiled, and readback proof', async (t) => {
   const directory = tempDir(t);
   const snapshotFile = path.join(directory, 'layout-before.json');
   const operationsFile = path.join(directory, 'operations.json');
@@ -1552,7 +1600,7 @@ test('patch-save applies only the exact preflighted batch and sends both server 
     });
     if (request.method === 'GET') return sendJson(response, 200, { data: {
       id: 17, postType: 'page', viewUrl: `${server.site}/page-17/`,
-      revisionToken: applyBody ? 'v2' : 'v1',
+      revisionToken: 'v1',
       documentTree: applyBody ? persistedNodeMap : NODE_MAP,
       layoutSha256: applyBody ? persistedLayoutSha256 : LAYOUT_SHA256,
     } });
@@ -1564,7 +1612,7 @@ test('patch-save applies only the exact preflighted batch and sends both server 
       operationsSha256: OPERATIONS_SHA256,
       candidateLayoutSha256: persistedLayoutSha256,
       compiledHtmlSha256: 'a'.repeat(64),
-      revisionToken: 'v2',
+      revisionToken: 'v1',
       layout: persistedNodeMap,
       layoutSha256: persistedLayoutSha256,
     });
@@ -1615,13 +1663,15 @@ test('patch-save applies only the exact preflighted batch and sends both server 
   assert.equal(execution.result.evidence.savedLayoutSha256, persistedLayoutSha256);
   assert.equal(execution.result.evidence.readbackLayoutSha256, persistedLayoutSha256);
   assert.equal(execution.result.evidence.versionField, 'revisionToken');
+  assert.equal(execution.result.evidence.versionAdvanced, false);
+  assert.equal(execution.result.evidence.layoutChanged, true);
   const beforeBytes = fs.readFileSync(snapshotFile, 'utf8');
   const preflightBytes = fs.readFileSync(reportFile, 'utf8');
   const verification = await runClient(execution.result.nextAction.args);
   assert.equal(verification.exitCode, 0);
   assert.equal(verification.result.code, 'SNAPSHOT_OK');
   assert.equal(verification.result.artifacts.snapshot, path.join(directory, 'saved-patch', 'layout-before.json'));
-  assert.equal(JSON.parse(fs.readFileSync(verification.result.artifacts.snapshot, 'utf8')).data.revisionToken, 'v2');
+  assert.equal(JSON.parse(fs.readFileSync(verification.result.artifacts.snapshot, 'utf8')).data.revisionToken, 'v1');
   assert.equal(fs.readFileSync(snapshotFile, 'utf8'), beforeBytes);
   assert.equal(fs.readFileSync(reportFile, 'utf8'), preflightBytes);
   assert.equal(requests.filter((request) => request.startsWith('POST ')).length, 1);

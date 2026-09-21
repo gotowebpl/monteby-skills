@@ -481,7 +481,9 @@ mismatch into a pass.
 - local full-page comparison passes at all canonical viewports;
 - the server validates the exact node map;
 - save succeeds without a concurrency conflict and returns a valid version
-  token; an unchanged token is accepted only for a proven no-op;
+  token; an unchanged coarse-resolution token is accepted only when exact source/candidate
+  digest preconditions and canonical readback prove the write (and patch apply also proves the
+  exact preflighted compiled HTML digest);
 - the canonical readback carries that token and the exact saved-response
   representation SHA-256, while the report separately retains the validated
   candidate SHA-256;
