@@ -228,14 +228,14 @@ function orderedNodeIds(nodeMap) {
 }
 
 function recipeForNode(profile, component, props) {
-  const componentProps = profile.propNamesByComponent?.get(component) || new Set();
+  const publishedProps = profile.propNames || new Set();
   const matches = profile.recipes.filter((recipe) => (
     recipe.components.includes(component)
     && Object.entries(recipe.props).every(([prop, value]) => (
       Object.hasOwn(props, prop) && props[prop] === value
     ))
     && Object.entries(props).every(([prop, value]) => (
-      !componentProps.has(prop)
+      !publishedProps.has(prop)
       || Object.hasOwn(recipe.props, prop)
       || motionPropIsInactive(value)
     ))
@@ -547,12 +547,12 @@ function motionSignature(nodeMap, profile) {
   return orderedNodeIds(nodeMap).flatMap((nodeId) => {
     const node = nodeMap[nodeId];
     const props = isRecord(node?.props) ? node.props : {};
-    const componentProps = profile.propNamesByComponent?.get(nodeType(node)) || new Set();
+    const publishedProps = profile.propNames || new Set();
     const recipe = recipeForNode(profile, nodeType(node), props);
     const selected = recipe
       ? Object.fromEntries(Object.keys(recipe.props).map((prop) => [prop, props[prop]]))
       : Object.fromEntries(Object.entries(props).filter(([prop, value]) => (
-        componentProps.has(prop) && !motionPropIsInactive(value)
+        publishedProps.has(prop) && !motionPropIsInactive(value)
       )));
     return Object.keys(selected).length > 0 ? [{ nodeId, component: nodeType(node), props: selected }] : [];
   });

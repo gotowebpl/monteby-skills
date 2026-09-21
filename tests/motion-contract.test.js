@@ -406,6 +406,31 @@ test('motion audit requires one exact active recipe signature while tolerating n
     true
   );
 
+  const crossComponentMixed = layout();
+  Object.assign(
+    crossComponentMixed['section-1'].props,
+    profile.recipeById.get('hero-reveal').props,
+    { pointerEffect: 'magnetic' }
+  );
+  assert.equal(
+    auditMotionLayout(crossComponentMixed, profile).errors
+      .some((entry) => entry.code === 'motion_recipe_unmatched'),
+    true,
+    'a globally published active motion prop cannot hide behind another component owner'
+  );
+  assert.deepEqual(motionSignature(crossComponentMixed, profile), [{
+    nodeId: 'section-1',
+    component: 'Section',
+    props: {
+      motionPreset: 'slide',
+      motionDirection: 'up',
+      motionDuration: 600,
+      motionStagger: 100,
+      motionRepeat: 'once',
+      pointerEffect: 'magnetic',
+    },
+  }]);
+
   const wrongOwner = layout();
   wrongOwner['section-1'].nodes.push('text-motion');
   wrongOwner['text-motion'] = {

@@ -73,6 +73,8 @@ const OPERATIONS = [{
 }];
 const OPERATIONS_SHA256 = operationsSha256(OPERATIONS);
 const BRANDING_REVISION = 'a'.repeat(64);
+const PAGE_SETTINGS_SHA256 = 'b'.repeat(64);
+const DOCUMENT_SHA256 = 'c'.repeat(64);
 
 function layoutContract({
   productVersion = '1.6.0',
@@ -88,6 +90,8 @@ function layoutContract({
   writeDigestPreconditionField = 'expectedLayoutSha256',
   candidateDigestField = 'candidateLayoutSha256',
   writeCandidatePreconditionField = 'expectedCandidateSha256',
+  settingsDigestField = 'pageSettingsSha256',
+  writeSettingsDigestPreconditionField = 'expectedPageSettingsSha256',
 } = {}) {
   return {
     version: 1,
@@ -106,6 +110,7 @@ function layoutContract({
         validate: { method: 'POST', path: validatePath, carrier },
         pageLayout: {
           readMethod: 'GET', writeMethod: 'PUT', path: pagePath, carrier,
+          settingsDigestField, writeSettingsDigestPreconditionField,
         },
         preview: { method: 'POST', path: previewPath, carrier },
       },
@@ -211,7 +216,8 @@ function capabilityContract() {
           method: 'POST', path: '/monteby/v1/pages/{postId}/layout/restore',
           carrier: 'revisionId', revisionField: 'revisionId',
           writePreconditionField: 'expectedModifiedGmt',
-          writeDigestPreconditionField: 'expectedLayoutSha256',
+          digestField: 'documentSha256',
+          writeDigestPreconditionField: 'expectedDocumentSha256',
         },
         pageSeo: {
           readMethod: 'GET', writeMethod: 'PUT',
@@ -414,6 +420,7 @@ function pageSnapshot(site, pageId, data) {
       nodeMap,
       postModifiedGmt: 'v1',
       layoutSha256: nodeMapSha256(nodeMap),
+      pageSettingsSha256: PAGE_SETTINGS_SHA256,
       ...data,
     },
   };
@@ -427,6 +434,7 @@ function layoutResponse(site, pageId, versionToken, nodeMap = NODE_MAP, extra = 
     postModifiedGmt: versionToken,
     nodeMap,
     layoutSha256: nodeMapSha256(nodeMap),
+    pageSettingsSha256: PAGE_SETTINGS_SHA256,
     ...extra,
   };
 }
@@ -587,6 +595,7 @@ test('snapshot fetches contract before the page and atomically records both arti
     postModifiedGmt: '2026-07-26 08:00:00',
     nodeMap: NODE_MAP,
     layoutSha256: LAYOUT_SHA256,
+    pageSettingsSha256: PAGE_SETTINGS_SHA256,
     presentation: { layout: 'default', disableGlobalTemplates: false },
   };
   const server = await startServer(t, (request, response) => {
@@ -644,6 +653,7 @@ test('snapshot fetches contract before the page and atomically records both arti
     renderContextUrl: '',
     productVersion: '1.4.0',
     layoutSha256: LAYOUT_SHA256,
+    pageSettingsSha256: PAGE_SETTINGS_SHA256,
   });
   assert.equal(execution.result.nextAction.id, 'validate_candidate');
   assert.deepEqual(
@@ -677,6 +687,7 @@ test('template snapshot uses only the layout resource and accepts an explicit re
       postModifiedGmt: '2026-08-20 09:00:00',
       nodeMap: NODE_MAP,
       layoutSha256: LAYOUT_SHA256,
+      pageSettingsSha256: PAGE_SETTINGS_SHA256,
     });
   });
   const outDir = tempDir(t);
@@ -970,7 +981,7 @@ test('save rejects a candidate that differs from the validated SHA-256 before RE
   assert.deepEqual(server.errors, []);
 });
 
-test('save validates before PUT and preserves fresh presentation while overriding only layout', async (t) => {
+test('save omits page settings for layout-only writes and binds explicit presentation writes', async (t) => {
   const directory = tempDir(t);
   const layoutFile = path.join(directory, 'layout.json');
   const snapshotFile = path.join(directory, 'custom-snapshot.json');
@@ -983,6 +994,8 @@ test('save validates before PUT and preserves fresh presentation while overridin
     contentWidth: 'wide',
   };
   let expectReadback = false;
+  let readbackPresentation = freshPresentation;
+  let readbackSettingsSha256 = PAGE_SETTINGS_SHA256;
   const server = await startServer(t, async (request, response) => {
     requests.push(`${request.method} ${request.url}`);
     if (request.url.endsWith('/contract')) {
@@ -991,10 +1004,14 @@ test('save validates before PUT and preserves fresh presentation while overridin
       const postModifiedGmt = expectReadback
         ? '2026-07-26 08:00:01'
         : '2026-07-26 08:00:00';
+      const presentation = expectReadback ? readbackPresentation : freshPresentation;
+      const pageSettingsSha256 = expectReadback
+        ? readbackSettingsSha256
+        : PAGE_SETTINGS_SHA256;
       expectReadback = false;
       sendJson(response, 200, {
-        ...layoutResponse(server.site, 17, postModifiedGmt),
-        presentation: freshPresentation,
+        ...layoutResponse(server.site, 17, postModifiedGmt, NODE_MAP, { pageSettingsSha256 }),
+        presentation,
       });
     } else if (request.url.endsWith('/validate')) {
       assert.deepEqual(await readBody(request), { nodeMap: NODE_MAP, postId: 17 });
@@ -1005,7 +1022,10 @@ test('save validates before PUT and preserves fresh presentation while overridin
         candidateLayoutSha256: LAYOUT_SHA256,
       });
     } else if (request.method === 'PUT') {
-      putBodies.push(await readBody(request));
+      const body = await readBody(request);
+      putBodies.push(body);
+      readbackPresentation = body.presentation || freshPresentation;
+      readbackSettingsSha256 = body.presentation ? 'e'.repeat(64) : PAGE_SETTINGS_SHA256;
       expectReadback = true;
       sendJson(response, 200, {
         id: 17,
@@ -1014,6 +1034,10 @@ test('save validates before PUT and preserves fresh presentation while overridin
         nodeMap: NODE_MAP,
         layoutSha256: LAYOUT_SHA256,
         candidateLayoutSha256: LAYOUT_SHA256,
+        pageSettingsSha256: readbackSettingsSha256,
+        ...(body.presentation ? {
+          presentation: body.presentation,
+        } : {}),
       });
     } else {
       sendJson(response, 404, { code: 'not_found' });
@@ -1081,12 +1105,12 @@ test('save validates before PUT and preserves fresh presentation while overridin
     expectedLayoutSha256: LAYOUT_SHA256,
     expectedCandidateSha256: LAYOUT_SHA256,
     nodeMap: NODE_MAP,
-    presentation: freshPresentation,
   });
   assert.deepEqual(putBodies[1], {
     expectedModifiedGmt: '2026-07-26 08:00:00',
     expectedLayoutSha256: LAYOUT_SHA256,
     expectedCandidateSha256: LAYOUT_SHA256,
+    expectedPageSettingsSha256: PAGE_SETTINGS_SHA256,
     nodeMap: NODE_MAP,
     presentation: {
       ...freshPresentation,
@@ -1094,6 +1118,107 @@ test('save validates before PUT and preserves fresh presentation while overridin
       disableGlobalTemplates: true,
     },
   });
+  assert.deepEqual(server.errors, []);
+});
+
+test('save binds an envelope SEO candidate to the fresh page-settings digest and exact readback', async (t) => {
+  const directory = tempDir(t);
+  const layoutFile = path.join(directory, 'layout.json');
+  const snapshotFile = path.join(directory, 'snapshot.json');
+  const seo = { title: 'Updated title', description: 'Updated description' };
+  const updatedPageSettingsSha256 = 'f'.repeat(64);
+  writeJson(layoutFile, { nodeMap: NODE_MAP, seo });
+  let saved = false;
+  let putBody;
+  const server = await startServer(t, async (request, response) => {
+    if (request.url.endsWith('/contract')) return sendJson(response, 200, capabilityContract());
+    if (request.url.endsWith('/validate')) {
+      return sendJson(response, 200, {
+        valid: true,
+        lint: [],
+        nodeMap: NODE_MAP,
+        candidateLayoutSha256: LAYOUT_SHA256,
+      });
+    }
+    if (request.method === 'PUT') {
+      putBody = await readBody(request);
+      saved = true;
+      return sendJson(response, 200, {
+        id: 17,
+        saved: true,
+        postModifiedGmt: 'v2',
+        nodeMap: NODE_MAP,
+        layoutSha256: LAYOUT_SHA256,
+        candidateLayoutSha256: LAYOUT_SHA256,
+        pageSettingsSha256: updatedPageSettingsSha256,
+        seo,
+      });
+    }
+    if (request.method === 'GET' && request.url.endsWith('/pages/17/layout')) {
+      return sendJson(response, 200, layoutResponse(
+        server.site,
+        17,
+        saved ? 'v2' : 'v1',
+        NODE_MAP,
+        {
+          pageSettingsSha256: saved ? updatedPageSettingsSha256 : PAGE_SETTINGS_SHA256,
+          seo: saved ? seo : { title: 'Old title', description: 'Old description' },
+        }
+      ));
+    }
+    return sendJson(response, 404, { code: 'not_found' });
+  });
+  writeJson(snapshotFile, pageSnapshot(server.site, 17, { postModifiedGmt: 'v1' }));
+
+  const execution = await runClient([
+    'save', '--site', server.site, '--page-id', '17', '--layout', layoutFile,
+    '--snapshot', snapshotFile, '--expected-layout-sha256', LAYOUT_SHA256,
+    '--out', path.join(directory, 'save.json'),
+  ]);
+
+  assertEnvelope(execution.result, { ok: true, stage: 'save', code: 'SAVE_OK' });
+  assert.deepEqual(putBody, {
+    expectedModifiedGmt: 'v1',
+    expectedLayoutSha256: LAYOUT_SHA256,
+    expectedCandidateSha256: LAYOUT_SHA256,
+    expectedPageSettingsSha256: PAGE_SETTINGS_SHA256,
+    nodeMap: NODE_MAP,
+    seo,
+  });
+  assert.equal(execution.result.evidence.previousPageSettingsSha256, PAGE_SETTINGS_SHA256);
+  assert.equal(execution.result.evidence.pageSettingsSha256, updatedPageSettingsSha256);
+  assert.deepEqual(server.errors, []);
+});
+
+test('save rejects same-version page-settings drift before an optional settings write', async (t) => {
+  const directory = tempDir(t);
+  const layoutFile = path.join(directory, 'layout.json');
+  const snapshotFile = path.join(directory, 'snapshot.json');
+  writeJson(layoutFile, {
+    nodeMap: NODE_MAP,
+    presentation: { layout: 'canvas', disableGlobalTemplates: true },
+  });
+  let mutations = 0;
+  const server = await startServer(t, (request, response) => {
+    if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method)) mutations += 1;
+    if (request.url.endsWith('/contract')) return sendJson(response, 200, capabilityContract());
+    return sendJson(response, 200, layoutResponse(server.site, 17, 'v1', NODE_MAP, {
+      pageSettingsSha256: '9'.repeat(64),
+      presentation: { layout: 'full-width', disableGlobalTemplates: false },
+    }));
+  });
+  writeJson(snapshotFile, pageSnapshot(server.site, 17, { postModifiedGmt: 'v1' }));
+
+  const execution = await runClient([
+    'save', '--site', server.site, '--page-id', '17', '--layout', layoutFile,
+    '--snapshot', snapshotFile, '--expected-layout-sha256', LAYOUT_SHA256,
+    '--out', path.join(directory, 'save.json'),
+  ]);
+
+  assertEnvelope(execution.result, { ok: false, stage: 'save', code: 'REST_CONFLICT' });
+  assert.equal(execution.result.response.snapshotPageSettingsSha256, PAGE_SETTINGS_SHA256);
+  assert.equal(execution.result.response.currentPageSettingsSha256, '9'.repeat(64));
+  assert.equal(mutations, 0);
   assert.deepEqual(server.errors, []);
 });
 
@@ -1138,6 +1263,7 @@ test('save and preview follow custom live resource paths, carriers, contexts, an
           revisionToken: saved ? 'revision-2' : 'revision-1',
           layoutCandidate: saved ? persistedNodeMap : previousNodeMap,
           canvasDigest: saved ? persistedLayoutSha256 : previousLayoutSha256,
+          pageSettingsSha256: PAGE_SETTINGS_SHA256,
           presentation: { layout: 'default', disableGlobalTemplates: false },
         },
       });
@@ -1157,7 +1283,6 @@ test('save and preview follow custom live resource paths, carriers, contexts, an
         expectedCanvasDigest: previousLayoutSha256,
         expectedCanonicalCandidateDigest: persistedLayoutSha256,
         layoutCandidate: NODE_MAP,
-        presentation: { layout: 'default', disableGlobalTemplates: false },
       });
       saved = true;
       return sendJson(response, 200, { data: {
@@ -1167,6 +1292,7 @@ test('save and preview follow custom live resource paths, carriers, contexts, an
         layoutCandidate: persistedNodeMap,
         canvasDigest: persistedLayoutSha256,
         canonicalCandidateDigest: persistedLayoutSha256,
+        pageSettingsSha256: PAGE_SETTINGS_SHA256,
       } });
     }
     if (request.url.endsWith('/render-layout')) {
@@ -1238,6 +1364,7 @@ test('save refuses incomplete write evidence and mismatched canonical readback',
           nodeMap: NODE_MAP,
           layoutSha256: LAYOUT_SHA256,
           candidateLayoutSha256: LAYOUT_SHA256,
+          pageSettingsSha256: PAGE_SETTINGS_SHA256,
         });
         if (scenario === 'missing-representation') {
           return sendJson(response, 200, {
@@ -1246,6 +1373,7 @@ test('save refuses incomplete write evidence and mismatched canonical readback',
             postModifiedGmt: 'v2',
             layoutSha256: LAYOUT_SHA256,
             candidateLayoutSha256: LAYOUT_SHA256,
+            pageSettingsSha256: PAGE_SETTINGS_SHA256,
           });
         }
         return sendJson(response, 200, {
@@ -1255,6 +1383,7 @@ test('save refuses incomplete write evidence and mismatched canonical readback',
           nodeMap: NODE_MAP,
           layoutSha256: LAYOUT_SHA256,
           candidateLayoutSha256: LAYOUT_SHA256,
+          pageSettingsSha256: PAGE_SETTINGS_SHA256,
         });
       }
       const responseNodeMap = writeCompleted && scenario === 'mismatched-readback'
@@ -1814,6 +1943,7 @@ test('patch-save accepts a same-token change only with exact candidate, compiled
       revisionToken: 'v1',
       documentTree: applyBody ? persistedNodeMap : NODE_MAP,
       layoutSha256: applyBody ? persistedLayoutSha256 : LAYOUT_SHA256,
+      pageSettingsSha256: PAGE_SETTINGS_SHA256,
     } });
     applyBody = await readBody(request);
     return sendJson(response, 200, {
@@ -2855,6 +2985,7 @@ test('revision-list follows the page-scoped descriptor and returns bounded resto
         totalPages: 2,
         currentPostModifiedGmt: '2026-09-21 08:05:00',
         currentLayoutSha256: LAYOUT_SHA256,
+        currentDocumentSha256: DOCUMENT_SHA256,
       });
     }
     return sendJson(response, 404, { code: 'not_found' });
@@ -2874,6 +3005,7 @@ test('revision-list follows the page-scoped descriptor and returns bounded resto
   assert.ok(collectionRequest.includes('perPage=10'));
   assert.equal(execution.result.evidence.currentPostModifiedGmt, '2026-09-21 08:05:00');
   assert.equal(execution.result.evidence.currentLayoutSha256, LAYOUT_SHA256);
+  assert.equal(execution.result.evidence.currentDocumentSha256, DOCUMENT_SHA256);
   assert.deepEqual(server.errors, []);
 });
 
@@ -2883,7 +3015,7 @@ test('revision-restore proves the scoped write through canonical layout readback
   writeJson(inputFile, {
     revisionId: 91,
     expectedModifiedGmt: 'v1',
-    expectedLayoutSha256: LAYOUT_SHA256,
+    expectedDocumentSha256: DOCUMENT_SHA256,
   });
   const restored = {
     ...NODE_MAP,
@@ -2891,14 +3023,27 @@ test('revision-restore proves the scoped write through canonical layout readback
   };
   const methods = [];
   let restoredApplied = false;
+  const restoredDocumentSha256 = 'd'.repeat(64);
   const server = await startServer(t, async (request, response) => {
     methods.push(`${request.method} ${request.url}`);
     if (request.url === '/wp-json/monteby/v1/contract') return sendJson(response, 200, capabilityContract());
+    if (request.method === 'GET' && request.url === '/wp-json/monteby/v1/pages/17/layout/revisions') {
+      return sendJson(response, 200, {
+        items: [],
+        page: 1,
+        perPage: 50,
+        total: 0,
+        totalPages: 0,
+        currentPostModifiedGmt: restoredApplied ? 'v2' : 'v1',
+        currentLayoutSha256: restoredApplied ? nodeMapSha256(restored) : LAYOUT_SHA256,
+        currentDocumentSha256: restoredApplied ? restoredDocumentSha256 : DOCUMENT_SHA256,
+      });
+    }
     if (request.method === 'POST' && request.url === '/wp-json/monteby/v1/pages/17/layout/restore') {
       assert.deepEqual(await readBody(request), {
         revisionId: 91,
         expectedModifiedGmt: 'v1',
-        expectedLayoutSha256: LAYOUT_SHA256,
+        expectedDocumentSha256: DOCUMENT_SHA256,
       });
       restoredApplied = true;
       return sendJson(response, 200, {
@@ -2907,6 +3052,7 @@ test('revision-restore proves the scoped write through canonical layout readback
         revisionId: 91,
         layout: restored,
         layoutSha256: nodeMapSha256(restored),
+        documentSha256: restoredDocumentSha256,
         postModifiedGmt: 'v2',
       });
     }
@@ -2925,9 +3071,49 @@ test('revision-restore proves the scoped write through canonical layout readback
 
   assertEnvelope(execution.result, { ok: true, stage: 'revision-restore', code: 'REVISION_RESTORE_OK' });
   assert.equal(execution.result.evidence.revisionId, 91);
+  assert.equal(execution.result.evidence.previousDocumentSha256, DOCUMENT_SHA256);
+  assert.equal(execution.result.evidence.documentSha256, restoredDocumentSha256);
   assert.equal(execution.result.evidence.previousLayoutSha256, LAYOUT_SHA256);
   assert.equal(execution.result.evidence.layoutSha256, nodeMapSha256(restored));
   assert.equal(methods.filter((entry) => entry.startsWith('POST ')).length, 1);
+  assert.deepEqual(server.errors, []);
+});
+
+test('revision-restore rejects same-version document drift before reading or mutating layout', async (t) => {
+  const directory = tempDir(t);
+  const inputFile = path.join(directory, 'restore.json');
+  writeJson(inputFile, {
+    revisionId: 91,
+    expectedModifiedGmt: 'v1',
+    expectedDocumentSha256: DOCUMENT_SHA256,
+  });
+  const requests = [];
+  const server = await startServer(t, (request, response) => {
+    requests.push(`${request.method} ${request.url}`);
+    if (request.url.endsWith('/contract')) return sendJson(response, 200, capabilityContract());
+    if (request.url.endsWith('/layout/revisions')) {
+      return sendJson(response, 200, {
+        items: [], page: 1, perPage: 50, total: 0, totalPages: 0,
+        currentPostModifiedGmt: 'v1',
+        currentLayoutSha256: LAYOUT_SHA256,
+        currentDocumentSha256: '8'.repeat(64),
+      });
+    }
+    return sendJson(response, 500, { code: 'must_not_be_called' });
+  });
+
+  const execution = await runClient([
+    'revision-restore', '--site', server.site, '--page-id', '17',
+    '--input', inputFile, '--out', path.join(directory, 'report.json'),
+  ]);
+
+  assertEnvelope(execution.result, {
+    ok: false, stage: 'revision-restore', code: 'REST_CONFLICT',
+  });
+  assert.deepEqual(requests, [
+    'GET /wp-json/monteby/v1/contract',
+    'GET /wp-json/monteby/v1/pages/17/layout/revisions',
+  ]);
   assert.deepEqual(server.errors, []);
 });
 

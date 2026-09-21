@@ -1585,6 +1585,8 @@ function pageLayoutCapability(contract, pageId, stage) {
     persistence.writeDigestPreconditionField,
     persistence.candidateDigestField,
     persistence.writeCandidatePreconditionField,
+    resource?.settingsDigestField,
+    resource?.writeSettingsDigestPreconditionField,
   ];
   const placeholders = typeof resource?.path === 'string'
     ? [...resource.path.matchAll(/\{postId\}/gu)]
@@ -1614,6 +1616,8 @@ function pageLayoutCapability(contract, pageId, stage) {
     writeDigestPreconditionField: persistence.writeDigestPreconditionField,
     candidateDigestField: persistence.candidateDigestField,
     writeCandidatePreconditionField: persistence.writeCandidatePreconditionField,
+    settingsDigestField: resource.settingsDigestField,
+    writeSettingsDigestPreconditionField: resource.writeSettingsDigestPreconditionField,
   };
 }
 
@@ -1967,12 +1971,14 @@ function layoutResourceEvidence(value, capability, pageId) {
     nodeMap = null;
   }
   const declaredDigest = document?.[capability.layoutDigestField];
+  const settingsDigest = document?.[capability.settingsDigestField];
   const representationDigest = nodeMap ? nodeMapSha256(nodeMap) : '';
   return {
     document,
     nodeMap,
     versionToken: versionToken(document, capability.versionField),
     declaredDigest: validSha(declaredDigest) ? declaredDigest : '',
+    settingsDigest: validSha(settingsDigest) ? settingsDigest : '',
     representationDigest,
     validIdentity: document?.id === pageId,
     validRepresentation: Boolean(
@@ -1980,6 +1986,7 @@ function layoutResourceEvidence(value, capability, pageId) {
       && validSha(declaredDigest)
       && declaredDigest === representationDigest
     ),
+    validSettingsDigest: validSha(settingsDigest),
   };
 }
 
@@ -2173,6 +2180,40 @@ async function loadCandidate(options) {
     }
     throw error;
   }
+}
+
+async function loadSaveCandidate(options) {
+  const input = await readJsonFile(options.layout, 'layout', options.command);
+  let nodeMap;
+  try {
+    nodeMap = extractNodeMap(input);
+  } catch (error) {
+    if (error instanceof ClientError) {
+      error.stage = options.command;
+      error.artifacts = { layout: options.layout };
+    }
+    throw error;
+  }
+  const settingsEnvelope = !isObject(input.ROOT)
+    && (isObject(input.nodeMap) || isObject(input.layout));
+  const hasPresentation = settingsEnvelope && Object.hasOwn(input, 'presentation');
+  const hasSeo = settingsEnvelope && Object.hasOwn(input, 'seo');
+  if (
+    (hasPresentation && !isObject(input.presentation))
+    || (hasSeo && !isObject(input.seo))
+  ) {
+    throw new ClientError('Optional page settings in a layout candidate must be objects.', {
+      code: 'INVALID_LAYOUT_INPUT',
+      stage: options.command,
+      artifacts: { layout: options.layout },
+      nextAction: 'Provide presentation and seo only as complete objects beside nodeMap or layout.',
+    });
+  }
+  return {
+    nodeMap,
+    presentation: hasPresentation ? input.presentation : null,
+    seo: hasSeo ? input.seo : null,
+  };
 }
 
 async function loadOperations(options) {
@@ -2484,6 +2525,7 @@ async function runSnapshot(options, authHeader) {
   if (
     !layoutEvidence.validIdentity
     || !layoutEvidence.validRepresentation
+    || !layoutEvidence.validSettingsDigest
     || typeof layoutIdentity?.postType !== 'string'
     || !layoutIdentity.postType.trim()
     || !layoutEvidence.versionToken
@@ -2494,7 +2536,7 @@ async function runSnapshot(options, authHeader) {
       stage: 'snapshot',
       code: 'LAYOUT_IDENTITY_INVALID',
       artifacts,
-      nextAction: `Repair the versioned layout resource so it returns id, postType, viewUrl, ${layoutResource.versionField}, ${layoutResource.layoutDigestField}, and the exact saved representation for the requested document.`,
+      nextAction: `Repair the versioned layout resource so it returns id, postType, viewUrl, ${layoutResource.versionField}, ${layoutResource.layoutDigestField}, ${layoutResource.settingsDigestField}, and the exact saved representation for the requested document.`,
       message: 'The layout resource did not bind the requested document to a complete same-site identity and verified representation.',
       response: layoutIdentity,
     });
@@ -2540,6 +2582,7 @@ async function runSnapshot(options, authHeader) {
       renderContextUrl: options.renderContextUrl || '',
       productVersion: providerSaveGate.productVersion,
       layoutSha256: layoutEvidence.declaredDigest,
+      pageSettingsSha256: layoutEvidence.settingsDigest,
     },
   });
 }
@@ -2685,7 +2728,13 @@ async function runSave(options, authHeader) {
   const snapshotValue = await readJsonFile(snapshotFile, 'snapshot', 'save');
   const scopeFailure = snapshotScopeFailure(snapshotValue, options, artifacts);
   if (scopeFailure) return scopeFailure;
-  const candidate = await loadCandidate(options);
+  const candidateDocument = await loadSaveCandidate(options);
+  const candidate = candidateDocument.nodeMap;
+  const intendsPageSettingsWrite = Boolean(
+    candidateDocument.presentation
+    || candidateDocument.seo
+    || options.presentationLayout
+  );
   const candidateSha256 = nodeMapSha256(candidate);
   artifacts.layoutSha256 = candidateSha256;
   if (candidateSha256 !== options.expectedLayoutSha256) {
@@ -2719,6 +2768,7 @@ async function runSave(options, authHeader) {
     !snapshotVersion
     || !snapshotEvidence.validIdentity
     || !snapshotEvidence.validRepresentation
+    || !snapshotEvidence.validSettingsDigest
   ) {
     return createResult({
       ok: false,
@@ -2726,7 +2776,7 @@ async function runSave(options, authHeader) {
       code: 'SNAPSHOT_EVIDENCE_INVALID',
       artifacts,
       nextAction: 'Run snapshot again and keep its unmodified layout-before.json for save.',
-      message: `Snapshot does not bind page identity, ${pageResource.versionField}, ${pageResource.layoutDigestField}, and the exact layout representation.`,
+      message: `Snapshot does not bind page identity, ${pageResource.versionField}, ${pageResource.layoutDigestField}, ${pageResource.settingsDigestField}, and the exact layout representation.`,
     });
   }
 
@@ -2740,13 +2790,18 @@ async function runSave(options, authHeader) {
   const freshEvidence = layoutResourceEvidence(freshResponse.data, pageResource, options.pageId);
   const freshDocument = freshEvidence.document;
   const freshVersion = freshEvidence.versionToken;
-  if (!freshVersion || !freshEvidence.validIdentity || !freshEvidence.validRepresentation) {
+  if (
+    !freshVersion
+    || !freshEvidence.validIdentity
+    || !freshEvidence.validRepresentation
+    || !freshEvidence.validSettingsDigest
+  ) {
     return createResult({
       ok: false,
       stage: 'save',
       code: 'REST_LAYOUT_EVIDENCE_INVALID',
       artifacts,
-      nextAction: `Inspect the page layout endpoint; it must return the requested id, ${pageResource.versionField}, ${pageResource.layoutDigestField}, and matching layout representation before save is safe.`,
+      nextAction: `Inspect the page layout endpoint; it must return the requested id, ${pageResource.versionField}, ${pageResource.layoutDigestField}, ${pageResource.settingsDigestField}, and matching layout representation before save is safe.`,
       message: 'Current page layout does not contain complete page-scoped version and representation evidence.',
       httpStatus: freshResponse.status,
       response: freshResponse.data,
@@ -2756,6 +2811,10 @@ async function runSave(options, authHeader) {
   if (
     freshVersion !== snapshotVersion
     || freshEvidence.declaredDigest !== snapshotEvidence.declaredDigest
+    || (
+      intendsPageSettingsWrite
+      && freshEvidence.settingsDigest !== snapshotEvidence.settingsDigest
+    )
   ) {
     return createResult({
       ok: false,
@@ -2770,11 +2829,13 @@ async function runSave(options, authHeader) {
         currentVersionToken: freshVersion,
         snapshotLayoutSha256: snapshotEvidence.declaredDigest,
         currentLayoutSha256: freshEvidence.declaredDigest,
+        snapshotPageSettingsSha256: snapshotEvidence.settingsDigest,
+        currentPageSettingsSha256: freshEvidence.settingsDigest,
       },
     });
   }
 
-  if (options.presentationLayout && !isObject(freshDocument?.presentation)) {
+  if (options.presentationLayout && !isObject(candidateDocument.presentation) && !isObject(freshDocument?.presentation)) {
     return createResult({
       ok: false,
       stage: 'save',
@@ -2789,6 +2850,35 @@ async function runSave(options, authHeader) {
       layoutSha256: candidateSha256,
     });
   }
+
+  let candidatePresentation = candidateDocument.presentation
+    ? { ...candidateDocument.presentation }
+    : null;
+  if (options.presentationLayout) {
+    candidatePresentation = candidatePresentation || { ...freshDocument.presentation };
+    candidatePresentation.layout = options.presentationLayout;
+    if (options.presentationLayout === 'canvas') {
+      candidatePresentation.disableGlobalTemplates = true;
+    }
+  }
+  const candidateSeo = candidateDocument.seo;
+  if (candidateSeo) {
+    const seoSchema = discovered.contract?.layoutPersistence?.seo?.schema;
+    const schemaErrors = isObject(seoSchema)
+      ? operationSchemaErrors(candidateSeo, seoSchema)
+      : ['layoutPersistence.seo.schema is absent'];
+    if (schemaErrors.length > 0) {
+      return createResult({
+        ok: false,
+        stage: 'save',
+        code: 'PAGE_SETTINGS_CAPABILITY_MISSING',
+        artifacts,
+        nextAction: 'Use the dedicated SEO resource or repair the live SEO schema before saving page settings with a layout.',
+        message: `The candidate SEO block is not supported by the live layout contract: ${schemaErrors.join('; ')}`,
+      });
+    }
+  }
+  const writesPageSettings = Boolean(candidatePresentation || candidateSeo);
 
   const validation = await validateNodeMap(
     options,
@@ -2830,29 +2920,16 @@ async function runSave(options, authHeader) {
     });
   }
 
-  const presentation = isObject(freshDocument?.presentation)
-    ? { ...freshDocument.presentation }
-    : null;
-  if (options.presentationLayout) {
-    if (presentation) {
-      presentation.layout = options.presentationLayout;
-      if (options.presentationLayout === 'canvas') {
-        presentation.disableGlobalTemplates = true;
-      }
-    }
-  }
-  const effectivePresentation = options.presentationLayout && !presentation
-    ? {
-      layout: options.presentationLayout,
-      ...(options.presentationLayout === 'canvas' ? { disableGlobalTemplates: true } : {}),
-    }
-    : presentation;
   const payload = {
     [pageResource.writePreconditionField]: freshVersion,
     [pageResource.writeDigestPreconditionField]: freshEvidence.declaredDigest,
     [pageResource.writeCandidatePreconditionField]: validatedCandidateSha256,
     [pageResource.carrier]: candidate,
-    ...(effectivePresentation ? { presentation: effectivePresentation } : {}),
+    ...(writesPageSettings ? {
+      [pageResource.writeSettingsDigestPreconditionField]: freshEvidence.settingsDigest,
+    } : {}),
+    ...(candidatePresentation ? { presentation: candidatePresentation } : {}),
+    ...(candidateSeo ? { seo: candidateSeo } : {}),
   };
   const saveResponse = await request(options, authHeader, {
     method: pageResource.writeMethod,
@@ -2874,6 +2951,12 @@ async function runSave(options, authHeader) {
     || !savedEvidence.validRepresentation
     || savedDocument?.[pageResource.candidateDigestField] !== validatedCandidateSha256
     || savedEvidence.declaredDigest !== validatedCandidateSha256
+    || !savedEvidence.validSettingsDigest
+    || (!writesPageSettings && savedEvidence.settingsDigest !== freshEvidence.settingsDigest)
+    || (writesPageSettings && (
+      (candidatePresentation && canonicalJson(savedDocument.presentation) !== canonicalJson(candidatePresentation))
+      || (candidateSeo && canonicalJson(savedDocument.seo) !== canonicalJson(candidateSeo))
+    ))
   ) {
     return createResult({
       ok: false,
@@ -2888,6 +2971,7 @@ async function runSave(options, authHeader) {
     });
   }
   const savedLayoutSha256 = savedEvidence.declaredDigest;
+  const savedPageSettingsSha256 = savedEvidence.settingsDigest;
 
   const readbackResponse = await request(options, authHeader, {
     method: pageResource.readMethod,
@@ -2908,8 +2992,12 @@ async function runSave(options, authHeader) {
   if (
     !readbackEvidence.validIdentity
     || !readbackEvidence.validRepresentation
+    || !readbackEvidence.validSettingsDigest
     || readbackVersion !== savedVersion
     || readbackLayoutSha256 !== savedLayoutSha256
+    || readbackEvidence.settingsDigest !== savedPageSettingsSha256
+    || (candidatePresentation && canonicalJson(readbackEvidence.document.presentation) !== canonicalJson(candidatePresentation))
+    || (candidateSeo && canonicalJson(readbackEvidence.document.seo) !== canonicalJson(candidateSeo))
   ) {
     return createResult({
       ok: false,
@@ -2924,6 +3012,8 @@ async function runSave(options, authHeader) {
         readbackVersionToken: readbackVersion,
         expectedSavedLayoutSha256: savedLayoutSha256,
         readbackLayoutSha256,
+        expectedPageSettingsSha256: savedPageSettingsSha256,
+        readbackPageSettingsSha256: readbackEvidence.settingsDigest,
       },
       layoutSha256: candidateSha256,
     });
@@ -2959,6 +3049,8 @@ async function runSave(options, authHeader) {
       versionField: pageResource.versionField,
       previousVersionToken: freshVersion,
       previousLayoutSha256: freshEvidence.declaredDigest,
+      previousPageSettingsSha256: freshEvidence.settingsDigest,
+      pageSettingsSha256: readbackEvidence.settingsDigest,
       versionToken: savedVersion,
       versionAdvanced: savedVersion !== freshVersion,
       layoutChanged: savedLayoutSha256 !== freshEvidence.declaredDigest,
@@ -4005,7 +4097,24 @@ async function runRevisionList(options, authHeader) {
       options.input ? { input: options.input } : {}
     );
   }
-  const document = response.data;
+  const document = revisionCollectionDocument(response.data, options.command);
+  return capabilitySuccess(options, 'REVISION_LIST_OK', {
+    artifacts: options.input ? { input: options.input } : {},
+    response: document,
+    evidence: {
+      pageId: options.pageId,
+      count: document.items.length,
+      page: document.page,
+      total: document.total,
+      currentPostModifiedGmt: document.currentPostModifiedGmt,
+      currentLayoutSha256: document.currentLayoutSha256,
+      currentDocumentSha256: document.currentDocumentSha256,
+    },
+    message: 'The exact revision inventory was read without exposing revision content.',
+  });
+}
+
+function revisionCollectionDocument(document, stage) {
   const validItems = Array.isArray(document?.items) && document.items.every((item) => (
     isObject(item)
     && Number.isSafeInteger(item.revisionId) && item.revisionId > 0
@@ -4030,26 +4139,15 @@ async function runRevisionList(options, authHeader) {
     || typeof document.currentPostModifiedGmt !== 'string'
     || document.currentPostModifiedGmt === ''
     || !validSha(document.currentLayoutSha256)
+    || !validSha(document.currentDocumentSha256)
   ) {
     throw new ClientError('The revisions resource returned an invalid collection.', {
       code: 'CAPABILITY_RESPONSE_INVALID',
-      stage: options.command,
+      stage,
       nextAction: 'Repair the Builder revision collection before choosing a restore target.',
     });
   }
-  return capabilitySuccess(options, 'REVISION_LIST_OK', {
-    artifacts: options.input ? { input: options.input } : {},
-    response: document,
-    evidence: {
-      pageId: options.pageId,
-      count: document.items.length,
-      page: document.page,
-      total: document.total,
-      currentPostModifiedGmt: document.currentPostModifiedGmt,
-      currentLayoutSha256: document.currentLayoutSha256,
-    },
-    message: 'The exact revision inventory was read without exposing revision content.',
-  });
+  return document;
 }
 
 async function runRevisionRestore(options, authHeader) {
@@ -4062,8 +4160,14 @@ async function runRevisionRestore(options, authHeader) {
     || !isFieldName(resource.revisionField)
     || resource.carrier !== resource.revisionField
     || !isFieldName(resource.writePreconditionField)
+    || !isFieldName(resource.digestField)
     || !isFieldName(resource.writeDigestPreconditionField)
-    || resource.writeDigestPreconditionField === resource.writePreconditionField
+    || new Set([
+      resource.revisionField,
+      resource.writePreconditionField,
+      resource.digestField,
+      resource.writeDigestPreconditionField,
+    ]).size !== 4
   ) {
     throw new ClientError('The revision-restore descriptor is unsupported.', {
       code: 'CAPABILITY_RESOURCE_INVALID',
@@ -4088,11 +4192,47 @@ async function runRevisionRestore(options, authHeader) {
     || input[resource.writePreconditionField].trim() === ''
     || !validSha(input[resource.writeDigestPreconditionField])
   ) {
-    throw new ClientError('Revision restore requires a positive revision ID plus version and layout-digest preconditions.', {
+    throw new ClientError('Revision restore requires a positive revision ID plus version and document-digest preconditions.', {
       code: 'CAPABILITY_INPUT_INVALID',
       stage: options.command,
-      nextAction: 'Use a revisionId previously reported by Builder plus fresh postModifiedGmt and currentLayoutSha256 values.',
+      nextAction: 'Use a revisionId previously reported by Builder plus fresh currentPostModifiedGmt and currentDocumentSha256 values.',
     });
+  }
+  const revisions = persistenceResource(fetched.contract, 'revisions', options.command);
+  if (revisions.method !== 'GET' || !Array.isArray(revisions.queryFields)) {
+    throw new ClientError('The revisions descriptor is unsupported.', {
+      code: 'CAPABILITY_RESOURCE_INVALID',
+      stage: options.command,
+      nextAction: 'Repair the revisions descriptor before restoring. Do not infer the document digest.',
+    });
+  }
+  const revisionsEndpoint = declaredResourcePath(
+    revisions.path,
+    { postId: options.pageId },
+    options.command
+  );
+  const beforeRevisionsResponse = await requestDeclared(options, authHeader, {
+    method: revisions.method,
+    endpoint: revisionsEndpoint,
+  });
+  if (!beforeRevisionsResponse.ok) {
+    return httpFailureResult(options.command, beforeRevisionsResponse, { input: options.input });
+  }
+  const beforeRevisions = revisionCollectionDocument(
+    beforeRevisionsResponse.data,
+    options.command
+  );
+  if (
+    beforeRevisions.currentPostModifiedGmt !== input[resource.writePreconditionField]
+    || beforeRevisions.currentDocumentSha256 !== input[resource.writeDigestPreconditionField]
+  ) {
+    return capabilityFailure(
+      options,
+      'REST_CONFLICT',
+      'A restore precondition is stale before the write.',
+      'Fetch the revision inventory again, reconcile the revision choice, and issue one new explicit restore.',
+      { input: options.input }
+    );
   }
   const page = pageLayoutCapability(fetched.contract, options.pageId, options.command);
   const currentResponse = await request(options, authHeader, {
@@ -4103,7 +4243,12 @@ async function runRevisionRestore(options, authHeader) {
     return httpFailureResult(options.command, currentResponse, { input: options.input });
   }
   const current = layoutResourceEvidence(currentResponse.data, page, options.pageId);
-  if (!current.validIdentity || !current.validRepresentation || !current.versionToken) {
+  if (
+    !current.validIdentity
+    || !current.validRepresentation
+    || !current.validSettingsDigest
+    || !current.versionToken
+  ) {
     throw new ClientError('The current layout cannot prove the restore preconditions.', {
       code: 'CAPABILITY_RESPONSE_INVALID',
       stage: options.command,
@@ -4112,7 +4257,8 @@ async function runRevisionRestore(options, authHeader) {
   }
   if (
     current.versionToken !== input[resource.writePreconditionField]
-    || current.declaredDigest !== input[resource.writeDigestPreconditionField]
+    || current.versionToken !== beforeRevisions.currentPostModifiedGmt
+    || current.declaredDigest !== beforeRevisions.currentLayoutSha256
   ) {
     return capabilityFailure(
       options,
@@ -4136,7 +4282,10 @@ async function runRevisionRestore(options, authHeader) {
     || response.data.id !== options.pageId
     || response.data.restored !== true
     || response.data.revisionId !== input[resource.revisionField]
+    || !validSha(response.data[resource.digestField])
     || !validSha(response.data.layoutSha256)
+    || typeof response.data.postModifiedGmt !== 'string'
+    || response.data.postModifiedGmt.trim() === ''
   ) {
     throw new ClientError('The revision write returned incomplete or mismatched evidence.', {
       code: 'CAPABILITY_WRITE_UNPROVEN',
@@ -4158,11 +4307,30 @@ async function runRevisionRestore(options, authHeader) {
   const restoredLayout = extractNodeMap(response.data.layout);
   const restoredLayoutSha256 = nodeMapSha256(restoredLayout);
   const readbackEvidence = layoutResourceEvidence(readback.data, page, options.pageId);
+  const afterRevisionsResponse = await requestDeclared(options, authHeader, {
+    method: revisions.method,
+    endpoint: revisionsEndpoint,
+  });
+  if (!afterRevisionsResponse.ok) {
+    return capabilityFailure(
+      options,
+      'CAPABILITY_WRITE_UNPROVEN',
+      'The restore succeeded but its document-digest readback failed.',
+      'Do not repeat the restore. Read the revision inventory and reconcile the uncertain write.',
+      { input: options.input }
+    );
+  }
+  const afterRevisions = revisionCollectionDocument(afterRevisionsResponse.data, options.command);
   if (
     response.data.layoutSha256 !== restoredLayoutSha256
     || !readbackEvidence.validIdentity
     || !readbackEvidence.validRepresentation
+    || !readbackEvidence.validSettingsDigest
     || readbackEvidence.declaredDigest !== restoredLayoutSha256
+    || response.data.postModifiedGmt !== readbackEvidence.versionToken
+    || afterRevisions.currentPostModifiedGmt !== readbackEvidence.versionToken
+    || afterRevisions.currentLayoutSha256 !== readbackEvidence.declaredDigest
+    || afterRevisions.currentDocumentSha256 !== response.data[resource.digestField]
   ) {
     return capabilityFailure(
       options,
@@ -4178,6 +4346,8 @@ async function runRevisionRestore(options, authHeader) {
     evidence: {
       pageId: options.pageId,
       revisionId: input[resource.revisionField],
+      previousDocumentSha256: beforeRevisions.currentDocumentSha256,
+      documentSha256: afterRevisions.currentDocumentSha256,
       previousLayoutSha256: current.declaredDigest,
       layoutSha256: readbackEvidence.declaredDigest,
       postModifiedGmt: readbackEvidence.versionToken,
