@@ -48,6 +48,7 @@ const {
   nestedControlMap,
   normalizeControlValue,
   publishedControlReferences,
+  validateButtonFormPrefillRelationships,
 } = controlContractModule;
 const { applySemanticMotionPlan } = motionContractModule;
 
@@ -322,6 +323,12 @@ export class Kit {
     if (this.motionPlan.rejected.length > 0) {
       throw new Error(`motion plan rejected: ${this.motionPlan.rejected.map((entry) => (
         `${entry.recipeId || entry.nodeId || 'request'}: ${entry.reason}`
+      )).join('; ')}`);
+    }
+    const relationshipErrors = validateButtonFormPrefillRelationships(this.nodes, this.contract);
+    if (relationshipErrors.length > 0) {
+      throw new Error(`relationship plan rejected: ${relationshipErrors.map((entry) => (
+        `${entry.path}: ${entry.message}`
       )).join('; ')}`);
     }
     return this.nodes;

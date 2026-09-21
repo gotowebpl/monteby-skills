@@ -37,6 +37,154 @@ function sameJsonValue(left, right) {
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
+function nodeComponent(node) {
+  return isRecord(node?.type) && typeof node.type.resolvedName === 'string'
+    ? node.type.resolvedName
+    : '';
+}
+
+function relationshipError(code, path, message) {
+  return { code, path, message };
+}
+
+function validateButtonFormPrefillRelationships(nodeMap, contract) {
+  const rules = contract?.authoring?.relationshipRules?.buttonFormPrefill;
+  const nodes = isRecord(nodeMap) ? nodeMap : {};
+  const buttons = Object.entries(nodes).filter(([, node]) => nodeComponent(node) === rules?.buttonComponent);
+  if (buttons.length === 0) return [];
+
+  const requiredStrings = [
+    'buttonComponent', 'formComponent', 'formReferenceProp', 'fieldReferenceProp',
+    'valueProp', 'formIdentityProp', 'fieldsProp', 'fieldTypeProp', 'optionsProp',
+  ];
+  const malformed = !isRecord(rules)
+    || requiredStrings.some((field) => typeof rules[field] !== 'string' || !rules[field].trim())
+    || !Array.isArray(rules.fieldIdentityProps)
+    || rules.fieldIdentityProps.length === 0
+    || rules.fieldIdentityProps.some((field) => typeof field !== 'string' || !field.trim())
+    || !Array.isArray(rules.supportedFieldTypes)
+    || rules.supportedFieldTypes.length === 0
+    || rules.supportedFieldTypes.some((type) => typeof type !== 'string' || !type.trim())
+    || !Number.isInteger(rules.maximumValueCodePoints)
+    || rules.maximumValueCodePoints < 0;
+  if (malformed) {
+    return [relationshipError(
+      'invalid_relationship_contract',
+      'authoring.relationshipRules.buttonFormPrefill',
+      'The live buttonFormPrefill relationship contract is incomplete.'
+    )];
+  }
+
+  const forms = Object.entries(nodes).filter(([, node]) => nodeComponent(node) === rules.formComponent);
+  const supportedTypes = new Set(rules.supportedFieldTypes);
+  const errors = [];
+  for (const [nodeId, node] of buttons) {
+    const props = isRecord(node?.props) ? node.props : {};
+    const hasValue = hasOwn(props, rules.valueProp);
+    const rawFormId = props[rules.formReferenceProp] ?? '';
+    const rawFieldId = props[rules.fieldReferenceProp] ?? '';
+    const rawValue = hasValue ? props[rules.valueProp] : '';
+    const allEmpty = (!hasOwn(props, rules.formReferenceProp) || rawFormId === '')
+      && (!hasOwn(props, rules.fieldReferenceProp) || rawFieldId === '')
+      && (!hasValue || rawValue === '');
+    if (rules.allEmptyInert === true && allEmpty) continue;
+
+    const formPath = `${nodeId}.${rules.formReferenceProp}`;
+    const fieldPath = `${nodeId}.${rules.fieldReferenceProp}`;
+    const valuePath = `${nodeId}.${rules.valueProp}`;
+    if (typeof rawFormId !== 'string' || !rawFormId) {
+      errors.push(relationshipError('incomplete_form_prefill', formPath, 'Form prefill requires a non-empty form identifier.'));
+    }
+    if (typeof rawFieldId !== 'string' || !rawFieldId) {
+      errors.push(relationshipError('incomplete_form_prefill', fieldPath, 'Form prefill requires a non-empty field identifier.'));
+    }
+    if (typeof rawValue !== 'string') {
+      errors.push(relationshipError('invalid_form_prefill_value', valuePath, 'Form prefill value must be text.'));
+      continue;
+    }
+    if (Array.from(rawValue).length > rules.maximumValueCodePoints || /[\u0000-\u001f\u007f]/u.test(rawValue)) {
+      errors.push(relationshipError('invalid_form_prefill_value', valuePath, 'Form prefill value exceeds the published limit or contains control characters.'));
+    }
+    if (typeof rawFormId !== 'string' || !rawFormId || typeof rawFieldId !== 'string' || !rawFieldId) continue;
+
+    const matchingForms = forms.filter(([, form]) => {
+      const formProps = isRecord(form?.props) ? form.props : {};
+      return formProps[rules.formIdentityProp] === rawFormId;
+    });
+    if (matchingForms.length !== 1) {
+      errors.push(relationshipError(
+        matchingForms.length === 0 ? 'unknown_form_prefill_form' : 'ambiguous_form_prefill_form',
+        formPath,
+        'Form prefill must identify exactly one FormBlock.'
+      ));
+      continue;
+    }
+    const [, form] = matchingForms[0];
+    if (form.hidden === true) {
+      errors.push(relationshipError('hidden_form_prefill_form', formPath, 'Form prefill cannot target a hidden form.'));
+      continue;
+    }
+    const formProps = isRecord(form.props) ? form.props : {};
+    const fields = Array.isArray(formProps[rules.fieldsProp]) ? formProps[rules.fieldsProp] : [];
+    const matchingFields = fields.filter((field) => {
+      if (!isRecord(field)) return false;
+      const identity = rules.fieldIdentityProps
+        .map((prop) => field[prop])
+        .find((value) => typeof value === 'string' && value !== '');
+      return identity === rawFieldId;
+    });
+    if (matchingFields.length !== 1) {
+      errors.push(relationshipError(
+        matchingFields.length === 0 ? 'unknown_form_prefill_field' : 'ambiguous_form_prefill_field',
+        fieldPath,
+        'Form prefill must identify exactly one field in the target form.'
+      ));
+      continue;
+    }
+    const field = matchingFields[0];
+    const fieldType = typeof field[rules.fieldTypeProp] === 'string' && field[rules.fieldTypeProp]
+      ? field[rules.fieldTypeProp]
+      : 'text';
+    if (!supportedTypes.has(fieldType)) {
+      errors.push(relationshipError('unsupported_form_prefill_field', fieldPath, 'The target field type is not published as prefillable.'));
+      continue;
+    }
+    if (['select', 'radio'].includes(fieldType)) {
+      const options = typeof field[rules.optionsProp] === 'string'
+        ? field[rules.optionsProp].split('\n').map((line) => line.trim()).filter(Boolean)
+        : [];
+      const matches = options.filter((line) => {
+        const separator = line.indexOf('|');
+        const label = (separator < 0 ? line : line.slice(0, separator)).trim();
+        const optionValue = (separator < 0 ? line : line.slice(separator + 1)).trim() || label;
+        return optionValue === rawValue;
+      }).length;
+      if (matches !== 1 || (fieldType === 'radio' && rawValue === '')) {
+        errors.push(relationshipError('invalid_form_prefill_option', valuePath, 'Form prefill must identify exactly one published option.'));
+      }
+      continue;
+    }
+    if (fieldType === 'checkbox' && !['', '1'].includes(rawValue)) {
+      errors.push(relationshipError('invalid_form_prefill_checkable_value', valuePath, 'Checkbox prefill accepts only an empty value or 1.'));
+      continue;
+    }
+    if (fieldType === 'number' && rawValue !== '') {
+      const number = Number(rawValue);
+      const minimum = typeof field.min === 'number' && Number.isFinite(field.min) ? field.min : null;
+      const maximum = typeof field.max === 'number' && Number.isFinite(field.max) ? field.max : null;
+      const step = typeof field.step === 'number' && Number.isFinite(field.step) && field.step > 0 ? field.step : null;
+      const base = minimum ?? 0;
+      const steps = step === null ? 0 : (number - base) / step;
+      const offStep = step !== null && Math.abs(steps - Math.round(steps)) > 1e-7;
+      if (rawValue.trim() !== rawValue || !Number.isFinite(number)
+          || (minimum !== null && number < minimum) || (maximum !== null && number > maximum) || offStep) {
+        errors.push(relationshipError('invalid_form_prefill_number', valuePath, 'Number prefill violates the target field range or step.'));
+      }
+    }
+  }
+  return errors;
+}
+
 function optionValues(options) {
   const values = Array.isArray(options)
     ? options
@@ -927,4 +1075,5 @@ module.exports = {
   normalizeControlValue,
   publishedControlReferences,
   optionValues,
+  validateButtonFormPrefillRelationships,
 };

@@ -29,6 +29,7 @@ const {
   buildControlIndex,
   normalizeControlValue,
   publishedControlReferences,
+  validateButtonFormPrefillRelationships,
 } = require('./control-contract');
 const { auditMotionLayout } = require('./motion-contract');
 
@@ -277,6 +278,12 @@ function main() {
   errors.push(...motionAudit.errors.map((entry) => ({
     node: entry.nodeId || '',
     component: entry.component || '',
+    code: entry.code,
+    message: entry.message,
+  })));
+  errors.push(...validateButtonFormPrefillRelationships(nodeMap, contract).map((entry) => ({
+    node: entry.path.split('.')[0],
+    prop: entry.path.split('.').slice(1).join('.'),
     code: entry.code,
     message: entry.message,
   })));

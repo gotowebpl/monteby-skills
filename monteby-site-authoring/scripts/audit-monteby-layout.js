@@ -8,6 +8,7 @@ const {
   collectControlMetadata,
   publishedControlReferences,
   normalizeControlValue,
+  validateButtonFormPrefillRelationships,
 } = require('./control-contract');
 const { buildResolvedMotionProfile, auditMotionLayout } = require('./motion-contract');
 
@@ -253,6 +254,9 @@ function audit(nodeMap, contractIndex, referenceManifest, minMediaSurfaces, opti
   }
 
   auditGraphIntegrity(report, nodeMap);
+  for (const finding of validateButtonFormPrefillRelationships(nodeMap, options.liveContract)) {
+    error(report, finding.code, `${finding.path}: ${finding.message}`);
+  }
   const motionAudit = auditMotionLayout(nodeMap, options.motionProfile);
   report.motion = {
     available: options.motionProfile?.available === true,
@@ -1677,6 +1681,7 @@ function main() {
       requireMarketplaceMedia: options.requireMarketplaceMedia,
       referenceManifestPath: options.referenceManifest,
       motionProfile: buildResolvedMotionProfile(contract),
+      liveContract: contract,
     }
   );
   printReport(report, options.json);
