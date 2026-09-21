@@ -8,17 +8,17 @@ const {
 
 const MOTION_PLAN_SOURCES = new Set(['explicit-brief', 'measured-reference']);
 const MOTION_FORBIDDEN_COMPONENT_FALLBACK = Object.freeze([]);
-const REQUIRED_POLICY_BOUNDS = Object.freeze([
-  'maxEntranceOwnersPerPage',
-  'maxFirstViewportEntranceOwners',
-  'maxPointerEffectsPerPage',
-  'maxPinnedScenesPerPage',
-  'maxBackgroundEffectsPerPage',
-  'maxStaggerSpanMs',
-  'maxEntranceDurationMs',
-  'maxEntranceDelayMs',
-  'maxEntranceDistancePx',
-]);
+const REQUIRED_POLICY_BOUNDS = Object.freeze({
+  maxEntranceOwnersPerPage: Object.freeze([1, 12]),
+  maxFirstViewportEntranceOwners: Object.freeze([0, 6]),
+  maxPointerEffectsPerPage: Object.freeze([0, 6]),
+  maxPinnedScenesPerPage: Object.freeze([0, 3]),
+  maxBackgroundEffectsPerPage: Object.freeze([0, 4]),
+  maxStaggerSpanMs: Object.freeze([0, 2000]),
+  maxEntranceDurationMs: Object.freeze([100, 2000]),
+  maxEntranceDelayMs: Object.freeze([0, 2000]),
+  maxEntranceDistancePx: Object.freeze([0, 160]),
+});
 
 function isRecord(value) {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value));
@@ -26,6 +26,10 @@ function isRecord(value) {
 
 function finiteNonNegativeInteger(value) {
   return Number.isInteger(value) && value >= 0 ? value : 0;
+}
+
+function validStringList(value) {
+  return Array.isArray(value) && value.every((entry) => typeof entry === 'string' && entry.length > 0);
 }
 
 function componentMap(contract) {
@@ -78,11 +82,20 @@ function buildResolvedMotionProfile(contract) {
   const recipes = [];
   const ids = new Set();
 
-  const policyErrors = REQUIRED_POLICY_BOUNDS
-    .filter((prop) => !Number.isInteger(published?.policy?.[prop]) || published.policy[prop] < 0)
-    .map((prop) => `authoring.motion.policy.${prop} must be a non-negative integer`);
-  if (!Array.isArray(published?.policy?.forbiddenComponents)) {
-    policyErrors.push('authoring.motion.policy.forbiddenComponents must be an array');
+  const policyErrors = Object.entries(REQUIRED_POLICY_BOUNDS)
+    .filter(([prop, [minimum, maximum]]) => (
+      !Number.isInteger(published?.policy?.[prop])
+      || published.policy[prop] < minimum
+      || published.policy[prop] > maximum
+    ))
+    .map(([prop, [minimum, maximum]]) => `authoring.motion.policy.${prop} must be an integer from ${minimum} to ${maximum}`);
+  if (published?.policy?.defaultRepeat !== 'once') {
+    policyErrors.push('authoring.motion.policy.defaultRepeat must be once');
+  }
+  for (const prop of ['forbiddenComponents', 'prohibitedInputs', 'rules']) {
+    if (!validStringList(published?.policy?.[prop])) {
+      policyErrors.push(`authoring.motion.policy.${prop} must be an array of non-empty strings`);
+    }
   }
   if (
     contract?.authoring?.capabilities?.motionRecipes !== true

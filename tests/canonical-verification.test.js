@@ -30,6 +30,11 @@ test('canonical verification is the only pipeline stage that emits DONE', () => 
   assert.equal(report.fidelityPassed, true);
   assert.equal(report.canonicalVerification, true);
   assert.equal(report.productReady, true);
+  assert.equal(report.qualityGates.complete, true);
+  for (const gate of ['lint', 'accessibility', 'content', 'seo', 'completeness', 'motion']) {
+    assert.equal(report.qualityGates[gate].evaluated, true, gate);
+    assert.equal(report.qualityGates[gate].passed, true, gate);
+  }
   assert.equal(report.nextAction.id, 'complete');
   assert.equal(report.nextAction.tool, '');
   assert.deepEqual(report.nextAction.args, []);
@@ -49,6 +54,120 @@ test('canonical verification is the only pipeline stage that emits DONE', () => 
   assert.equal(capture.args.includes('--require-layout'), true);
   assert.equal(benchmark.args.includes('--candidate-manifest'), true);
   assert.equal(benchmark.args.includes('--pad-to-largest'), true);
+});
+
+for (const scenario of [
+  {
+    name: 'missing saved lint evidence',
+    blocker: 'canonical_lint_evidence_missing',
+    mutate(save) { delete save.evidence.validation; },
+  },
+  {
+    name: 'saved lint finding',
+    blocker: 'canonical_lint_findings',
+    mutate(save) {
+      save.evidence.validation.lint.push({
+        ruleId: 'empty-navigation-items',
+        level: 'warning',
+        nodeId: 'section-hero',
+        component: 'Section',
+        message: 'A lint finding remains.',
+      });
+    },
+  },
+  {
+    name: 'incomplete accessibility audit',
+    blocker: 'canonical_accessibility_failed',
+    mutate(save) {
+      save.response.accessibilityAudit.complete = false;
+      save.response.accessibilityAudit.reasons = ['budget'];
+    },
+  },
+  {
+    name: 'accessibility warning',
+    blocker: 'canonical_accessibility_failed',
+    mutate(save) {
+      save.response.accessibilityAudit.warnings = 1;
+      save.response.accessibilityAudit.findings.push({
+        rule: 'low-contrast',
+        level: 'warning',
+        nodeId: 'section-hero',
+        widget: 'Section',
+      });
+    },
+  },
+  {
+    name: 'content audit without a pass',
+    blocker: 'canonical_content_failed',
+    mutate(save) {
+      save.response.contentQualityAudit.passed = false;
+      save.response.contentQualityAudit.counts.warning = 1;
+      save.response.contentQualityAudit.findings.push({
+        code: 'missing_sources',
+        severity: 'warning',
+        path: 'content.sources',
+        nodeId: '',
+        message: 'Sources are missing.',
+      });
+    },
+  },
+  {
+    name: 'content audit without server-rendered proof',
+    blocker: 'canonical_content_failed',
+    mutate(save) { save.response.contentQualityAudit.serverRendered = false; },
+  },
+  {
+    name: 'internally inconsistent content audit',
+    blocker: 'canonical_content_evidence_invalid',
+    mutate(save) { delete save.response.contentQualityAudit.counts; },
+  },
+  {
+    name: 'SEO warning',
+    blocker: 'canonical_seo_failed',
+    mutate(save) {
+      save.response.seoGraph.findings.push({
+        code: 'editorial_verification_stale',
+        severity: 'warning',
+        path: 'editorial',
+        message: 'Review is stale.',
+      });
+    },
+  },
+]) {
+  test(`canonical verification blocks ${scenario.name} before browser work`, () => {
+    const fixture = createFixture();
+    const save = JSON.parse(fs.readFileSync(fixture.files.saveReport, 'utf8'));
+    scenario.mutate(save);
+    fs.writeFileSync(fixture.files.saveReport, JSON.stringify(save));
+
+    const result = runFixture(fixture, false);
+    const report = JSON.parse(result.stdout);
+    assert.equal(result.status, 1, result.stderr || result.stdout);
+    assert.equal(report.status, 'CANONICAL_QUALITY_BLOCKED');
+    assert.equal(report.productReady, false);
+    assert.equal(report.blockers.some((blocker) => blocker.code === scenario.blocker), true);
+    assert.equal(fs.existsSync(fixture.spawnLog), false);
+  });
+}
+
+test('canonical verification blocks incomplete public capture evidence before comparison', () => {
+  const fixture = createFixture();
+  const result = runFixture(
+    fixture,
+    false,
+    false,
+    'https://site.example.test/page/',
+    false,
+    false,
+    '',
+    true
+  );
+  const report = JSON.parse(result.stdout);
+  assert.equal(result.status, 1, result.stderr || result.stdout);
+  assert.equal(report.status, 'CANONICAL_QUALITY_BLOCKED');
+  assert.equal(report.productReady, false);
+  assert.equal(report.blockers.some((blocker) => blocker.code === 'canonical_capture_completeness_failed'), true);
+  assert.deepEqual(readSpawns(fixture.spawnLog).map((entry) => entry.script), ['capture-template-reference.js']);
 });
 
 for (const scenario of [
@@ -342,7 +461,17 @@ function createFixture() {
   };
   const layoutSha256 = createHash('sha256').update(JSON.stringify(nodeMap)).digest('hex');
   fs.writeFileSync(files.layout, JSON.stringify(nodeMap));
-  fs.writeFileSync(files.contract, JSON.stringify({ components: [] }));
+  fs.writeFileSync(files.contract, JSON.stringify({
+    components: [],
+    authoring: {
+      lint: { version: 1, rules: [] },
+    },
+    layoutPersistence: {
+      accessibilityAudit: { responseField: 'accessibilityAudit' },
+      contentQualityAudit: { responseField: 'contentQualityAudit' },
+      seo: { graphPreview: { responseField: 'seoGraph' } },
+    },
+  }));
   fs.writeFileSync(files.plan, JSON.stringify({
     schemaVersion: 1,
     artifact: 'monteby-layout-plan',
@@ -421,6 +550,37 @@ function createFixture() {
       pageId: 17,
       publicPageUrl: 'https://site.example.test/page/',
       layoutSha256,
+      validation: {
+        valid: true,
+        lint: [],
+      },
+    },
+    response: {
+      accessibilityAudit: {
+        findings: [],
+        reasons: [],
+        errors: 0,
+        warnings: 0,
+        complete: true,
+      },
+      contentQualityAudit: {
+        role: 'none',
+        requirements: [],
+        findings: [],
+        counts: { error: 0, warning: 0, info: 0 },
+        reasons: [],
+        complete: true,
+        passed: true,
+        serverRendered: true,
+      },
+      seoGraph: {
+        outputMode: 'builder-exact',
+        owner: { owner: 'builder' },
+        role: { effective: 'none' },
+        findings: [],
+        complete: true,
+        serverRendered: true,
+      },
     },
   }));
   fs.writeFileSync(files.previewReport, JSON.stringify({
@@ -523,9 +683,22 @@ childProcess.spawnSync = function canonicalHarness(command, args, options) {
     const outDir = value(args, '--out-dir');
     fs.mkdirSync(outDir, { recursive: true });
     const subpixel = process.env.MONTEBY_CANONICAL_SUBPIXEL === '1';
+    const incomplete = process.env.MONTEBY_CANONICAL_CAPTURE_INCOMPLETE === '1';
     if (subpixel) fs.writeFileSync(path.join(outDir, 'desktop.png'), 'stable-page-pixels');
     fs.writeFileSync(path.join(outDir, 'reference-manifest.json'), JSON.stringify({
       sourceUrl: value(args, '--url'),
+      captureStatus: incomplete ? 'partial' : 'complete',
+      evidenceCompleteness: {
+        mode: 'full-page',
+        status: incomplete ? 'partial' : 'complete',
+        complete: !incomplete,
+        essentialGeometryTruncated: incomplete,
+        viewports: ['desktop', 'tablet', 'mobile'].map((label) => ({
+          label,
+          status: incomplete && label === 'mobile' ? 'partial' : 'complete',
+          complete: !(incomplete && label === 'mobile'),
+        })),
+      },
       screenshots: subpixel ? [{ label: 'desktop', file: 'desktop.png' }] : [],
       layouts: [],
     }));
@@ -644,7 +817,8 @@ function runFixture(
   publicPageUrl = 'https://site.example.test/page/',
   incompleteZero = false,
   subpixel = false,
-  authorizationFile = ''
+  authorizationFile = '',
+  captureIncomplete = false
 ) {
   return spawnSync(process.execPath, [
     script,
@@ -668,6 +842,7 @@ function runFixture(
       MONTEBY_CANONICAL_BUDGET_FAIL: budgetFail ? '1' : '0',
       MONTEBY_CANONICAL_INCOMPLETE_ZERO: incompleteZero ? '1' : '0',
       MONTEBY_CANONICAL_SUBPIXEL: subpixel ? '1' : '0',
+      MONTEBY_CANONICAL_CAPTURE_INCOMPLETE: captureIncomplete ? '1' : '0',
     },
   });
 }

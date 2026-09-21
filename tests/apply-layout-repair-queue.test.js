@@ -755,6 +755,7 @@ test('repair queue never restores or invents motion from the measured source lay
     motion: {
       version: 1,
       policy: {
+        defaultRepeat: 'once',
         maxEntranceOwnersPerPage: 1,
         maxFirstViewportEntranceOwners: 1,
         maxPointerEffectsPerPage: 0,
@@ -765,6 +766,8 @@ test('repair queue never restores or invents motion from the measured source lay
         maxEntranceDelayMs: 150,
         maxEntranceDistancePx: 32,
         forbiddenComponents: [],
+        prohibitedInputs: [],
+        rules: [],
       },
       recipes: [{ id: 'section-reveal', intent: 'reveal', components: ['Section'], props: { motionPreset: 'slide' } }],
     },

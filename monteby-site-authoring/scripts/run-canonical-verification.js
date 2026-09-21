@@ -680,6 +680,240 @@ function validateCanonicalMotionEvidence(iteration, candidateManifest) {
   return blockers;
 }
 
+function validateCanonicalSavedQualityGates(iteration, previewReport) {
+  const gates = {
+    lint: { evaluated: false, passed: false, findingCount: 0 },
+    accessibility: { evaluated: false, passed: false, findingCount: 0 },
+    content: { evaluated: false, passed: false, findingCount: 0 },
+    seo: { evaluated: false, passed: false, findingCount: 0 },
+  };
+  const blockers = [];
+  let contract;
+  let saveReport;
+  try {
+    contract = readJson(iteration.files.contract);
+    saveReport = readJson(previewReport.evidence.saveReport);
+  } catch {
+    return {
+      ok: false,
+      gates,
+      blockers: [{
+        code: 'canonical_quality_inputs_invalid',
+        message: 'Canonical product-readiness gates could not read the bound contract and SAVE_OK report.',
+      }],
+    };
+  }
+
+  const lintContract = contract?.authoring?.lint;
+  const validation = saveReport?.evidence?.validation;
+  if (!isObject(lintContract) || lintContract.version !== 1 || !Array.isArray(lintContract.rules)) {
+    blockers.push({
+      code: 'canonical_lint_contract_missing',
+      message: 'The live contract does not publish the versioned authoring lint surface required for product readiness.',
+    });
+  } else if (!isObject(validation) || validation.valid !== true || !Array.isArray(validation.lint)) {
+    blockers.push({
+      code: 'canonical_lint_evidence_missing',
+      message: 'SAVE_OK does not preserve the exact valid lint result used immediately before the canonical PUT.',
+    });
+  } else {
+    const invalid = validation.lint.some((finding) => (
+      !isObject(finding)
+      || !['error', 'warning'].includes(finding.level)
+      || typeof finding.ruleId !== 'string'
+      || !finding.ruleId
+      || typeof finding.message !== 'string'
+      || !finding.message
+    ));
+    const findings = validation.lint.filter((finding) => isObject(finding));
+    gates.lint = {
+      evaluated: true,
+      passed: !invalid && findings.length === 0,
+      findingCount: findings.length,
+      errors: findings.filter((finding) => finding.level === 'error').length,
+      warnings: findings.filter((finding) => finding.level === 'warning').length,
+      ruleIds: findings.slice(0, 50).map((finding) => finding.ruleId),
+    };
+    if (invalid) {
+      blockers.push({
+        code: 'canonical_lint_evidence_invalid',
+        message: 'SAVE_OK lint evidence does not match the published lint finding shape.',
+      });
+    } else if (findings.length > 0) {
+      blockers.push({
+        code: 'canonical_lint_findings',
+        message: `Canonical product readiness requires zero lint findings; found ${findings.length}.`,
+      });
+    }
+  }
+
+  const response = saveReport?.response;
+  const stringList = (value) => Array.isArray(value) && value.every((entry) => typeof entry === 'string');
+  const reportFinding = (finding, levelField, codeField) => (
+    isObject(finding)
+    && typeof finding[codeField] === 'string'
+    && finding[codeField] !== ''
+    && ['error', 'warning', 'info'].includes(finding[levelField])
+  );
+  const gateInputs = [
+    {
+      name: 'accessibility',
+      responseField: contract?.layoutPersistence?.accessibilityAudit?.responseField,
+      valid: (report) => (
+        typeof report.complete === 'boolean'
+        && Number.isInteger(report.errors)
+        && report.errors >= 0
+        && Number.isInteger(report.warnings)
+        && report.warnings >= 0
+        && Array.isArray(report.findings)
+        && report.findings.every((finding) => reportFinding(finding, 'level', 'rule'))
+        && stringList(report.reasons)
+        && report.errors === report.findings.filter((finding) => finding.level === 'error').length
+        && report.warnings === report.findings.filter((finding) => finding.level === 'warning').length
+      ),
+      passed: (report) => (
+        report.complete === true
+        && report.errors === 0
+        && report.warnings === 0
+        && report.findings.length === 0
+      ),
+      summary: (report) => ({
+        complete: report.complete,
+        errors: report.errors,
+        warnings: report.warnings,
+        findingCount: report.findings.length,
+        reasons: report.reasons.slice(0, 50),
+      }),
+    },
+    {
+      name: 'content',
+      responseField: contract?.layoutPersistence?.contentQualityAudit?.responseField,
+      valid: (report) => (
+        typeof report.role === 'string'
+        && typeof report.complete === 'boolean'
+        && typeof report.passed === 'boolean'
+        && typeof report.serverRendered === 'boolean'
+        && stringList(report.requirements)
+        && Array.isArray(report.findings)
+        && report.findings.every((finding) => reportFinding(finding, 'severity', 'code'))
+        && stringList(report.reasons)
+        && isObject(report.counts)
+        && ['error', 'warning', 'info'].every((level) => (
+          Number.isInteger(report.counts[level])
+          && report.counts[level] >= 0
+          && report.counts[level] === report.findings.filter((finding) => finding.severity === level).length
+        ))
+        && report.passed === (report.counts.error === 0 && report.counts.warning === 0)
+        && report.complete === (report.reasons.length === 0)
+      ),
+      passed: (report) => report.complete === true && report.passed === true && report.serverRendered === true,
+      summary: (report) => ({
+        role: report.role,
+        complete: report.complete,
+        passed: report.passed,
+        serverRendered: report.serverRendered,
+        findingCount: report.findings.length,
+        reasons: report.reasons.slice(0, 50),
+      }),
+    },
+    {
+      name: 'seo',
+      responseField: contract?.layoutPersistence?.seo?.graphPreview?.responseField,
+      valid: (report) => (
+        typeof report.complete === 'boolean'
+        && typeof report.serverRendered === 'boolean'
+        && typeof report.outputMode === 'string'
+        && isObject(report.owner)
+        && isObject(report.role)
+        && Array.isArray(report.findings)
+        && report.findings.every((finding) => reportFinding(finding, 'severity', 'code'))
+      ),
+      passed: (report) => (
+        report.complete === true
+        && report.serverRendered === true
+        && report.findings.every((finding) => isObject(finding) && finding.severity === 'info')
+      ),
+      summary: (report) => ({
+        complete: report.complete,
+        serverRendered: report.serverRendered,
+        outputMode: report.outputMode,
+        owner: typeof report.owner?.owner === 'string' ? report.owner.owner : '',
+        role: typeof report.role?.effective === 'string' ? report.role.effective : '',
+        findingCount: report.findings.length,
+        blockingFindingCount: report.findings.filter((finding) => finding?.severity !== 'info').length,
+      }),
+    },
+  ];
+
+  for (const gate of gateInputs) {
+    const field = gate.responseField;
+    if (typeof field !== 'string' || !/^[A-Za-z][A-Za-z0-9_]*$/u.test(field)) {
+      blockers.push({
+        code: `canonical_${gate.name}_contract_missing`,
+        message: `The live contract does not publish the ${gate.name} response field required for product readiness.`,
+      });
+      continue;
+    }
+    const audit = isObject(response) ? response[field] : null;
+    if (!isObject(audit) || !gate.valid(audit)) {
+      blockers.push({
+        code: `canonical_${gate.name}_evidence_invalid`,
+        message: `SAVE_OK does not contain a complete ${gate.name} report under its live-contract response field ${field}.`,
+      });
+      continue;
+    }
+    const passed = gate.passed(audit);
+    gates[gate.name] = {
+      evaluated: true,
+      passed,
+      responseField: field,
+      ...gate.summary(audit),
+    };
+    if (!passed) {
+      blockers.push({
+        code: `canonical_${gate.name}_failed`,
+        message: `The saved ${gate.name} report is not clean, complete, and server-rendered enough for product readiness.`,
+      });
+    }
+  }
+
+  return { ok: blockers.length === 0, gates, blockers };
+}
+
+function validateCanonicalCaptureCompleteness(candidateManifest) {
+  const evidence = candidateManifest?.evidenceCompleteness;
+  const viewports = Array.isArray(evidence?.viewports) ? evidence.viewports : [];
+  const expectedLabels = CANONICAL_VIEWPORTS.map((viewport) => viewport.split(':')[0]);
+  const labels = viewports.map((viewport) => viewport?.label).filter((label) => typeof label === 'string');
+  const byLabel = new Map(viewports.map((viewport) => [viewport?.label, viewport]));
+  const missing = expectedLabels.filter((label) => {
+    const captured = byLabel.get(label);
+    return !captured || captured.complete !== true || captured.status !== 'complete';
+  });
+  const passed = candidateManifest?.captureStatus === 'complete'
+    && evidence?.mode === 'full-page'
+    && evidence?.status === 'complete'
+    && evidence?.complete === true
+    && evidence?.essentialGeometryTruncated !== true
+    && labels.length === expectedLabels.length
+    && new Set(labels).size === expectedLabels.length
+    && labels.every((label) => expectedLabels.includes(label))
+    && missing.length === 0;
+  return {
+    gate: {
+      evaluated: true,
+      passed,
+      captureStatus: candidateManifest?.captureStatus || '',
+      evidenceStatus: evidence?.status || '',
+      missingViewports: missing,
+    },
+    blockers: passed ? [] : [{
+      code: 'canonical_capture_completeness_failed',
+      message: `Canonical product readiness requires complete full-page evidence for desktop, tablet, and mobile; incomplete: ${missing.join(', ') || 'aggregate capture'}.`,
+    }],
+  };
+}
+
 function benchmarkArgs(options, iteration, startReport) {
   const args = [
     '--label', `${iteration.label || 'monteby'}-canonical`,
@@ -768,6 +1002,15 @@ function baseReport(options) {
     fidelityPassed: false,
     canonicalVerification: false,
     productReady: false,
+    qualityGates: {
+      complete: false,
+      lint: { evaluated: false, passed: false },
+      accessibility: { evaluated: false, passed: false },
+      content: { evaluated: false, passed: false },
+      seo: { evaluated: false, passed: false },
+      completeness: { evaluated: false, passed: false },
+      motion: { evaluated: false, passed: false },
+    },
     files: {
       iterationReport: options.iterationReport,
       previewReport: options.previewReport,
@@ -860,6 +1103,27 @@ function main() {
       return;
     }
 
+    const savedQuality = validateCanonicalSavedQualityGates(iteration, previewReport);
+    report.qualityGates = {
+      ...report.qualityGates,
+      ...savedQuality.gates,
+    };
+    if (!savedQuality.ok) {
+      report.status = 'CANONICAL_QUALITY_BLOCKED';
+      report.blockers = savedQuality.blockers;
+      report.nextAction = nextAction(
+        'blocked_canonical_quality_evidence',
+        '',
+        [],
+        ['ZERO_LINT_FINDINGS', 'COMPLETE_ACCESSIBILITY_AUDIT', 'COMPLETE_CONTENT_AUDIT', 'COMPLETE_SERVER_RENDERED_SEO'],
+        'Stop. Resolve the findings in the exact saved reports, then repeat validate, save, preview, and canonical verification.'
+      );
+      persist(report);
+      output(report, options);
+      process.exitCode = 1;
+      return;
+    }
+
     options.channel = options.channel || iteration.options?.channel || '';
     const capture = runScript('capture-template-reference.js', captureArgs(options));
     report.steps.capture = {
@@ -879,25 +1143,34 @@ function main() {
       return;
     }
 
-    const motionBlockers = validateCanonicalMotionEvidence(
-      iteration,
-      readJson(report.files.candidateManifest)
-    );
-    if (motionBlockers.length > 0) {
-      report.status = 'CANONICAL_MOTION_BLOCKED';
-      report.blockers = motionBlockers;
+    const candidateManifest = readJson(report.files.candidateManifest);
+    const completeness = validateCanonicalCaptureCompleteness(candidateManifest);
+    const motionBlockers = validateCanonicalMotionEvidence(iteration, candidateManifest);
+    report.qualityGates.completeness = completeness.gate;
+    report.qualityGates.motion = {
+      evaluated: true,
+      passed: motionBlockers.length === 0,
+      blockerCount: motionBlockers.length,
+    };
+    const canonicalQualityBlockers = [...completeness.blockers, ...motionBlockers];
+    if (canonicalQualityBlockers.length > 0) {
+      report.status = 'CANONICAL_QUALITY_BLOCKED';
+      report.blockers = canonicalQualityBlockers;
       report.nextAction = nextAction(
-        'blocked_canonical_motion_evidence',
+        'blocked_canonical_quality_evidence',
         '',
         [],
-        ['REDUCED_MOTION', 'NO_JAVASCRIPT', 'COARSE_POINTER', 'KEYBOARD', 'NO_WHEEL_INTERCEPTION'],
-        'Stop. Fix the typed motion runtime or remove the unsupported motion claim, then rerun canonical verification.'
+        ['COMPLETE_CANONICAL_CAPTURE', 'REDUCED_MOTION', 'NO_JAVASCRIPT', 'COARSE_POINTER', 'KEYBOARD', 'NO_WHEEL_INTERCEPTION'],
+        'Stop. Restore complete canonical evidence and fix the typed motion runtime or remove an unsupported motion claim, then rerun canonical verification.'
       );
       persist(report);
       output(report, options);
       process.exitCode = 1;
       return;
     }
+    report.qualityGates.complete = Object.values(report.qualityGates)
+      .filter((gate) => isObject(gate) && Object.hasOwn(gate, 'passed'))
+      .every((gate) => gate.evaluated === true && gate.passed === true);
 
     let startReport = null;
     if (iteration.files?.startReport && fs.existsSync(iteration.files.startReport)) {
@@ -1013,6 +1286,25 @@ function main() {
       }
     }
 
+    if (report.qualityGates.complete !== true) {
+      report.status = 'CANONICAL_QUALITY_BLOCKED';
+      report.blockers = [{
+        code: 'canonical_quality_aggregation_incomplete',
+        message: 'Canonical comparison passed, but the required product-readiness gate aggregation is incomplete.',
+      }];
+      report.nextAction = nextAction(
+        'blocked_canonical_quality_evidence',
+        '',
+        [],
+        ['LINT', 'ACCESSIBILITY', 'CONTENT', 'SEO', 'COMPLETENESS', 'MOTION'],
+        'Stop. Recreate the complete saved and captured quality evidence chain before claiming DONE.'
+      );
+      persist(report);
+      output(report, options);
+      process.exitCode = 1;
+      return;
+    }
+
     report.ok = true;
     report.status = 'DONE';
     report.fidelityPassed = true;
@@ -1071,6 +1363,8 @@ module.exports = {
   captureArgs,
   parseArgs,
   validateCanonicalEvidence,
+  validateCanonicalSavedQualityGates,
+  validateCanonicalCaptureCompleteness,
   validateCanonicalMotionEvidence,
   validateIteration,
 };

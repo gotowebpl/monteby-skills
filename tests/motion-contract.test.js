@@ -48,6 +48,7 @@ function contract() {
       motion: {
         version: 1,
         policy: {
+          defaultRepeat: 'once',
           maxEntranceOwnersPerPage: 2,
           maxFirstViewportEntranceOwners: 1,
           maxPointerEffectsPerPage: 1,
@@ -58,6 +59,8 @@ function contract() {
           maxEntranceDelayMs: 150,
           maxEntranceDistancePx: 32,
           forbiddenComponents: ['Navbar'],
+          prohibitedInputs: [],
+          rules: [],
         },
         recipes: [
           {
@@ -128,6 +131,41 @@ test('resolved motion profile accepts only recipes that round-trip through live 
     )),
     true
   );
+});
+
+test('resolved motion profile fails closed for invalid policy semantics and published bounds', () => {
+  for (const [prop, value] of [
+    ['maxEntranceOwnersPerPage', 0],
+    ['maxEntranceOwnersPerPage', 13],
+    ['maxFirstViewportEntranceOwners', 7],
+    ['maxBackgroundEffectsPerPage', 5],
+    ['maxPointerEffectsPerPage', 7],
+    ['maxPinnedScenesPerPage', 4],
+    ['maxStaggerSpanMs', 2001],
+    ['maxEntranceDelayMs', 2001],
+    ['maxEntranceDurationMs', 99],
+    ['maxEntranceDurationMs', 2001],
+    ['maxEntranceDistancePx', 161],
+  ]) {
+    const invalid = contract();
+    invalid.authoring.motion.policy[prop] = value;
+    const profile = buildResolvedMotionProfile(invalid);
+    assert.equal(profile.available, false, `${prop}=${value}`);
+    assert.equal(profile.fallback, 'no-generated-motion', `${prop}=${value}`);
+  }
+
+  for (const [prop, value] of [
+    ['defaultRepeat', 'repeat'],
+    ['forbiddenComponents', null],
+    ['prohibitedInputs', 'wheel'],
+    ['rules', [42]],
+  ]) {
+    const invalid = contract();
+    invalid.authoring.motion.policy[prop] = value;
+    const profile = buildResolvedMotionProfile(invalid);
+    assert.equal(profile.available, false, prop);
+    assert.equal(profile.fallback, 'no-generated-motion', prop);
+  }
 });
 
 test('semantic motion plan is deterministic, source-bound, and uses exact live recipe props', () => {

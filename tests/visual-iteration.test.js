@@ -71,6 +71,11 @@ test('visual iteration runs target, draft, render, candidate capture, and benchm
   assert.equal(report.fidelityPassed, false);
   assert.equal(report.canonicalVerification, false);
   assert.equal(report.productReady, false);
+  assert.deepEqual(report.qualityGates, {
+    evaluated: false,
+    complete: false,
+    boundary: 'canonical-saved-and-public-evidence',
+  });
   assert.equal(report.schemaVersion, 1);
   assert.equal(report.artifact, 'monteby-visual-iteration');
   assert.equal(report.canonicalViewportCoverage.complete, false);
@@ -111,6 +116,7 @@ test('visual iteration runs target, draft, render, candidate capture, and benchm
   assert.match(markdown, /Verification level: full_page_static_visual_diagnostic/);
   assert.match(markdown, /Final fidelity passed: no/);
   assert.match(markdown, /Canonical WordPress verification: no/);
+  assert.match(markdown, /Canonical quality gates: not evaluated/);
   assert.match(markdown, /WordPress REST validate evidence: no/);
   assert.match(markdown, /WordPress REST save evidence: no/);
   assert.match(markdown, /WordPress\/PHP preview evidence: no/);
