@@ -118,6 +118,15 @@ tokens, `globalStyles`, `designTokens`, and finally the mode's neutral fallback.
 must be reported. Never consume `globalStyles.customCSS` as an authoring token.
 An older live contract without `designTokens` remains valid; do not invent the
 missing host values.
+Resolve motion through the same profile seam. Motion authoring is available only
+when the live response publishes both `authoring.capabilities.motionRecipes:
+true` and `authoring.motion.version: 1`; every recipe prop must round-trip
+through the target component's current control metadata. Otherwise use the
+declared `no-generated-motion` fallback. A motion plan must be versioned, mark
+its source as `explicit-brief` or `measured-reference`, bind every request to a
+deterministic node target, and use a live recipe id with the same semantic
+intent. Never infer motion from an archetype, decoration, or generic desire to
+make a page feel dynamic.
 For a static diagnostic preview, pass that same full response through
 `render-monteby-preview.js --contract contract.json`. Use its published
 `fontCatalog` for system, Google and local font origins; do not infer a provider

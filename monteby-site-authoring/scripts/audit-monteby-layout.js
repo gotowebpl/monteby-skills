@@ -4,6 +4,7 @@
 const fs = require('fs');
 const path = require('path');
 const { publishedControlReferences, normalizeControlValue } = require('./control-contract');
+const { buildResolvedMotionProfile, auditMotionLayout } = require('./motion-contract');
 
 const BLOCKED_PROPS = new Set([
   'classname',
@@ -416,6 +417,16 @@ function audit(nodeMap, contractIndex, referenceManifest, minMediaSurfaces, opti
   }
 
   auditGraphIntegrity(report, nodeMap);
+  const motionAudit = auditMotionLayout(nodeMap, options.motionProfile);
+  report.motion = {
+    available: options.motionProfile?.available === true,
+    fallback: options.motionProfile?.fallback || '',
+    claims: motionAudit.claims,
+    stats: motionAudit.stats,
+  };
+  for (const finding of motionAudit.errors) {
+    error(report, finding.code, finding.message);
+  }
   auditReferenceProvenance(report, referenceManifest, options);
   auditReferenceMedia(report, nodeMap, referenceManifest, minMediaSurfaces, options);
 
@@ -1809,6 +1820,7 @@ function main() {
       requireRealReference: options.requireRealReference,
       requireMarketplaceMedia: options.requireMarketplaceMedia,
       referenceManifestPath: options.referenceManifest,
+      motionProfile: buildResolvedMotionProfile(contract),
     }
   );
   printReport(report, options.json);

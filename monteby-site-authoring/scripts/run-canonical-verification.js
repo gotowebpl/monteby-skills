@@ -19,6 +19,7 @@ const {
   evaluateSubpixelFixedPoint,
   validateSubpixelAuthorization,
 } = require('./subpixel-residual');
+const { buildResolvedMotionProfile, auditMotionLayout } = require('./motion-contract');
 
 function requiredValue(argv, index, option) {
   const value = argv[index];
@@ -617,6 +618,68 @@ function captureArgs(options) {
   ];
 }
 
+function validateCanonicalMotionEvidence(iteration, candidateManifest) {
+  let contract;
+  let layout;
+  try {
+    contract = readJson(iteration.files.contract);
+    layout = readJson(iteration.files.layout);
+  } catch {
+    return [{ code: 'canonical_motion_inputs_invalid', message: 'Canonical motion validation could not read the bound contract and layout.' }];
+  }
+  const nodeMap = layout?.ROOT ? layout : layout?.layout || layout?.nodeMap || layout;
+  const profile = buildResolvedMotionProfile(contract);
+  const audit = auditMotionLayout(nodeMap, profile);
+  if (audit.errors.length > 0) {
+    return audit.errors.map((entry) => ({ code: entry.code, message: entry.message }));
+  }
+  if (audit.claims.length === 0) return [];
+
+  const evidence = candidateManifest?.motionEvidence;
+  const viewports = Array.isArray(evidence?.viewports) ? evidence.viewports : [];
+  const byLabel = new Map(viewports.map((viewport) => [viewport?.label, viewport]));
+  const blockers = [];
+  const claimedKinds = new Set(audit.claims.map((claim) => claim.kind));
+  for (const viewport of CANONICAL_VIEWPORTS) {
+    const captured = byLabel.get(viewport.split(':')[0]);
+    if (!captured || captured.schemaVersion !== 1 || captured.normalized !== true || !Array.isArray(captured.owners)) {
+      blockers.push({ code: 'canonical_motion_evidence_missing', message: `Normalized motion evidence is missing for ${viewport}.` });
+      continue;
+    }
+    const checks = captured.checks || {};
+    for (const [check, expected] of Object.entries({
+      reducedMotionStatic: true,
+      noJavaScriptStatic: true,
+      coarsePointerStatic: true,
+      keyboardOperable: true,
+      wheelInterception: false,
+    })) {
+      if (checks[check] !== expected) {
+        blockers.push({ code: `canonical_motion_${check.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`)}_failed`, message: `${viewport} motion evidence must report ${check}=${expected}.` });
+      }
+    }
+    const capturedKinds = new Set(captured.owners.map((owner) => owner?.kind).filter(Boolean));
+    for (const kind of claimedKinds) {
+      if (!capturedKinds.has(kind)) {
+        blockers.push({ code: 'canonical_motion_claim_not_observed', message: `${viewport} did not observe the authored ${kind} motion owner.` });
+      }
+    }
+    const observedBudgets = [
+      ['entrance', captured.owners.filter((owner) => owner?.kind === 'entrance').length, profile.policy.maxEntranceOwnersPerPage],
+      ['first-viewport-entrance', captured.owners.filter((owner) => owner?.kind === 'entrance' && owner.firstViewport === true).length, profile.policy.maxFirstViewportEntranceOwners],
+      ['pointer', captured.owners.filter((owner) => owner?.kind === 'pointer').length, profile.policy.maxPointerEffectsPerPage],
+      ['pinned', captured.owners.filter((owner) => owner?.kind === 'pinned').length, profile.policy.maxPinnedScenesPerPage],
+      ['background', captured.owners.filter((owner) => ['ambient', 'scroll'].includes(owner?.kind)).length, profile.policy.maxBackgroundEffectsPerPage],
+    ];
+    for (const [kind, count, maximum] of observedBudgets) {
+      if (count > maximum) {
+        blockers.push({ code: 'canonical_motion_runtime_budget_exceeded', message: `${viewport} observed ${count} ${kind} owner(s); live budget is ${maximum}.` });
+      }
+    }
+  }
+  return blockers;
+}
+
 function benchmarkArgs(options, iteration, startReport) {
   const args = [
     '--label', `${iteration.label || 'monteby'}-canonical`,
@@ -816,6 +879,26 @@ function main() {
       return;
     }
 
+    const motionBlockers = validateCanonicalMotionEvidence(
+      iteration,
+      readJson(report.files.candidateManifest)
+    );
+    if (motionBlockers.length > 0) {
+      report.status = 'CANONICAL_MOTION_BLOCKED';
+      report.blockers = motionBlockers;
+      report.nextAction = nextAction(
+        'blocked_canonical_motion_evidence',
+        '',
+        [],
+        ['REDUCED_MOTION', 'NO_JAVASCRIPT', 'COARSE_POINTER', 'KEYBOARD', 'NO_WHEEL_INTERCEPTION'],
+        'Stop. Fix the typed motion runtime or remove the unsupported motion claim, then rerun canonical verification.'
+      );
+      persist(report);
+      output(report, options);
+      process.exitCode = 1;
+      return;
+    }
+
     let startReport = null;
     if (iteration.files?.startReport && fs.existsSync(iteration.files.startReport)) {
       startReport = readJson(iteration.files.startReport);
@@ -988,5 +1071,6 @@ module.exports = {
   captureArgs,
   parseArgs,
   validateCanonicalEvidence,
+  validateCanonicalMotionEvidence,
   validateIteration,
 };

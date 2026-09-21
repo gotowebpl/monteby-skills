@@ -9,6 +9,7 @@ const {
   buildResolvedDesignProfile,
   globalStyleLiteralMatch,
 } = require('./resolved-design-profile');
+const { motionSignature } = require('./motion-contract');
 
 const SCHEMA_VERSION = 1;
 const ARTIFACT = 'monteby-layout-repair-application';
@@ -949,6 +950,7 @@ async function applyRepairQueue(options) {
     const contract = readJson(context.contractPath, 'live contract');
     const allowedProps = sectionAuthoringProps(contract);
     const designProfile = buildResolvedDesignProfile(contract);
+    const inputMotionSignature = motionSignature(inputNodeMap, designProfile.motion);
     const applied = [];
     report.inputLayoutSha256 = nodeMapSha256(inputNodeMap);
 
@@ -1036,6 +1038,15 @@ async function applyRepairQueue(options) {
     );
     for (const item of relinkItems) {
       applied.push(relinkGlobalStyleLiteral(nodeMap, contract, designProfile, item));
+    }
+
+    const outputMotionSignature = motionSignature(nodeMap, designProfile.motion);
+    if (JSON.stringify(outputMotionSignature) !== JSON.stringify(inputMotionSignature)) {
+      throw new RepairError(
+        'MOTION_REPAIR_MUTATION',
+        'Deterministic layout repair may not add, remove, or alter authored motion.',
+        { before: inputMotionSignature, after: outputMotionSignature }
+      );
     }
 
     reachableNodeIds(nodeMap);

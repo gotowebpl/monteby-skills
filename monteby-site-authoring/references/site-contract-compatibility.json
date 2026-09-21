@@ -157,6 +157,20 @@
       "optional": true,
       "fallback": "manual-global-styles-proposal"
     },
+    "motionAuthoring": {
+      "minimumBuilderVersion": "1.6.0",
+      "contractPath": "authoring.motion.version",
+      "expectedValue": 1,
+      "optional": true,
+      "fallback": "no-generated-motion"
+    },
+    "motionRecipes": {
+      "minimumBuilderVersion": "1.6.0",
+      "contractPath": "authoring.capabilities.motionRecipes",
+      "expectedValue": true,
+      "optional": true,
+      "fallback": "no-generated-motion"
+    },
     "contractComponent": {
       "minimumBuilderVersion": "1.6.0",
       "contractPath": "layoutPersistence.resources.contractComponent",

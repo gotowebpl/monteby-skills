@@ -1150,6 +1150,14 @@ function buildReferenceBrief(options, html, media, screenshots, layoutCapture, m
     },
     media: mediaSummary,
     evidenceCompleteness,
+    motionEvidence: {
+      schemaVersion: 1,
+      normalized: true,
+      viewports: (layoutCapture.layouts || []).map((entry) => ({
+        label: entry.label || '',
+        ...(entry.layout?.motionEvidence || { owners: [], countsByKind: {}, checks: {}, environments: {} }),
+      })),
+    },
     renderedLayout: layoutSummary,
     renderedLayouts: layoutSummaries,
     directives: [
@@ -3555,6 +3563,58 @@ function captureRenderedLayout(
     (largest, item) => Math.max(largest, item.firstViewportArea),
     0
   );
+  const durationMilliseconds = (value) => String(value || '').split(',').reduce((maximum, token) => {
+    const trimmed = token.trim();
+    const numeric = Number.parseFloat(trimmed);
+    if (!Number.isFinite(numeric)) return maximum;
+    return Math.max(maximum, trimmed.endsWith('ms') ? numeric : numeric * 1000);
+  }, 0);
+  const motionOwners = Array.from(document.querySelectorAll([
+    '[data-gw-motion]',
+    '[data-gw-section-sticky]',
+    '[data-gw-section-mask]',
+    '[data-gw-section-progress]',
+    '[data-monteby-background-motion]',
+    '[data-monteby-background-parallax]',
+    '[data-monteby-pointer-effect]',
+    '[data-gw-ct]',
+  ].join(','))).slice(0, 200).map((element) => {
+    const style = window.getComputedStyle(element);
+    const rect = readRect(element);
+    const pointer = element.hasAttribute('data-monteby-pointer-effect');
+    const pinned = element.hasAttribute('data-gw-section-sticky');
+    const scroll = element.hasAttribute('data-monteby-background-parallax')
+      || element.hasAttribute('data-gw-section-progress');
+    const stateChange = element.hasAttribute('data-gw-ct');
+    const kind = pointer ? 'pointer' : pinned ? 'pinned' : scroll ? 'scroll' : stateChange ? 'state-change'
+      : element.hasAttribute('data-monteby-background-motion') ? 'ambient' : 'entrance';
+    const recipeId = String(element.getAttribute('data-monteby-motion-recipe') || '').trim();
+    return {
+      structureKey: elementPathKey(element),
+      tag: String(element.tagName || '').toLowerCase(),
+      kind,
+      ...(recipeId ? { recipeId } : {}),
+      firstViewport: rect.top < viewport.height && rect.bottom > 0,
+      rect,
+      animationDurationMs: durationMilliseconds(style.animationDuration),
+      transitionDurationMs: durationMilliseconds(style.transitionDuration),
+      visible: isVisible(element, rect, style),
+    };
+  });
+  const motionEvidence = {
+    schemaVersion: 1,
+    normalized: true,
+    environment: {
+      reducedMotion: Boolean(window.matchMedia?.('(prefers-reduced-motion: reduce)').matches),
+      coarsePointer: Boolean(window.matchMedia?.('(pointer: coarse)').matches),
+      javaScript: true,
+    },
+    owners: motionOwners,
+    countsByKind: motionOwners.reduce((counts, owner) => ({
+      ...counts,
+      [owner.kind]: (counts[owner.kind] || 0) + 1,
+    }), {}),
+  };
 
   return {
     capturedAt: new Date().toISOString(),
@@ -3572,6 +3632,7 @@ function captureRenderedLayout(
     layoutGroups,
     landmarks,
     interactions,
+    motionEvidence,
     evidenceCompleteness,
     summary: {
       firstViewportTextBoxes: firstViewportTextBoxes.length,
@@ -4178,6 +4239,93 @@ function loadPlaywright() {
   }
 }
 
+async function probeMotionEnvironment(browser, url, viewport, options = {}) {
+  const context = await browser.newContext({
+    viewport,
+    javaScriptEnabled: options.javaScript !== false,
+    reducedMotion: options.reducedMotion === true ? 'reduce' : 'no-preference',
+    hasTouch: options.coarsePointer === true,
+  });
+  const page = await context.newPage();
+  try {
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.waitForLoadState('load', { timeout: 10000 }).catch(() => {});
+    if (options.javaScript !== false) await page.waitForTimeout(250);
+    return await page.evaluate(({ javaScript, reducedMotion, coarsePointer }) => {
+      const selector = [
+        '[data-gw-motion]',
+        '[data-gw-section-sticky]',
+        '[data-gw-section-mask]',
+        '[data-gw-section-progress]',
+        '[data-monteby-background-motion]',
+        '[data-monteby-background-parallax]',
+        '[data-monteby-pointer-effect]',
+        '[data-gw-ct]',
+      ].join(',');
+      const durationMilliseconds = (value) => String(value || '').split(',').reduce((maximum, token) => {
+        const trimmed = token.trim();
+        const numeric = Number.parseFloat(trimmed);
+        if (!Number.isFinite(numeric)) return maximum;
+        return Math.max(maximum, trimmed.endsWith('ms') ? numeric : numeric * 1000);
+      }, 0);
+      const owners = Array.from(document.querySelectorAll(selector)).slice(0, 200);
+      const states = owners.map((element) => {
+        const style = window.getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        return {
+          hidden: rect.width <= 1 || rect.height <= 1 || style.display === 'none'
+            || style.visibility === 'hidden' || Number(style.opacity || '1') <= 0.02,
+          durationMs: Math.max(
+            durationMilliseconds(style.animationDuration),
+            durationMilliseconds(style.transitionDuration)
+          ),
+          pointer: element.hasAttribute('data-monteby-pointer-effect'),
+        };
+      });
+      const pointerOwners = owners.filter((element) => element.hasAttribute('data-monteby-pointer-effect'));
+      for (const element of pointerOwners) {
+        const rect = element.getBoundingClientRect();
+        const PointerEventConstructor = typeof PointerEvent === 'function' ? PointerEvent : MouseEvent;
+        element.dispatchEvent(new PointerEventConstructor('pointermove', {
+          bubbles: true,
+          ...(typeof PointerEvent === 'function' ? { pointerType: 'mouse' } : {}),
+          clientX: rect.left + rect.width,
+          clientY: rect.top + rect.height,
+        }));
+      }
+      const pointerMoved = pointerOwners.some((element) => {
+        const style = element.style;
+        return String(style.getPropertyValue('--monteby-pointer-x')).trim() !== ''
+          || String(style.getPropertyValue('--monteby-pointer-y')).trim() !== '';
+      });
+      const keyboardEvent = new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, cancelable: true });
+      const wheelEvent = new WheelEvent('wheel', { deltaY: 100, bubbles: true, cancelable: true });
+      document.body.dispatchEvent(keyboardEvent);
+      document.body.dispatchEvent(wheelEvent);
+      const bodyTextLength = String(document.body?.innerText || '').trim().length;
+      return {
+        javaScript,
+        reducedMotion,
+        coarsePointer,
+        ownerCount: states.length,
+        hiddenOwnerCount: states.filter((state) => state.hidden).length,
+        activeOwnerCount: states.filter((state) => state.durationMs > 20).length,
+        pointerOwnerCount: states.filter((state) => state.pointer).length,
+        pointerMoved,
+        contentVisible: bodyTextLength > 0 && states.every((state) => !state.hidden),
+        keyboardIntercepted: keyboardEvent.defaultPrevented,
+        wheelIntercepted: wheelEvent.defaultPrevented,
+      };
+    }, {
+      javaScript: options.javaScript !== false,
+      reducedMotion: options.reducedMotion === true,
+      coarsePointer: options.coarsePointer === true,
+    });
+  } finally {
+    await context.close();
+  }
+}
+
 function renderedLayoutCaptureScript() {
   return `
 'use strict';
@@ -4284,6 +4432,52 @@ const warmLazyMedia = ${warmLazyMedia.toString()};
         groups: [],
       },
     }));
+    const probeMotionEnvironment = ${probeMotionEnvironment.toString()};
+    const captureUrl = process.env.MONTEBY_REFERENCE_CAPTURE_URL || process.env.MONTEBY_REFERENCE_LAYOUT_URL;
+    const viewport = {
+      width: Number(process.env.MONTEBY_REFERENCE_CAPTURE_WIDTH || process.env.MONTEBY_REFERENCE_LAYOUT_WIDTH || '1440'),
+      height: Number(process.env.MONTEBY_REFERENCE_CAPTURE_HEIGHT || process.env.MONTEBY_REFERENCE_LAYOUT_HEIGHT || '1200'),
+    };
+    const unavailableEnvironment = {
+      status: 'unavailable',
+      ownerCount: 0,
+      hiddenOwnerCount: 0,
+      activeOwnerCount: 0,
+      pointerOwnerCount: 0,
+      pointerMoved: true,
+      contentVisible: false,
+      keyboardIntercepted: true,
+      wheelIntercepted: true,
+    };
+    const hasMotionOwners = Array.isArray(capturedLayout.motionEvidence?.owners)
+      && capturedLayout.motionEvidence.owners.length > 0;
+    const probe = (probeOptions) => hasMotionOwners && typeof browser.newContext === 'function'
+      ? probeMotionEnvironment(browser, captureUrl, viewport, probeOptions).catch(() => ({ ...unavailableEnvironment, status: 'failed' }))
+      : Promise.resolve({ ...unavailableEnvironment, status: hasMotionOwners ? 'unavailable' : 'not-required' });
+    const [reducedMotion, noJavaScript, coarsePointer] = await Promise.all([
+      probe({ reducedMotion: true }),
+      probe({ javaScript: false }),
+      probe({ coarsePointer: true }),
+    ]);
+    capturedLayout.motionEvidence = capturedLayout.motionEvidence || {
+      schemaVersion: 1,
+      normalized: true,
+      environment: { reducedMotion: false, coarsePointer: false, javaScript: true },
+      owners: [],
+      countsByKind: {},
+    };
+    capturedLayout.motionEvidence.environments = {
+      reducedMotion,
+      noJavaScript,
+      coarsePointer,
+    };
+    capturedLayout.motionEvidence.checks = {
+      reducedMotionStatic: !hasMotionOwners || (reducedMotion.activeOwnerCount === 0 && reducedMotion.hiddenOwnerCount === 0),
+      noJavaScriptStatic: !hasMotionOwners || noJavaScript.contentVisible === true,
+      coarsePointerStatic: !hasMotionOwners || coarsePointer.pointerMoved === false,
+      keyboardOperable: !hasMotionOwners || (reducedMotion.keyboardIntercepted === false && coarsePointer.keyboardIntercepted === false),
+      wheelInterception: hasMotionOwners && (reducedMotion.wheelIntercepted === true || coarsePointer.wheelIntercepted === true),
+    };
     fs.writeFileSync(layoutOut, JSON.stringify(capturedLayout, null, 2) + '\\n');
   }
   await browser.close();
@@ -4840,6 +5034,7 @@ function writeReferenceArtifacts(options, html, resourceCandidates, screenshots,
           workingGroups: Number(tabs?.workingGroups || 0),
           truncatedGroups: Number(tabs?.truncatedGroups || 0),
         },
+        motionEvidence: layout.layout?.motionEvidence || null,
       };
     })
     : [];
@@ -4877,6 +5072,21 @@ function writeReferenceArtifacts(options, html, resourceCandidates, screenshots,
       tabs: {
         viewports: tabInteractionViewports,
       },
+    },
+    motionEvidence: {
+      schemaVersion: 1,
+      normalized: true,
+      viewports: layoutDescriptors.map((layout) => ({
+        label: layout.label,
+        ...(layout.motionEvidence || {
+          schemaVersion: 1,
+          normalized: true,
+          owners: [],
+          countsByKind: {},
+          checks: {},
+          environments: {},
+        }),
+      })),
     },
     screenshotPolicy: 'Screenshots are visual research artifacts only. Do not copy demo HTML, CSS, copy, image URLs, or distinctive sections into Monteby JSON.',
     mediaPolicy: 'Media URLs are evidence of photo pressure only. Use licensed, user-provided, generated, or neutral replacement assets for authored Monteby layouts.',

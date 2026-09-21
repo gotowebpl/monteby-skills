@@ -182,6 +182,12 @@ function buildAuthoringRequirements(manifest, renderedLayouts, mediaSurfaces) {
       .filter((layout) => layout.status === 'ok')
       .map(viewportRequirement),
     priorityMediaSamples: priorityMediaSamples(renderedLayouts),
+    motionEvidence: manifest.motionEvidence && typeof manifest.motionEvidence === 'object'
+      ? manifest.motionEvidence
+      : { schemaVersion: 1, normalized: true, viewports: [] },
+    ...(manifest.motionPlan && typeof manifest.motionPlan === 'object'
+      ? { motionPlan: manifest.motionPlan }
+      : {}),
     assetPolicy: manifest.sourceOwnership === 'generated' && manifest.reuseSourceMedia === true
       ? [
         'This target is generated and its declared media may be reused for deterministic visual comparison.',

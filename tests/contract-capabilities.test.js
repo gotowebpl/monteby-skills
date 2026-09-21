@@ -82,6 +82,17 @@ test('design profile gate requires Builder 1.6.0 and the declared live profile v
   assert.equal(evaluateFeatureGate({ productVersion: '1.6.0', authoring: { designProfiles: { version: 1 } } }, 'designProfiles', manifest).ok, true);
 });
 
+test('motion authoring requires both the versioned recipe catalog and advertised capability', () => {
+  const contract = {
+    productVersion: '1.6.0',
+    authoring: { capabilities: { motionRecipes: true }, motion: { version: 1 } },
+  };
+  assert.equal(evaluateFeatureGate(contract, 'motionAuthoring', manifest).ok, true);
+  assert.equal(evaluateFeatureGate(contract, 'motionRecipes', manifest).ok, true);
+  contract.authoring.capabilities.motionRecipes = false;
+  assert.equal(evaluateFeatureGate(contract, 'motionRecipes', manifest).code, 'blocked_contract_inconsistency');
+});
+
 test('contract projection gates validate the response that was actually requested', () => {
   const projections = {
     contractLightProjection: 'light',
@@ -153,7 +164,7 @@ test('every Builder 1.6 gate is optional, names a fallback, and blocks older plu
     'contractCatalogsProjection', 'contractComponentsSummary', 'annotatedRender', 'renderLayoutFilter',
     'renderGlobalStylesFilter', 'renderGlobalTemplateFilter', 'previewGlobalTemplates',
     'compositionInstantiate', 'compositionPlan', 'revisionRestore', 'bulkCreate', 'globalStylesPatch',
-    'designProfiles', 'contractComponent', 'abilities'];
+    'designProfiles', 'motionAuthoring', 'motionRecipes', 'contractComponent', 'abilities'];
   for (const name of gates) {
     const gate = manifest.featureGates[name];
     assert.equal(gate.minimumBuilderVersion, '1.6.0', `${name} minimum`);

@@ -34,6 +34,7 @@ import { pathToFileURL } from 'node:url';
 import { basename, dirname, join, resolve } from 'node:path';
 import designProfileModule from './resolved-design-profile.js';
 import controlContractModule from './control-contract.js';
+import motionContractModule from './motion-contract.js';
 
 const {
   UNMEASURED_CONTENT_SECTION_DEFAULTS,
@@ -43,6 +44,7 @@ const {
   tokenReference,
 } = designProfileModule;
 const { buildControlIndex, normalizeControlValue } = controlContractModule;
+const { applySemanticMotionPlan } = motionContractModule;
 
 const TEXT_NODES = new Set(['Heading', 'Text', 'MultilineHeading']);
 const EDGE_WIDTHS = ['borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth'];
@@ -339,7 +341,7 @@ export class Kit {
     );
   }
 
-  build(sections) {
+  build(sections, motionPlan = undefined) {
     for (const id of sections) {
       const name = this.nodes[id].type.resolvedName;
       if (!this.rootComponents.has(name)) throw new Error(`${name} nie może być dzieckiem ROOT`);
@@ -347,6 +349,12 @@ export class Kit {
     }
     this.nodes.ROOT = { type: { resolvedName: 'RootCanvas' }, isCanvas: true, props: {}, nodes: [...sections] };
     this.#validateAnchorComposition();
+    this.motionPlan = applySemanticMotionPlan(this.nodes, this.designProfile.motion, motionPlan);
+    if (this.motionPlan.rejected.length > 0) {
+      throw new Error(`motion plan rejected: ${this.motionPlan.rejected.map((entry) => (
+        `${entry.recipeId || entry.nodeId || 'request'}: ${entry.reason}`
+      )).join('; ')}`);
+    }
     return this.nodes;
   }
 
@@ -410,10 +418,10 @@ export class Kit {
     }
   }
 
-  async write(path, sections) {
-    const map = this.build(sections);
+  async write(path, sections, motionPlan = undefined) {
+    const map = this.build(sections, motionPlan);
     await writeFile(path, JSON.stringify(map, null, 1), 'utf8');
-    const result = { path, nodes: Object.keys(map).length, notes: [...this.notes] };
+    const result = { path, nodes: Object.keys(map).length, notes: [...this.notes], motionPlan: this.motionPlan };
     this.nodes = {};
     this.counter = 0;
     this.notes = [...this.initialNotes];
@@ -486,7 +494,7 @@ function compositionContent(content, slots, path, depth = 0) {
 
 /** Expands only recipes supplied by the current full live contract. */
 export function expandCompositionPlan(contract, plan, options = {}) {
-  compositionRecord(plan, ['version', 'sections'], 'plan');
+  compositionRecord(plan, ['version', 'sections', 'motion'], 'plan');
   if (plan.version !== 1 || !Array.isArray(plan.sections) || plan.sections.length < 1 || plan.sections.length > 20) {
     throw new Error('plan: version 1 and 1–20 sections required');
   }
@@ -633,7 +641,8 @@ export function expandCompositionPlan(contract, plan, options = {}) {
     sections.push(...roots);
     decisions.push({ section: index, compositionId: recipe.id, rootId: roots[0] });
   }
-  return { layout: kit.build(sections), notes: kit.notes, decisions };
+  const layout = kit.build(sections, plan.motion);
+  return { layout, notes: kit.notes, decisions, motionPlan: kit.motionPlan };
 }
 
 async function compositionCli() {

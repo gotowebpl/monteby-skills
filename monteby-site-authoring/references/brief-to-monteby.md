@@ -309,8 +309,11 @@ nie rozstrzyga, weź je ze strony wzorcowej i zapisz w briefie na przyszłość:
 - ruch: używaj wyłącznie kontrolek opublikowanych przez żywy kontrakt, jeżeli
   brief wymaga animacji. Nowa kompozycja nie wymaga CSS-u motywu potomnego.
   Brak wymaganego zachowania jest luką Builder/Core; nie zastępuj go klasami
-  ani skryptem. Sprawdź w kanonicznym podglądzie działanie i preferencję
-  ograniczenia ruchu.
+  ani skryptem. Plan motion ma jawne źródło `explicit-brief`, live recipe id,
+  zgodny semantic intent i deterministyczny cel; sama kategoria/archetyp strony
+  nie wystarcza. Sprawdź limity z `authoring.motion.policy`, zakaz ruchu
+  nawigacji/formularzy, `autoplay: false`, statyczny fallback reduced-motion,
+  no-JS i coarse pointer oraz brak przechwytywania wheel/klawiatury.
 
 
 ## Treść ekspercka

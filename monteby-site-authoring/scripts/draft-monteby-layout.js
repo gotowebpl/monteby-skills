@@ -25,6 +25,7 @@ const {
 } = require('./resolved-design-profile');
 const { validateIconMapping } = require('./icon-mapping');
 const { collectControlMetadata, normalizeControlValue } = require('./control-contract');
+const { applySemanticMotionPlan } = require('./motion-contract');
 const { GENERIC_MEASURED_REFERENCE, selectDraftStrategy } = require('./draft-strategy');
 
 const DEFAULT_REPLACEMENT_PROFILE = {
@@ -318,8 +319,14 @@ function briefWithReferenceMediaRequirements(brief, referenceManifest, options =
   const referenceGeometry = referenceManifest && options.referenceManifest
     ? referenceGeometryFromManifest(referenceManifest, options.referenceManifest)
     : null;
+  const motionEvidence = referenceManifest?.motionEvidence && typeof referenceManifest.motionEvidence === 'object'
+    ? referenceManifest.motionEvidence
+    : undefined;
+  const measuredMotionPlan = referenceManifest?.motionPlan?.source === 'measured-reference'
+    ? referenceManifest.motionPlan
+    : undefined;
 
-  if (requiredMediaRoles.length === 0 && requiresRealReference === false && !referenceGeometry) {
+  if (requiredMediaRoles.length === 0 && requiresRealReference === false && !referenceGeometry && !motionEvidence && !measuredMotionPlan) {
     return brief;
   }
 
@@ -335,6 +342,8 @@ function briefWithReferenceMediaRequirements(brief, referenceManifest, options =
       realReferenceSourceUrl: realReferenceSourceUrl || undefined,
       referenceGeometry: referenceGeometry || undefined,
       iconMapping: options.validatedIconMapping || undefined,
+      motionEvidence,
+      motionPlan: brief.authoringRequirements?.motionPlan || measuredMotionPlan,
     },
   };
 }
@@ -2570,7 +2579,19 @@ function draftLayout(contractIndex, brief, contractPayload = {}, qualityContext 
     throw new Error(`Unsupported draft strategy: ${draftStrategy.name}`);
   }
 
+  const motionPlan = applySemanticMotionPlan(
+    context.nodeMap,
+    designProfile.motion,
+    brief.authoringRequirements?.motionPlan
+  );
+  if (motionPlan.rejected.length > 0) {
+    throw new Error(`motion plan rejected: ${motionPlan.rejected.map((entry) => (
+      `${entry.recipeId || entry.nodeId || 'request'}: ${entry.reason}`
+    )).join('; ')}`);
+  }
+
   const mechanicalPlan = buildMechanicalLayoutPlan(context, genericPlan);
+  mechanicalPlan.motionPlan = motionPlan;
   if (genericPlan) {
     const authoredConstraintCount = mechanicalPlan.constraintDecisions.filter(({ decision }) => decision === 'authored').length;
     const omittedConstraintCount = mechanicalPlan.constraintDecisions.filter(({ decision }) => decision === 'omitted').length;

@@ -30,6 +30,7 @@ const {
   normalizeControlValue,
   publishedControlReferences,
 } = require('./control-contract');
+const { auditMotionLayout } = require('./motion-contract');
 
 function parseArgs(argv) {
   const args = {};
@@ -272,12 +273,26 @@ function main() {
     }
   }
 
+  const motionAudit = auditMotionLayout(nodeMap, designProfile.motion);
+  errors.push(...motionAudit.errors.map((entry) => ({
+    node: entry.nodeId || '',
+    component: entry.component || '',
+    code: entry.code,
+    message: entry.message,
+  })));
+
   const report = {
     nodes: Object.keys(nodeMap).length,
     errors,
     repairs,
     warnings,
     designConflicts: designProfile.conflicts,
+    motion: {
+      available: designProfile.motion.available,
+      fallback: designProfile.motion.fallback,
+      claims: motionAudit.claims,
+      stats: motionAudit.stats,
+    },
     ok: errors.length === 0,
   };
 
