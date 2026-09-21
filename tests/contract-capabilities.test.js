@@ -100,16 +100,52 @@ test('contract projection gates validate the response that was actually requeste
   }, 'contractComponentsSummary', manifest).ok, true);
 });
 
-test('composition plan and revision restore require advertised live resources', () => {
+test('composition instantiation, composition plan and revision restore require advertised live resources', () => {
   const contract = {
     productVersion: '1.6.0',
-    authoring: { compositions: { resources: { plan: { method: 'POST' } } } },
+    authoring: { compositions: { resources: {
+      instantiate: { method: 'POST' },
+      plan: { method: 'POST' },
+    } } },
     layoutPersistence: { resources: { restoreRevision: { method: 'POST' } } },
   };
+  assert.equal(evaluateFeatureGate(contract, 'compositionInstantiate', manifest).ok, true);
   assert.equal(evaluateFeatureGate(contract, 'compositionPlan', manifest).ok, true);
   assert.equal(evaluateFeatureGate(contract, 'revisionRestore', manifest).ok, true);
+  delete contract.authoring.compositions.resources.instantiate;
+  assert.equal(evaluateFeatureGate(contract, 'compositionInstantiate', manifest).code, 'blocked_contract_inconsistency');
   delete contract.layoutPersistence.resources.restoreRevision;
   assert.equal(evaluateFeatureGate(contract, 'revisionRestore', manifest).code, 'blocked_contract_inconsistency');
+});
+
+test('abilities use the REST fallback when the host WordPress version cannot register them', () => {
+  assert.equal(evaluateFeatureGate({ productVersion: '1.5.3' }, 'abilities', manifest).code, 'blocked_plugin_version');
+  assert.deepEqual(evaluateFeatureGate({
+    productVersion: '1.6.0',
+    authoring: { capabilities: { abilities: false } },
+  }, 'abilities', manifest), {
+    ok: false,
+    code: 'feature_unavailable',
+    productVersion: '1.6.0',
+    featureName: 'abilities',
+    fallback: 'rest-only',
+  });
+  assert.equal(evaluateFeatureGate({
+    productVersion: '1.6.0',
+    authoring: { capabilities: { abilities: true } },
+  }, 'abilities', manifest).ok, true);
+  assert.equal(evaluateFeatureGate({
+    productVersion: '1.6.0',
+    authoring: { capabilities: {} },
+  }, 'abilities', manifest).code, 'blocked_contract_inconsistency');
+  assert.equal(evaluateFeatureGate({
+    productVersion: '1.6.0',
+    authoring: { capabilities: { abilities: 'false' } },
+  }, 'abilities', manifest).code, 'blocked_contract_inconsistency');
+  assert.equal(evaluateFeatureGate({
+    productVersion: '1.6.0',
+    authoring: { capabilities: { providerRenderedWidgetSave: false } },
+  }, 'providerRenderedWidgetSave', manifest).code, 'blocked_contract_inconsistency');
 });
 
 test('every Builder 1.6 gate is optional, names a fallback, and blocks older plugins by version', () => {

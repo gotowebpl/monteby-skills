@@ -234,6 +234,26 @@ test('mechanical guidance binds icons, client copy, batch saves, and public prop
   assert.doesNotMatch(workflow, /shell:\s*true|npx\.cmd/);
 });
 
+test('Builder 1.6 guidance gates composition resources and bounds request-scoped render filters', () => {
+  const protocol = read(path.join(references, 'mechanical-workflow-protocol.md'));
+  const brief = read(path.join(references, 'brief-to-monteby.md'));
+
+  assert.match(brief, /`compositionPlan` przed[\s\S]*`compositionInstantiate` przed/);
+  assert.match(brief, /deskryptora w `authoring\.compositions\.resources`/);
+  assert.match(brief, /sama flaga capability nie[\s\S]*zapamiętanego adresu/);
+  assert.match(protocol, /explicitly publishes `abilities: false`[\s\S]*`feature_unavailable`/);
+  assert.match(protocol, /missing or malformed value remains[\s\S]*`blocked_contract_inconsistency`/);
+  assert.match(protocol, /Trusted request-scoped render filters/);
+  assert.match(protocol, /authenticated the request and checked the relevant edit or[\s\S]*design capability/);
+  assert.match(protocol, /never enable one from an arbitrary[\s\S]*public query parameter, cookie or page payload/);
+  assert.match(protocol, /`monteby\/render\/layout_json`/);
+  assert.match(protocol, /`monteby\/render\/global_styles`/);
+  assert.match(protocol, /`monteby\/render\/global_template_post_id`/);
+  assert.match(protocol, /must not persist layouts, selections or styles/);
+  assert.match(protocol, /bypass[\s\S]*caches and must not populate them/);
+  assert.match(protocol, /canonical completion still requires the[\s\S]*versioned write/);
+});
+
 test('site-authoring uses the live company profile instead of hardcoded identity data', () => {
   const skill = read(skillPath);
 

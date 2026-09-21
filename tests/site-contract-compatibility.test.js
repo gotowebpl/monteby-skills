@@ -134,8 +134,8 @@ test('site contract compatibility manifest requires the exact live contract with
       },
       compositionInstantiate: {
         minimumBuilderVersion: '1.6.0',
-        contractPath: 'authoring.capabilities.compositionInstantiate',
-        expectedValue: true,
+        contractPath: 'authoring.compositions.resources.instantiate',
+        valueType: 'object',
         optional: true,
         fallback: 'local-layout-kit-expansion',
       },
@@ -185,6 +185,7 @@ test('site contract compatibility manifest requires the exact live contract with
         minimumBuilderVersion: '1.6.0',
         contractPath: 'authoring.capabilities.abilities',
         expectedValue: true,
+        unavailableValue: false,
         optional: true,
         fallback: 'rest-only',
       },

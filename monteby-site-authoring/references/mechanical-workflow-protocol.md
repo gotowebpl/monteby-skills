@@ -99,12 +99,46 @@ the live contract's `layoutPersistence.resources`; never remember it.
 - On WordPress 6.9+ with `authoring.capabilities.abilities: true`, Builder
   registers the same operations as `monteby/*` abilities
   (`authoring.abilities.names`). They are an alternative transport for the
-  identical contract, gates and preconditions; the fallback is `rest-only`.
+  identical contract, gates and preconditions. A Builder 1.6 contract that
+  explicitly publishes `abilities: false` reports `feature_unavailable` and
+  uses the legal `rest-only` fallback; a missing or malformed value remains
+  `blocked_contract_inconsistency`.
 - Before using server composition planning or revision restore, require the
   `compositionPlan` or `revisionRestore` gate respectively. These gates verify
   the resource descriptors published by the current live contract; an absent
   restore descriptor falls back to an explicit versioned layout save and must
   never be replaced by a direct post-meta write.
+
+### Trusted request-scoped render filters
+
+The `renderLayoutFilter`, `renderGlobalStylesFilter` and
+`renderGlobalTemplateFilter` gates describe PHP integration seams, not an
+alternative authoring transport. Use them only inside trusted WordPress code
+that has already authenticated the request and checked the relevant edit or
+design capability. Scope every callback to one intended preview request and
+exact post, document type or template role; never enable one from an arbitrary
+public query parameter, cookie or page payload. Remove the callback after the
+request when the host process can outlive it.
+
+- `monteby/render/layout_json` may return a fully validated candidate JSON only
+  for the exact `(postId, documentType)` requested. It does not replace REST
+  layout reads or the editor document. Without `renderLayoutFilter`, use the
+  official REST preview and the versioned save flow; do not patch post meta.
+- `monteby/render/global_styles` may return a complete validated candidate only
+  for the intended `front`, `preview` or `editor` context. Ordinary authoring
+  should prefer the advertised `POST /monteby/v1/preview` `globalStyles`
+  candidate. Without `renderGlobalStylesFilter`, preview using stored styles
+  and report that the site-wide candidate could not be rendered.
+- `monteby/render/global_template_post_id` may select only an existing,
+  published template of the requested `header` or `footer` role. Without
+  `renderGlobalTemplateFilter`, retain the stored active selection; use
+  `previewGlobalTemplates` only to frame a document with that stored chrome.
+
+Candidate renders must not persist layouts, selections or styles. They bypass
+normal render/font-profile caches and must not populate them. A filtered public
+request is diagnostic evidence only: canonical completion still requires the
+approved versioned write, fresh read and saved WordPress/PHP render. If a gate
+is absent, use its named fallback and never install a remembered hook or route.
 
 ## Required inputs
 

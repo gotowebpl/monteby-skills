@@ -83,12 +83,14 @@ wybierz inną dostępną kompozycję lub zgłoś brak. Nie podstawiaj pustego po
 
 ### Rozwinięcie po stronie serwera (Builder ≥ 1.6)
 
-Sprawdź bramkę `compositionInstantiate` z
-`references/site-contract-compatibility.json`: `productVersion >= 1.6.0` i
-`authoring.capabilities.compositionInstantiate: true`. Wtedy serwer, a nie
-lokalny kit, jest źródłem prawdy dla identyfikatorów węzłów, odwołań do
-tokenów i reguł slotów. Adresy obu zasobów czytaj z
-`authoring.compositions.resources.{plan, instantiate}`; oba są tylko do
+Sprawdź odpowiednią bramkę z
+`references/site-contract-compatibility.json`: `compositionPlan` przed
+rozwinięciem całego planu albo `compositionInstantiate` przed rozwinięciem
+jednej receptury. Obie wymagają `productVersion >= 1.6.0` oraz właściwego
+deskryptora w `authoring.compositions.resources`; sama flaga capability nie
+autoryzuje zapamiętanego adresu. Wtedy serwer, a nie lokalny kit, jest źródłem
+prawdy dla identyfikatorów węzłów, odwołań do tokenów i reguł slotów. Adres
+zasobu czytaj z deskryptora, który przeszedł bramkę. Oba zasoby są tylko do
 odczytu (`edit_pages`, bez tokenu zapisu) i niczego nie zapisują.
 
 - `POST /wp-json/monteby/v1/compositions/plan { plan, postId? }` rozwija cały
@@ -129,7 +131,7 @@ i bramka „Zapis i ocena".
 ### Trasa offline: `layout-kit.mjs`
 
 Obowiązuje, gdy bramka nie jest dostępna (starszy Builder to
-`blocked_plugin_version`, Builder 1.6 bez flagi to
+`blocked_plugin_version`, Builder 1.6 bez właściwego deskryptora to
 `blocked_contract_inconsistency`) albo gdy pracujesz bez połączenia z witryną.
 Nie mieszaj obu tras w jednym zapisie: ID i tokeny z kitu nie muszą być równe
 serwerowym.
