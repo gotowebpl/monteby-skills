@@ -47,6 +47,7 @@
     },
     "contractLightProjection": {
       "minimumBuilderVersion": "1.6.0",
+      "minimumPrereleaseVersion": "1.6.0-rc.2",
       "contractMode": "light",
       "contractPath": "mode",
       "expectedValue": "light",
@@ -55,6 +56,7 @@
     },
     "contractDesignProjection": {
       "minimumBuilderVersion": "1.6.0",
+      "minimumPrereleaseVersion": "1.6.0-rc.2",
       "contractMode": "design",
       "contractPath": "mode",
       "expectedValue": "design",
@@ -63,6 +65,7 @@
     },
     "contractAuthoringProjection": {
       "minimumBuilderVersion": "1.6.0",
+      "minimumPrereleaseVersion": "1.6.0-rc.2",
       "contractMode": "authoring",
       "contractPath": "mode",
       "expectedValue": "authoring",
@@ -71,6 +74,7 @@
     },
     "contractCatalogsProjection": {
       "minimumBuilderVersion": "1.6.0",
+      "minimumPrereleaseVersion": "1.6.0-rc.2",
       "contractMode": "catalogs",
       "contractPath": "mode",
       "expectedValue": "catalogs",
@@ -79,6 +83,7 @@
     },
     "contractComponentsSummary": {
       "minimumBuilderVersion": "1.6.0",
+      "minimumPrereleaseVersion": "1.6.0-rc.2",
       "contractMode": "authoring-summary",
       "contractPath": "componentsMode",
       "expectedValue": "summary",
@@ -87,6 +92,7 @@
     },
     "annotatedRender": {
       "minimumBuilderVersion": "1.6.0",
+      "minimumPrereleaseVersion": "1.6.0-rc.2",
       "contractPath": "authoring.capabilities.annotatedRender",
       "expectedValue": true,
       "optional": true,
@@ -94,6 +100,7 @@
     },
     "renderLayoutFilter": {
       "minimumBuilderVersion": "1.6.0",
+      "minimumPrereleaseVersion": "1.6.0-rc.2",
       "contractPath": "authoring.capabilities.renderLayoutFilter",
       "expectedValue": true,
       "optional": true,
@@ -101,6 +108,7 @@
     },
     "renderGlobalStylesFilter": {
       "minimumBuilderVersion": "1.6.0",
+      "minimumPrereleaseVersion": "1.6.0-rc.2",
       "contractPath": "authoring.capabilities.renderGlobalStylesFilter",
       "expectedValue": true,
       "optional": true,
@@ -108,6 +116,7 @@
     },
     "renderGlobalTemplateFilter": {
       "minimumBuilderVersion": "1.6.0",
+      "minimumPrereleaseVersion": "1.6.0-rc.2",
       "contractPath": "authoring.capabilities.renderGlobalTemplateFilter",
       "expectedValue": true,
       "optional": true,
@@ -115,6 +124,7 @@
     },
     "previewGlobalTemplates": {
       "minimumBuilderVersion": "1.6.0",
+      "minimumPrereleaseVersion": "1.6.0-rc.2",
       "contractPath": "authoring.capabilities.previewGlobalTemplates",
       "expectedValue": true,
       "optional": true,
@@ -122,6 +132,7 @@
     },
     "compositionInstantiate": {
       "minimumBuilderVersion": "1.6.0",
+      "minimumPrereleaseVersion": "1.6.0-rc.2",
       "contractPath": "authoring.compositions.resources.instantiate",
       "valueType": "object",
       "optional": true,
@@ -129,6 +140,7 @@
     },
     "compositionPlan": {
       "minimumBuilderVersion": "1.6.0",
+      "minimumPrereleaseVersion": "1.6.0-rc.2",
       "contractPath": "authoring.compositions.resources.plan",
       "valueType": "object",
       "optional": true,
@@ -136,6 +148,7 @@
     },
     "revisionRestore": {
       "minimumBuilderVersion": "1.6.0",
+      "minimumPrereleaseVersion": "1.6.0-rc.2",
       "contractPath": "layoutPersistence.resources.restoreRevision",
       "valueType": "object",
       "optional": true,
@@ -143,6 +156,7 @@
     },
     "bulkCreate": {
       "minimumBuilderVersion": "1.6.0",
+      "minimumPrereleaseVersion": "1.6.0-rc.2",
       "contractPath": "layoutPersistence.resources.bulkCreate",
       "valueType": "object",
       "optional": true,
@@ -150,6 +164,7 @@
     },
     "globalStylesPatch": {
       "minimumBuilderVersion": "1.6.0",
+      "minimumPrereleaseVersion": "1.6.0-rc.2",
       "contractPath": "globalStyles.resource.patchMethod",
       "expectedValue": "PATCH",
       "optional": true,
@@ -157,6 +172,7 @@
     },
     "designProfiles": {
       "minimumBuilderVersion": "1.6.0",
+      "minimumPrereleaseVersion": "1.6.0-rc.2",
       "contractPath": "authoring.designProfiles.version",
       "expectedValue": 1,
       "optional": true,
@@ -164,6 +180,7 @@
     },
     "motionAuthoring": {
       "minimumBuilderVersion": "1.6.0",
+      "minimumPrereleaseVersion": "1.6.0-rc.2",
       "contractPath": "authoring.motion.version",
       "expectedValue": 1,
       "optional": true,
@@ -171,6 +188,7 @@
     },
     "motionRecipes": {
       "minimumBuilderVersion": "1.6.0",
+      "minimumPrereleaseVersion": "1.6.0-rc.2",
       "contractPath": "authoring.capabilities.motionRecipes",
       "expectedValue": true,
       "optional": true,
@@ -178,6 +196,7 @@
     },
     "contractComponent": {
       "minimumBuilderVersion": "1.6.0",
+      "minimumPrereleaseVersion": "1.6.0-rc.2",
       "contractPath": "layoutPersistence.resources.contractComponent",
       "valueType": "object",
       "optional": true,
@@ -185,6 +204,7 @@
     },
     "abilities": {
       "minimumBuilderVersion": "1.6.0",
+      "minimumPrereleaseVersion": "1.6.0-rc.2",
       "contractPath": "authoring.capabilities.abilities",
       "expectedValue": true,
       "unavailableValue": false,

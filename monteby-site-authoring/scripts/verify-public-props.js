@@ -45,10 +45,20 @@ function appliedPropExpectations({ operations: rawOperations, before, saved, pre
       || report.evidence?.candidateLayoutSha256 !== savedDigest || report.response?.candidateLayoutSha256 !== savedDigest
       || report.layoutSha256 !== savedDigest) throw new Error('prop_patch_binding_invalid');
   }
-  if (preflight.evidence.postModifiedGmt !== before.data.postModifiedGmt
+  for (const [evidence, currentKey, legacyKey, expected] of [
+    [preflight.evidence, 'versionToken', 'postModifiedGmt', before.data.postModifiedGmt],
+    [applied.evidence, 'previousVersionToken', 'previousPostModifiedGmt', before.data.postModifiedGmt],
+    [applied.evidence, 'versionToken', 'postModifiedGmt', saved.data.postModifiedGmt],
+  ]) {
+    const current = Object.hasOwn(evidence, 'versionField') || Object.hasOwn(evidence, currentKey);
+    if ((current && (evidence.versionField !== 'postModifiedGmt' || evidence[currentKey] !== expected))
+      || (!current && evidence[legacyKey] !== expected)
+      || (Object.hasOwn(evidence, legacyKey) && evidence[legacyKey] !== expected)) {
+      throw new Error('prop_patch_revision_invalid');
+    }
+  }
+  if ((contract?.layoutPersistence?.versionField !== undefined && contract.layoutPersistence.versionField !== 'postModifiedGmt')
     || preflight.response?.postModifiedGmt !== before.data.postModifiedGmt
-    || applied.evidence.previousPostModifiedGmt !== before.data.postModifiedGmt
-    || applied.evidence.postModifiedGmt !== saved.data.postModifiedGmt
     || applied.response?.postModifiedGmt !== saved.data.postModifiedGmt
     || Date.parse(saved.capturedAt) < Date.parse(before.capturedAt)) throw new Error('prop_patch_revision_invalid');
   for (const digest of [preflight.evidence.compiledHtmlSha256, preflight.response?.compiledHtmlSha256, applied.response?.compiledHtmlSha256]) {
@@ -56,6 +66,10 @@ function appliedPropExpectations({ operations: rawOperations, before, saved, pre
   }
   if (preflight.response.compiledHtmlSha256 !== preflight.evidence.compiledHtmlSha256
     || applied.response.compiledHtmlSha256 !== preflight.response.compiledHtmlSha256) throw new Error('prop_compiled_html_render_drift');
+  const compiledDigestScope = contract?.layoutPersistence?.operations?.compiledDigestScope;
+  if ((compiledDigestScope !== undefined && compiledDigestScope !== 'core-static-render-v1')
+    || preflight.response.compiledDigestScope !== compiledDigestScope
+    || applied.response.compiledDigestScope !== compiledDigestScope) throw new Error('prop_compiled_html_scope_invalid');
   const nodeMap = JSON.parse(saved.data.builderJson);
   if (!record(nodeMap?.ROOT) || !isDeepStrictEqual(preflight.response?.layout, nodeMap)
     || (applied.response?.builderJson !== undefined && applied.response.builderJson !== saved.data.builderJson)) throw new Error('prop_saved_payload_mismatch');
@@ -153,7 +167,8 @@ function appliedPropExpectations({ operations: rawOperations, before, saved, pre
       operationsDigestFormat: 'sha256:canonical-json', beforeSnapshotSha256: snapshotDigest,
       savedSnapshotSha256: canonicalSha256(saved), snapshotDigestFormat: 'sha256:canonical-json',
       candidateLayoutSha256: savedDigest, candidateDigestFormat: 'sha256:utf8-builderJson', contractSha256: canonicalSha256(contract),
-      compiledHtmlSha256: applied.response.compiledHtmlSha256, compiledHtmlDigestFormat: 'sha256:utf8-compiled-html' } };
+      compiledHtmlSha256: applied.response.compiledHtmlSha256, compiledHtmlDigestFormat: 'sha256:utf8-compiled-html',
+      ...(compiledDigestScope === undefined ? {} : { compiledDigestScope }) } };
 }
 
 function normalizedText(value) {

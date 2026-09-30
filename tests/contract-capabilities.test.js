@@ -6,6 +6,7 @@ const manifest = require('../monteby-site-authoring/references/site-contract-com
 const {
   compareVersions,
   evaluateFeatureGate,
+  satisfiesBuilderVersion,
 } = require('../monteby-site-authoring/scripts/contract-capabilities');
 
 test('semantic version comparison is deterministic for stable and prerelease values', () => {
@@ -14,6 +15,49 @@ test('semantic version comparison is deterministic for stable and prerelease val
   assert.equal(compareVersions('1.3.8', '1.3.9'), -1);
   assert.equal(compareVersions('1.4.0-beta.1', '1.4.0'), -1);
   assert.equal(compareVersions('dev-main', '1.4.0'), null);
+});
+
+test('semantic prerelease precedence uses numeric identifiers and ignores build metadata', () => {
+  const ordered = ['1.6.0-alpha', '1.6.0-alpha.1', '1.6.0-alpha.beta', '1.6.0-beta', '1.6.0-beta.2', '1.6.0-beta.11', '1.6.0-rc.1', '1.6.0-rc.2', '1.6.0-rc.10', '1.6.0'];
+  for (let index = 1; index < ordered.length; index += 1) {
+    assert.equal(compareVersions(ordered[index - 1], ordered[index]), -1);
+    assert.equal(compareVersions(ordered[index], ordered[index - 1]), 1);
+  }
+  assert.equal(compareVersions('1.6.0-rc.2+sha.42', '1.6.0-rc.2+sha.09'), 0);
+  assert.equal(compareVersions('1.6.0+build.1', '1.6.0'), 0);
+  for (const invalid of ['01.6.0', '1.06.0', '1.6.00', '1.6.0-rc.02', '1.6.0-rc..2', '1.6.0-', '1.6.0+', '1.6.0+a..b', ' 1.6.0', '1.6.0 ', 123, null]) {
+    assert.equal(compareVersions(invalid, '1.6.0'), null, String(invalid));
+  }
+});
+
+test('explicit prerelease floors are scoped to the same release and fail closed when invalid', () => {
+  for (const version of ['1.6.0-rc.2', '1.6.0-rc.10', '1.6.0-rc.2+sha.42', '1.6.0', '1.6.1']) {
+    assert.equal(satisfiesBuilderVersion(version, '1.6.0', '1.6.0-rc.2'), true, version);
+  }
+  for (const version of ['1.6.0-rc.1', '1.6.0-beta.9', '1.5.9-rc.99', '1.5.9']) {
+    assert.equal(satisfiesBuilderVersion(version, '1.6.0', '1.6.0-rc.2'), false, version);
+  }
+  assert.equal(satisfiesBuilderVersion('1.6.0-rc.2', '1.6.0'), false);
+  assert.equal(satisfiesBuilderVersion('1.6.0-rc.2', '1.5.0'), true);
+  for (const floor of [null, '', 'dev-main', '1.6.0', '1.6.0-rc.02', '1.5.0-rc.2', '1.7.0-rc.2']) {
+    assert.equal(satisfiesBuilderVersion('1.6.0', '1.6.0', floor), null, String(floor));
+  }
+  assert.equal(satisfiesBuilderVersion('1.6.0', 'invalid'), null);
+  assert.equal(satisfiesBuilderVersion('invalid', '1.6.0'), null);
+});
+
+test('release candidate admission never substitutes for the advertised live capability', () => {
+  for (const version of ['1.6.0-rc.2', '1.6.0-rc.10']) {
+    assert.equal(evaluateFeatureGate({ productVersion: version, globalStyles: { resource: { patchMethod: 'PATCH' } } }, 'globalStylesPatch', manifest).ok, true);
+    assert.equal(evaluateFeatureGate({ productVersion: version }, 'globalStylesPatch', manifest).code, 'blocked_contract_inconsistency');
+    assert.equal(evaluateFeatureGate({ productVersion: version, globalStyles: { resource: { patchMethod: 'PUT' } } }, 'globalStylesPatch', manifest).code, 'blocked_contract_inconsistency');
+  }
+  for (const version of ['1.6.0-rc.1', '1.6.0-beta.9', '1.5.9-rc.2']) {
+    assert.equal(evaluateFeatureGate({ productVersion: version, globalStyles: { resource: { patchMethod: 'PATCH' } } }, 'globalStylesPatch', manifest).code, 'blocked_plugin_version');
+  }
+  const malformed = structuredClone(manifest);
+  malformed.featureGates.globalStylesPatch.minimumPrereleaseVersion = '1.7.0-rc.2';
+  assert.equal(evaluateFeatureGate({ productVersion: '1.6.0' }, 'globalStylesPatch', malformed).code, 'blocked_contract_inconsistency');
 });
 
 test('feature gate distinguishes plugin version and contract inconsistency', () => {
@@ -83,14 +127,16 @@ test('design profile gate requires Builder 1.6.0 and the declared live profile v
 });
 
 test('motion authoring requires both the versioned recipe catalog and advertised capability', () => {
-  const contract = {
-    productVersion: '1.6.0',
-    authoring: { capabilities: { motionRecipes: true }, motion: { version: 1 } },
-  };
-  assert.equal(evaluateFeatureGate(contract, 'motionAuthoring', manifest).ok, true);
-  assert.equal(evaluateFeatureGate(contract, 'motionRecipes', manifest).ok, true);
-  contract.authoring.capabilities.motionRecipes = false;
-  assert.equal(evaluateFeatureGate(contract, 'motionRecipes', manifest).code, 'blocked_contract_inconsistency');
+  for (const productVersion of ['1.6.0-rc.2', '1.6.0-rc.10', '1.6.0']) {
+    const contract = {
+      productVersion,
+      authoring: { capabilities: { motionRecipes: true }, motion: { version: 1 } },
+    };
+    assert.equal(evaluateFeatureGate(contract, 'motionAuthoring', manifest).ok, true);
+    assert.equal(evaluateFeatureGate(contract, 'motionRecipes', manifest).ok, true);
+    contract.authoring.capabilities.motionRecipes = false;
+    assert.equal(evaluateFeatureGate(contract, 'motionRecipes', manifest).code, 'blocked_contract_inconsistency');
+  }
 });
 
 test('contract projection gates validate the response that was actually requested', () => {
@@ -168,6 +214,7 @@ test('every Builder 1.6 gate is optional, names a fallback, and blocks older plu
   for (const name of gates) {
     const gate = manifest.featureGates[name];
     assert.equal(gate.minimumBuilderVersion, '1.6.0', `${name} minimum`);
+    assert.equal(gate.minimumPrereleaseVersion, '1.6.0-rc.2', `${name} prerelease floor`);
     assert.equal(gate.optional, true, `${name} optional`);
     assert.match(gate.fallback, /^[a-z][a-z0-9-]+$/, `${name} fallback slug`);
     assert.equal(evaluateFeatureGate({ productVersion: '1.5.3' }, name, manifest).code, 'blocked_plugin_version');

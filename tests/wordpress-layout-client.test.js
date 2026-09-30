@@ -23,6 +23,7 @@ const {
   portableDigestBytes,
   pruneNoopOperations,
 } = require(CLIENT);
+const { appliedPropExpectations } = require('../monteby-site-authoring/scripts/verify-public-props');
 const AUTH = 'Basic dGVzdDpzZWNyZXQ=';
 const NODE_MAP = {
   ROOT: {
@@ -1964,6 +1965,99 @@ test('patch workflows reject ambiguous routes and colliding proof fields before 
     assert.equal(requestCount, 1);
     assert.deepEqual(server.errors, []);
   }
+});
+
+test('canonical client patch reports feed public prop proof with exact revisions and static digest scope', async (t) => {
+  const directory = tempDir(t);
+  const operations = [{ type: 'update_props', nodeId: 'heading', props: { fontSize: '48px' } }];
+  const beforeLayout = structuredClone(NODE_MAP);
+  beforeLayout['section-1'].nodes = ['heading'];
+  beforeLayout.heading = { type: { resolvedName: 'Heading' }, parent: 'section-1', nodes: [], props: { text: 'Canonical heading', fontSize: '24px' } };
+  const candidateLayout = structuredClone(beforeLayout);
+  candidateLayout.heading.props.fontSize = '48px';
+  const candidateDigest = nodeMapSha256(candidateLayout);
+  const contract = patchContract();
+  contract.components = [{ name: 'Heading', props: ['text', 'fontSize'] }];
+  contract.layoutPersistence.operations.compiledDigestScope = 'core-static-render-v1';
+  let appliedOnce = false;
+  const server = await startServer(t, async (request, response) => {
+    if (request.url.endsWith('/contract')) return sendJson(response, 200, contract);
+    if (request.method === 'GET') {
+      const nodeMap = appliedOnce ? candidateLayout : beforeLayout;
+      return sendJson(response, 200, layoutResponse(server.site, 17, appliedOnce ? 'v2' : 'v1', nodeMap, { builderJson: JSON.stringify(nodeMap) }));
+    }
+    const body = await readBody(request);
+    assert.deepEqual(body.operations, operations);
+    const evidence = {
+      operationsSha256: operationsSha256(operations), operationCount: 1,
+      candidateLayoutSha256: candidateDigest, compiledHtmlSha256: 'a'.repeat(64),
+      compiledDigestScope: 'core-static-render-v1',
+    };
+    if (request.url.endsWith('/validate')) {
+      return sendJson(response, 200, { ...evidence, valid: true, currentLayoutSha256: nodeMapSha256(beforeLayout), postModifiedGmt: 'v1', layout: candidateLayout });
+    }
+    assert.equal(appliedOnce, false);
+    assert.equal(body.expectedModifiedGmt, 'v1');
+    assert.equal(body.expectedLayoutSha256, nodeMapSha256(beforeLayout));
+    assert.equal(body.expectedCandidateSha256, candidateDigest);
+    assert.equal(body.expectedCompiledHtmlSha256, 'a'.repeat(64));
+    appliedOnce = true;
+    return sendJson(response, 200, {
+      ...evidence, ...layoutResponse(server.site, 17, 'v2', candidateLayout),
+      saved: true, builderJson: JSON.stringify(candidateLayout),
+    });
+  });
+  const snapshotRun = await runClient(['snapshot', '--site', server.site, '--page-id', '17', '--out-dir', path.join(directory, 'before')]);
+  assertEnvelope(snapshotRun.result, { ok: true, stage: 'snapshot', code: 'SNAPSHOT_OK' });
+  const snapshotFile = snapshotRun.result.artifacts.snapshot;
+  const before = JSON.parse(fs.readFileSync(snapshotFile, 'utf8'));
+  const operationsFile = path.join(directory, 'operations.json');
+  writeJson(operationsFile, operations);
+  const reportFile = path.join(directory, 'preflight.json');
+  const preflightRun = await runClient(['patch-validate', '--site', server.site, '--page-id', '17',
+    '--snapshot', snapshotFile, '--operations', operationsFile, '--out', reportFile]);
+  assertEnvelope(preflightRun.result, { ok: true, stage: 'patch-validate', code: 'PATCH_VALIDATION_OK' });
+  const applyRun = await runClient(preflightRun.result.nextAction.args);
+  assertEnvelope(applyRun.result, { ok: true, stage: 'patch-save', code: 'PATCH_SAVE_OK' });
+  const savedRun = await runClient(applyRun.result.nextAction.args);
+  assertEnvelope(savedRun.result, { ok: true, stage: 'snapshot', code: 'SNAPSHOT_OK' });
+  const saved = JSON.parse(fs.readFileSync(savedRun.result.artifacts.snapshot, 'utf8'));
+  const input = { operations, before, saved, preflight: preflightRun.result, applied: applyRun.result, contract, publicPageUrl: before.publicPageUrl };
+  assert.equal(input.preflight.evidence.versionToken, 'v1');
+  assert.equal(input.applied.evidence.previousVersionToken, 'v1');
+  assert.equal(input.applied.evidence.versionToken, 'v2');
+  assert.equal(Object.hasOwn(input.preflight.evidence, 'postModifiedGmt'), false);
+  assert.equal(Object.hasOwn(input.applied.evidence, 'previousPostModifiedGmt'), false);
+  const proof = appliedPropExpectations(input);
+  assert.deepEqual(proof.blockers, []);
+  assert.equal(proof.expectations.length, 3);
+  assert.equal(proof.bindings.compiledDigestScope, 'core-static-render-v1');
+  for (const mutate of [
+    (f) => { f.preflight.evidence.versionToken = 'stale'; },
+    (f) => { f.preflight.evidence.versionField = 'wrong'; },
+    (f) => { delete f.preflight.evidence.versionField; },
+    (f) => { f.preflight.evidence.postModifiedGmt = 'conflicting'; },
+    (f) => { f.applied.evidence.previousVersionToken = 'stale'; },
+    (f) => { f.applied.evidence.previousPostModifiedGmt = 'conflicting'; },
+    (f) => { f.applied.evidence.versionToken = 'stale'; },
+    (f) => { f.applied.evidence.postModifiedGmt = 'conflicting'; },
+    (f) => { f.applied.evidence.versionField = 'wrong'; },
+    (f) => { delete f.applied.evidence.versionToken; },
+    (f) => { delete f.applied.evidence.previousVersionToken; },
+    (f) => { f.contract.layoutPersistence.versionField = 'wrong'; },
+    (f) => { f.preflight.response.compiledDigestScope = 'wordpress-render'; },
+    (f) => { delete f.applied.response.compiledDigestScope; },
+    (f) => { f.contract.layoutPersistence.operations.compiledDigestScope = 'unknown'; },
+  ]) {
+    const changed = structuredClone(input);
+    mutate(changed);
+    assert.throws(() => appliedPropExpectations(changed), /prop_patch_revision_invalid|prop_compiled_html_scope_invalid/);
+  }
+  input.preflight.evidence.postModifiedGmt = 'v1';
+  input.applied.evidence.previousPostModifiedGmt = 'v1';
+  input.applied.evidence.postModifiedGmt = 'v2';
+  assert.deepEqual(appliedPropExpectations(input).blockers, []);
+  assert.deepEqual(server.errors, []);
 });
 
 test('patch-save accepts a same-token change only with exact candidate, compiled, and readback proof', async (t) => {

@@ -64,6 +64,7 @@ test('site contract compatibility manifest requires the exact live contract with
       },
       contractLightProjection: {
         minimumBuilderVersion: '1.6.0',
+        minimumPrereleaseVersion: '1.6.0-rc.2',
         contractMode: 'light',
         contractPath: 'mode',
         expectedValue: 'light',
@@ -72,6 +73,7 @@ test('site contract compatibility manifest requires the exact live contract with
       },
       contractDesignProjection: {
         minimumBuilderVersion: '1.6.0',
+        minimumPrereleaseVersion: '1.6.0-rc.2',
         contractMode: 'design',
         contractPath: 'mode',
         expectedValue: 'design',
@@ -80,6 +82,7 @@ test('site contract compatibility manifest requires the exact live contract with
       },
       contractAuthoringProjection: {
         minimumBuilderVersion: '1.6.0',
+        minimumPrereleaseVersion: '1.6.0-rc.2',
         contractMode: 'authoring',
         contractPath: 'mode',
         expectedValue: 'authoring',
@@ -88,6 +91,7 @@ test('site contract compatibility manifest requires the exact live contract with
       },
       contractCatalogsProjection: {
         minimumBuilderVersion: '1.6.0',
+        minimumPrereleaseVersion: '1.6.0-rc.2',
         contractMode: 'catalogs',
         contractPath: 'mode',
         expectedValue: 'catalogs',
@@ -96,6 +100,7 @@ test('site contract compatibility manifest requires the exact live contract with
       },
       contractComponentsSummary: {
         minimumBuilderVersion: '1.6.0',
+        minimumPrereleaseVersion: '1.6.0-rc.2',
         contractMode: 'authoring-summary',
         contractPath: 'componentsMode',
         expectedValue: 'summary',
@@ -104,6 +109,7 @@ test('site contract compatibility manifest requires the exact live contract with
       },
       annotatedRender: {
         minimumBuilderVersion: '1.6.0',
+        minimumPrereleaseVersion: '1.6.0-rc.2',
         contractPath: 'authoring.capabilities.annotatedRender',
         expectedValue: true,
         optional: true,
@@ -111,6 +117,7 @@ test('site contract compatibility manifest requires the exact live contract with
       },
       renderLayoutFilter: {
         minimumBuilderVersion: '1.6.0',
+        minimumPrereleaseVersion: '1.6.0-rc.2',
         contractPath: 'authoring.capabilities.renderLayoutFilter',
         expectedValue: true,
         optional: true,
@@ -118,6 +125,7 @@ test('site contract compatibility manifest requires the exact live contract with
       },
       renderGlobalStylesFilter: {
         minimumBuilderVersion: '1.6.0',
+        minimumPrereleaseVersion: '1.6.0-rc.2',
         contractPath: 'authoring.capabilities.renderGlobalStylesFilter',
         expectedValue: true,
         optional: true,
@@ -125,6 +133,7 @@ test('site contract compatibility manifest requires the exact live contract with
       },
       renderGlobalTemplateFilter: {
         minimumBuilderVersion: '1.6.0',
+        minimumPrereleaseVersion: '1.6.0-rc.2',
         contractPath: 'authoring.capabilities.renderGlobalTemplateFilter',
         expectedValue: true,
         optional: true,
@@ -132,6 +141,7 @@ test('site contract compatibility manifest requires the exact live contract with
       },
       previewGlobalTemplates: {
         minimumBuilderVersion: '1.6.0',
+        minimumPrereleaseVersion: '1.6.0-rc.2',
         contractPath: 'authoring.capabilities.previewGlobalTemplates',
         expectedValue: true,
         optional: true,
@@ -139,6 +149,7 @@ test('site contract compatibility manifest requires the exact live contract with
       },
       compositionInstantiate: {
         minimumBuilderVersion: '1.6.0',
+        minimumPrereleaseVersion: '1.6.0-rc.2',
         contractPath: 'authoring.compositions.resources.instantiate',
         valueType: 'object',
         optional: true,
@@ -146,6 +157,7 @@ test('site contract compatibility manifest requires the exact live contract with
       },
       compositionPlan: {
         minimumBuilderVersion: '1.6.0',
+        minimumPrereleaseVersion: '1.6.0-rc.2',
         contractPath: 'authoring.compositions.resources.plan',
         valueType: 'object',
         optional: true,
@@ -153,6 +165,7 @@ test('site contract compatibility manifest requires the exact live contract with
       },
       revisionRestore: {
         minimumBuilderVersion: '1.6.0',
+        minimumPrereleaseVersion: '1.6.0-rc.2',
         contractPath: 'layoutPersistence.resources.restoreRevision',
         valueType: 'object',
         optional: true,
@@ -160,6 +173,7 @@ test('site contract compatibility manifest requires the exact live contract with
       },
       bulkCreate: {
         minimumBuilderVersion: '1.6.0',
+        minimumPrereleaseVersion: '1.6.0-rc.2',
         contractPath: 'layoutPersistence.resources.bulkCreate',
         valueType: 'object',
         optional: true,
@@ -167,6 +181,7 @@ test('site contract compatibility manifest requires the exact live contract with
       },
       globalStylesPatch: {
         minimumBuilderVersion: '1.6.0',
+        minimumPrereleaseVersion: '1.6.0-rc.2',
         contractPath: 'globalStyles.resource.patchMethod',
         expectedValue: 'PATCH',
         optional: true,
@@ -174,6 +189,7 @@ test('site contract compatibility manifest requires the exact live contract with
       },
       designProfiles: {
         minimumBuilderVersion: '1.6.0',
+        minimumPrereleaseVersion: '1.6.0-rc.2',
         contractPath: 'authoring.designProfiles.version',
         expectedValue: 1,
         optional: true,
@@ -181,6 +197,7 @@ test('site contract compatibility manifest requires the exact live contract with
       },
       motionAuthoring: {
         minimumBuilderVersion: '1.6.0',
+        minimumPrereleaseVersion: '1.6.0-rc.2',
         contractPath: 'authoring.motion.version',
         expectedValue: 1,
         optional: true,
@@ -188,6 +205,7 @@ test('site contract compatibility manifest requires the exact live contract with
       },
       motionRecipes: {
         minimumBuilderVersion: '1.6.0',
+        minimumPrereleaseVersion: '1.6.0-rc.2',
         contractPath: 'authoring.capabilities.motionRecipes',
         expectedValue: true,
         optional: true,
@@ -195,6 +213,7 @@ test('site contract compatibility manifest requires the exact live contract with
       },
       contractComponent: {
         minimumBuilderVersion: '1.6.0',
+        minimumPrereleaseVersion: '1.6.0-rc.2',
         contractPath: 'layoutPersistence.resources.contractComponent',
         valueType: 'object',
         optional: true,
@@ -202,6 +221,7 @@ test('site contract compatibility manifest requires the exact live contract with
       },
       abilities: {
         minimumBuilderVersion: '1.6.0',
+        minimumPrereleaseVersion: '1.6.0-rc.2',
         contractPath: 'authoring.capabilities.abilities',
         expectedValue: true,
         unavailableValue: false,
