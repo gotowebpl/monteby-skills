@@ -1,6 +1,7 @@
 'use strict';
 
 const { buildResolvedMotionProfile } = require('./motion-contract');
+const { buildControlIndex, normalizeControlValue, publishedControlReferences } = require('./control-contract');
 
 const SAFE_ID_PATTERN = /^[a-z0-9_-]+$/;
 const COLOR_PROP_PATTERN = /(?:^|(?:background|border|button|input|label|text|accent|focus|checkbox))color$/i;
@@ -219,12 +220,55 @@ function buildResolvedDesignProfile(contract, projectTokens = {}) {
     tokens[key] = { key, value, reference, source: 'projectTokens' };
   }
 
+  const presets = typographyPresets(globalStyles, projectTokens);
+  const typographyBindings = {};
+  const rejectedTypographyBindings = [];
+  const publishedTypography = contract?.designTokens?.version === 1 && isRecord(contract.designTokens.typographyBindings)
+    ? contract.designTokens.typographyBindings : {};
+  const controls = buildControlIndex(contract || {});
+  const components = contractComponents(contract);
+  for (const [component, bindings] of Object.entries(publishedTypography)) {
+    if (!isRecord(bindings)) continue;
+    const definition = components.find((entry) => entry.name === component);
+    for (const [prop, binding] of Object.entries(bindings)) {
+      const control = controls.get(`${component}.${prop}`);
+      if (!isRecord(binding) || Object.keys(binding).length !== 3
+        || !['body', 'button'].includes(binding.preset)
+        || !['font-family', 'font-size', 'font-weight', 'line-height'].includes(binding.field)
+        || binding.reference !== `var(--gcb-typo-${binding.preset}-${binding.field})`
+        || !isRecord(globalStyles.typography?.presets?.[binding.preset])
+        || !Array.isArray(definition?.aiProps) || !definition.aiProps.includes(prop)
+        || !control) {
+        rejectedTypographyBindings.push({ component, prop, reason: 'unpublished-typography-binding' });
+        continue;
+      }
+      const references = publishedControlReferences(contract, component, prop, control);
+      if (!references.has(binding.reference)) {
+        rejectedTypographyBindings.push({ component, prop, reason: 'unpublished-typography-reference' });
+        continue;
+      }
+      const preset = presets[binding.preset];
+      const field = binding.field.replace(/-([a-z])/gu, (_, letter) => letter.toUpperCase());
+      const value = preset?.source === 'projectTokens' && stringValue(preset[field])
+        ? preset[field] : binding.reference;
+      const normalized = normalizeControlValue(control, value, references);
+      if (!normalized.accepted || normalized.changed) {
+        rejectedTypographyBindings.push({ component, prop, reason: 'invalid-typography-control-value' });
+        continue;
+      }
+      typographyBindings[component] ||= {};
+      typographyBindings[component][prop] = { ...binding, value: normalized.value };
+    }
+  }
+
   return {
     version: 1,
     tokens,
     bindings: normalizedBindings(contract?.designTokens?.bindings),
     layout: isRecord(contract?.designTokens?.layout) ? { ...contract.designTokens.layout } : {},
-    typographyPresets: typographyPresets(globalStyles, projectTokens),
+    typographyPresets: presets,
+    typographyBindings,
+    rejectedTypographyBindings,
     componentProps: componentProps(contract),
     motion: buildResolvedMotionProfile(contract),
     conflicts,
@@ -277,6 +321,11 @@ function applyResolvedDesignDefaults(component, props, profile, semanticRole = '
     ) continue;
     const reference = tokenReference(profile, tokenKey);
     if (reference) resolved[prop] = reference;
+  }
+  for (const [prop, binding] of Object.entries(profile?.typographyBindings?.[component] || {})) {
+    if (allowedProps.has(prop) && (resolved[prop] === undefined || resolved[prop] === null || resolved[prop] === '')) {
+      resolved[prop] = binding.value;
+    }
   }
 
   const preset = cleanId(resolved.typographyPreset) || semanticPreset(component, resolved, semanticRole);

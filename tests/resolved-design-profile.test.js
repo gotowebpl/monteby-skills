@@ -237,6 +237,72 @@ test('layout-kit consumes the same resolvedDesignProfile and preserves local ove
   assert.equal(explicitMap[explicit].props.innerPaddingXMobile, '0px');
 });
 
+test('published Form typography bindings share resolver and Kit defaults without inventing legacy references', async () => {
+  const current = contract();
+  current.fontCatalog = {
+    version: 1, system: { Georgia: 'Georgia, serif' }, google: {},
+    local: { choices: [{ label: 'Project Sans', value: 'Project Sans' }], faces: {} },
+  };
+  const form = current.components.find((entry) => entry.name === 'FormBlock');
+  const bindings = {};
+  form.controls = [];
+  for (const [prefix, preset] of [['label', 'body'], ['input', 'body'], ['button', 'button']]) {
+    for (const [suffix, field, type] of [
+      ['FontFamily', 'font-family', 'font-picker'], ['FontSize', 'font-size', 'text'],
+      ['FontWeight', 'font-weight', 'text'], ['LineHeight', 'line-height', 'text'],
+    ]) {
+      const prop = `${prefix}${suffix}`;
+      form.props.push(prop);
+      form.aiProps.push(prop);
+      form.controls.push({ prop, type });
+      bindings[prop] = { preset, field, reference: `var(--gcb-typo-${preset}-${field})` };
+    }
+  }
+  current.designTokens.typographyBindings = { FormBlock: bindings };
+  current.designTokens.tokens['buttons.weight'] = {
+    value: '650', cssVariable: '--monteby-token-buttons-weight', reference: 'var(--monteby-token-buttons-weight)',
+  };
+  current.designTokens.bindings.FormBlock.buttonFontWeight = 'buttons.weight';
+  const profile = buildResolvedDesignProfile(current);
+  const resolved = applyResolvedDesignDefaults('FormBlock', { fields: [] }, profile);
+  for (const [prop, binding] of Object.entries(bindings)) {
+    assert.equal(resolved[prop], prop === 'buttonFontWeight' ? 'var(--monteby-token-buttons-weight)' : binding.reference);
+  }
+  assert.deepEqual(profile.rejectedTypographyBindings, []);
+  const { Kit } = await import(path.join(scripts, 'layout-kit.mjs'));
+  const kit = new Kit(current);
+  const id = kit.node('FormBlock', { fields: [], labelFontFamily: 'Georgia', inputLineHeight: '1.85' });
+  assert.deepEqual(kit.nodes[id].props, { ...resolved, labelFontFamily: 'Georgia', inputLineHeight: '1.85' });
+  assert.deepEqual(applyResolvedDesignDefaults('FormBlock', { labelFontSize: 0 }, profile).labelFontSize, 0);
+  const project = buildResolvedDesignProfile(current, { typography: { presets: { body: { fontFamily: 'Project Sans', lineHeight: '1.9' } } } });
+  assert.equal(applyResolvedDesignDefaults('FormBlock', {}, project).labelFontFamily, 'Project Sans');
+  assert.equal(applyResolvedDesignDefaults('FormBlock', {}, project).inputLineHeight, '1.9');
+  delete current.designTokens.typographyBindings;
+  const legacy = applyResolvedDesignDefaults('FormBlock', { labelFontFamily: 'Georgia' }, buildResolvedDesignProfile(current));
+  assert.equal(legacy.labelFontFamily, 'Georgia');
+  assert.equal(legacy.inputFontFamily, undefined);
+  assert.equal(legacy.buttonFontWeight, 'var(--monteby-token-buttons-weight)');
+
+  for (const [scenario, invalid] of [
+    ['unknown variable', { ...bindings.labelFontFamily, reference: 'var(--unpublished-font)' }],
+    ['unpublished preset', { preset: 'unpublished', field: 'font-family', reference: 'var(--gcb-typo-unpublished-font-family)' }],
+    ['wrong field for prop', { preset: 'body', field: 'font-size', reference: 'var(--gcb-typo-body-font-size)' }],
+    ['unknown field', { preset: 'body', field: 'arbitrary', reference: 'var(--gcb-typo-body-arbitrary)' }],
+  ]) {
+    current.designTokens.typographyBindings = { FormBlock: { labelFontFamily: invalid } };
+    const rejected = buildResolvedDesignProfile(current);
+    assert.equal(applyResolvedDesignDefaults('FormBlock', {}, rejected).labelFontFamily, undefined, scenario);
+    assert.equal(rejected.rejectedTypographyBindings.length, 1, scenario);
+  }
+  current.designTokens.typographyBindings = { FormBlock: { labelFontFamily: bindings.labelFontFamily } };
+  form.aiProps = form.aiProps.filter((prop) => prop !== 'labelFontFamily');
+  assert.equal(applyResolvedDesignDefaults('FormBlock', {}, buildResolvedDesignProfile(current)).labelFontFamily, undefined);
+  const guardedKit = new Kit(current);
+  const invalidId = guardedKit.node('FormBlock', { inputFontFamily: 'var(--unpublished-font)' });
+  assert.equal(guardedKit.nodes[invalidId].props.inputFontFamily, undefined);
+  assert.ok(guardedKit.notes.some((note) => /inputFontFamily/u.test(note)));
+});
+
 test('normalization reports literals and relinks only an explicit exact match repair', () => {
   const directory = temporaryDirectory();
   const contractPath = path.join(directory, 'contract.json');

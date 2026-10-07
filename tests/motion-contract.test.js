@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { createHash } = require('node:crypto');
 const { spawnSync } = require('node:child_process');
 const test = require('node:test');
 
@@ -13,6 +14,7 @@ const {
   buildMotionPlanBindings,
   buildResolvedMotionProfile,
   motionSignature,
+  orderedNodeIds,
   recipeForNode,
 } = require('../monteby-site-authoring/scripts/motion-contract');
 const { buildResolvedDesignProfile } = require('../monteby-site-authoring/scripts/resolved-design-profile');
@@ -363,6 +365,51 @@ test('semantic motion plan is deterministic, source-bound, and uses exact live r
   assert.deepEqual(secondLayout, nodeMap);
 });
 
+test('linked motion owners retain deterministic targeting, first-band scope, signatures and budgets', () => {
+  const nodeMap = layout();
+  nodeMap['section-1'].nodes = ['button-1'];
+  nodeMap['section-1'].linkedNodes = { overlay: 'overlay' };
+  nodeMap.overlay = {
+    type: { resolvedName: 'Container' }, isCanvas: true, props: {}, parent: 'section-1', nodes: ['button-2'],
+  };
+  nodeMap['button-2'].parent = 'overlay';
+  const profile = buildResolvedMotionProfile(contract());
+  const plan = explicitMotionPlan([{
+    recipeId: 'magnetic-cta', intent: 'pointer', firstViewport: true,
+    target: { component: 'ButtonBlock', occurrence: 1 },
+  }]);
+  const result = applySemanticMotionPlan(nodeMap, profile, plan, explicitMotionEvidence());
+  assert.deepEqual(result.rejected, []);
+  assert.equal(result.applied[0].nodeId, 'button-2');
+  assert.equal(result.applied[0].viewportScope, 'first-band');
+  assert.deepEqual(motionSignature(nodeMap, profile), [{
+    nodeId: 'button-2', component: 'ButtonBlock', props: { pointerEffect: 'magnetic', pointerStrength: 12 },
+  }]);
+  assert.equal(auditMotionLayout(nodeMap, profile).stats.pointerEffects, 1);
+
+  Object.assign(nodeMap['button-1'].props, profile.recipeById.get('magnetic-cta').props);
+  const audit = auditMotionLayout(nodeMap, profile);
+  assert.equal(audit.stats.pointerEffects, 2);
+  assert.equal(audit.errors.some((entry) => entry.code === 'motion_pointer_budget_exceeded'), true);
+  delete nodeMap['button-2'].props.pointerEffect;
+  delete nodeMap['button-2'].props.pointerStrength;
+  const before = structuredClone(nodeMap);
+  const excess = applySemanticMotionPlan(nodeMap, profile, plan, explicitMotionEvidence());
+  assert.equal(excess.rejected.some((entry) => entry.code === 'motion_pointer_budget_exceeded'), true);
+  assert.deepEqual(excess.applied, []);
+  assert.deepEqual(nodeMap, before);
+});
+
+test('motion traversal follows linked slots once and terminates on aliases, cycles and missing children', () => {
+  const nodeMap = layout();
+  nodeMap['section-1'].linkedNodes = { repeated: 'button-1', overlay: 'overlay', missing: 'missing' };
+  nodeMap.overlay = {
+    type: { resolvedName: 'Container' }, props: {}, nodes: [], linkedNodes: { back: 'section-1', button: 'button-2' },
+  };
+  nodeMap['button-1'].linkedNodes = null;
+  assert.deepEqual(orderedNodeIds(nodeMap), ['section-1', 'button-1', 'button-2', 'overlay']);
+});
+
 test('semantic motion plans fail closed when source evidence is missing, stale, or tampered', () => {
   const profile = buildResolvedMotionProfile(contract());
   const request = {
@@ -541,6 +588,55 @@ test('layout kit applies only an explicit semantic plan through the resolved liv
   assert.throws(() => unbound.kit.build([unbound.section], plan), /motion plan rejected:.*sourceDocumentSha256/u);
   const stale = createKit();
   assert.throws(() => stale.kit.build([stale.section], plan, { sourceDocumentSha256: 'b'.repeat(64) }), /current source evidence/u);
+});
+
+test('composition CLI preserves the applied motion plan in its diagnostic report', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'monteby-composition-motion-'));
+  try {
+    const live = contract();
+    live.authoring.compositions = { version: 1, recipes: [{
+      id: 'motion-fixture', slots: {}, tree: {
+        component: 'Section', children: [{ component: 'ButtonBlock' }, { component: 'ButtonBlock' }],
+      },
+    }] };
+    const brief = Buffer.from('Reveal the opening section as a short sequence.');
+    const evidence = { sourceDocumentSha256: createHash('sha256').update(brief).digest('hex') };
+    const requests = [{
+      recipeId: 'hero-reveal', intent: 'sequence', firstViewport: true,
+      target: { component: 'Section', occurrence: 0 },
+    }];
+    const motion = {
+      version: 1, source: 'explicit-brief', requests,
+      bindings: buildMotionPlanBindings('explicit-brief', evidence, requests),
+    };
+    const files = Object.fromEntries(['contract', 'plan', 'brief', 'layout', 'report'].map((name) => (
+      [name, path.join(directory, `${name}.json`)]
+    )));
+    fs.writeFileSync(files.contract, JSON.stringify(live));
+    fs.writeFileSync(files.plan, JSON.stringify({
+      version: 1, sections: [{ compositionId: 'motion-fixture', content: {} }], motion,
+    }));
+    fs.writeFileSync(files.brief, brief);
+    const result = spawnSync(process.execPath, [
+      path.join(__dirname, '../monteby-site-authoring/scripts/layout-kit.mjs'),
+      '--contract', files.contract, '--plan', files.plan, '--out', files.layout,
+      '--report', files.report, '--motion-source-document', files.brief,
+    ], { encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    const report = JSON.parse(fs.readFileSync(files.report, 'utf8'));
+    const written = JSON.parse(fs.readFileSync(files.layout, 'utf8'));
+    assert.deepEqual(JSON.parse(result.stdout), report);
+    assert.equal(report.verdict, 'diagnostic_passed');
+    assert.equal(report.motionPlan.source, 'explicit-brief');
+    assert.equal(report.motionPlan.version, 1);
+    assert.deepEqual(report.motionPlan.rejected, []);
+    assert.equal(report.motionPlan.applied.length, 1);
+    const applied = report.motionPlan.applied[0];
+    assert.equal(applied.recipeId, 'hero-reveal');
+    assert.equal(written[applied.nodeId].props.motionPreset, 'slide');
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 test('motion audit enforces stagger ownership, budgets, forbidden components, and autoplay off', () => {
@@ -936,6 +1032,36 @@ test('canonical verifier requires positive normal-runtime proof for every claime
       true,
       `${kind} failed proof`
     );
+  }
+});
+
+test('canonical verifier requires positive evidence for motion inside a linked section slot', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'monteby-linked-motion-'));
+  try {
+    const fixture = canonicalMotionFixture('pointer');
+    fixture.layout.ROOT.nodes = ['section'];
+    fixture.layout.section = {
+      type: { resolvedName: 'Section' }, props: {}, nodes: [], linkedNodes: { overlay: 'motion-owner' }, parent: 'ROOT',
+    };
+    fixture.layout['motion-owner'].parent = 'section';
+    const contractFile = path.join(directory, 'contract.json');
+    const layoutFile = path.join(directory, 'layout.json');
+    fs.writeFileSync(contractFile, JSON.stringify(fixture.contract));
+    fs.writeFileSync(layoutFile, JSON.stringify(fixture.layout));
+    const iteration = { files: { contract: contractFile, layout: layoutFile } };
+    assert.equal(validateCanonicalMotionEvidence(iteration, {}).some((entry) => (
+      entry.code === 'canonical_motion_evidence_missing'
+    )), true);
+    const manifest = { motionEvidence: {
+      viewports: ['desktop', 'tablet', 'mobile'].map((label) => canonicalMotionViewportEvidence(label, 'pointer')),
+    } };
+    assert.deepEqual(validateCanonicalMotionEvidence(iteration, manifest), []);
+    manifest.motionEvidence.viewports[1].environments.normalFinePointer.positiveByOwner[0].passed = false;
+    assert.equal(validateCanonicalMotionEvidence(iteration, manifest).some((entry) => (
+      entry.code === 'canonical_motion_owner_positive_operation_failed'
+    )), true);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
   }
 });
 

@@ -1,7 +1,7 @@
 'use strict';
 
 const assert = require('node:assert/strict');
-const { spawn } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
 const { createHash } = require('node:crypto');
 const fs = require('node:fs');
 const http = require('node:http');
@@ -21,8 +21,10 @@ const {
   nodeMapSha256,
   operationsSha256,
   portableDigestBytes,
+  parseArgs,
   pruneNoopOperations,
 } = require(CLIENT);
+const { buildMotionPlanBindings } = require('../monteby-site-authoring/scripts/motion-contract');
 const { appliedPropExpectations } = require('../monteby-site-authoring/scripts/verify-public-props');
 const AUTH = 'Basic dGVzdDpzZWNyZXQ=';
 const NODE_MAP = {
@@ -99,6 +101,7 @@ function layoutContract({
     productVersion,
     authoring: { capabilities: { providerRenderedWidgetSave: true } },
     layoutPersistence: {
+      currentSchemaVersion: 2,
       versionField,
       writePreconditionField,
       layoutDigestField,
@@ -3552,7 +3555,7 @@ test('composition commands use embedded recipes and their declared carriers', as
       bodies.push(await readBody(request));
       return sendJson(response, 200, {
         valid: true,
-        layout: { version: 1, nodeMap: COMPOSITION_PLAN_MAP },
+        layout: { schemaVersion: 2, ...COMPOSITION_PLAN_MAP },
         sections: [{ index: 0, compositionId: 'hero', rootNodeId: 'hero-1', nodeCount: 1 }],
         errors: [],
         lint: [],
@@ -3589,12 +3592,182 @@ test('composition commands use embedded recipes and their declared carriers', as
   assert.match(instantiate.result.evidence.outputSha256, /^[a-f0-9]{64}$/u);
   assert.match(instantiate.result.evidence.nodeTreeSha256, /^[a-f0-9]{64}$/u);
   assert.match(plan.result.evidence.inputSha256, /^[a-f0-9]{64}$/u);
-  assert.equal(plan.result.evidence.layoutSha256, nodeMapSha256(COMPOSITION_PLAN_MAP));
+  assert.deepEqual(plan.result.response.layout, { schemaVersion: 2, ...COMPOSITION_PLAN_MAP });
+  assert.equal(plan.result.evidence.layoutSha256, nodeMapSha256({ schemaVersion: 2, ...COMPOSITION_PLAN_MAP }));
   assert.deepEqual(bodies, [
     { recipeId: 'hero', slots: { title: 'Hello' }, parentId: 'ROOT' },
     { plan: { version: 1, sections: [{ compositionId: 'hero', content: { title: 'Hello' } }] } },
   ]);
   assert.deepEqual(server.errors, []);
+});
+
+test('composition motion flags are paired and exclusive to composition-plan; CLI loading has no circular warnings', () => {
+  const flags = ['--motion-plan', 'motion.json', '--motion-source-document', 'brief.md'];
+  const base = ['--site', 'https://example.test', '--input', 'plan.json', '--out', 'report.json'];
+  const options = parseArgs(['composition-plan', ...base, ...flags]);
+  assert.equal(options.motionPlan, path.resolve('motion.json'));
+  assert.equal(options.motionSourceDocument, path.resolve('brief.md'));
+  for (const args of [
+    ['composition-instantiate', ...base, ...flags],
+    ['validate', '--site', 'https://example.test', '--layout', 'layout.json', ...flags],
+    ['composition-plan', ...base, ...flags.slice(0, 2)],
+    ['composition-plan', ...base, ...flags.slice(2)],
+    ['composition-plan', ...base, '--motion-plan', 'report.json', '--motion-source-document', 'brief.md'],
+  ]) assert.throws(() => parseArgs(args), (error) => error.code === 'CLI_USAGE');
+  const execution = spawnSync(process.execPath, [CLIENT, '--help'], { encoding: 'utf8' });
+  assert.equal(execution.status, 0);
+  assert.equal(execution.stderr, '');
+  assert.match(execution.stdout, /--motion-source-document/u);
+});
+
+test('composition motion bridge preserves server evidence and validates only the hash-bound candidate without writing', async (t) => {
+  for (const scenario of [
+    'success', 'success-metadata', 'success-schema-one', 'success-context-free', 'invalid-schema', 'future-schema', 'missing-schema-contract', 'unknown-metadata', 'stale-source', 'stale-requests', 'wrong-intent', 'missing-target',
+    'budget', 'unavailable', 'empty', 'null', 'private-input', 'missing-source',
+    'malformed-plan-response', 'validation-rejected', 'validation-malformed',
+    'validation-errors', 'validation-private', 'validation-missing-errors', 'validation-missing-layout',
+    'validation-wrong-hash', 'validation-changed-layout', 'missing-validator', 'private-recipe',
+  ]) await t.test(scenario, async (t) => {
+    const directory = tempDir(t);
+    const inputFile = path.join(directory, 'composition.json');
+    const motionFile = path.join(directory, 'motion.json');
+    const sourceFile = path.join(directory, 'brief.md');
+    const outFile = path.join(directory, 'report.json');
+    const input = {
+      plan: { version: 1, sections: [{ compositionId: 'hero', content: { title: 'Hello' } }] },
+      postId: 42,
+    };
+    if (scenario === 'success-context-free') delete input.postId;
+    const source = 'Approved private brief marker: give the hero\u00a0one entrance reveal.\r\n';
+    const sourceDocumentSha256 = createHash('sha256').update(source).digest('hex');
+    const requests = [{ recipeId: 'section-reveal', intent: 'reveal', target: { nodeId: 'hero-1' }, firstViewport: true }];
+    if (scenario === 'wrong-intent') requests[0].intent = 'pointer';
+    if (scenario === 'missing-target') requests[0].target.nodeId = 'unknown-node';
+    if (scenario === 'empty') requests.length = 0;
+    const motion = {
+      version: 1, source: 'explicit-brief', requests,
+      bindings: buildMotionPlanBindings('explicit-brief', { sourceDocumentSha256 }, requests),
+    };
+    if (scenario === 'stale-source') motion.bindings.sourceDocumentSha256 = 'a'.repeat(64);
+    if (scenario === 'stale-requests') motion.requests[0].firstViewport = false;
+    if (scenario === 'private-input') motion.secret = 'never-echo-motion-secret';
+    writeJson(inputFile, input);
+    writeJson(motionFile, scenario === 'null' ? null : motion);
+    if (scenario !== 'missing-source') fs.writeFileSync(sourceFile, source);
+    const contract = capabilityContract();
+    if (scenario === 'success-schema-one') contract.layoutPersistence.currentSchemaVersion = 1;
+    if (scenario === 'missing-schema-contract') delete contract.layoutPersistence.currentSchemaVersion;
+    contract.layoutPersistence.validationContextField = 'documentId';
+    contract.layoutPersistence.candidateDigestField = 'validatedCandidateSha256';
+    contract.layoutPersistence.resources.validate = {
+      method: 'POST', path: '/monteby/v1/motion-candidate/validate', carrier: 'candidate',
+    };
+    if (scenario === 'missing-validator') delete contract.layoutPersistence.resources.validate;
+    contract.components = [{
+      name: 'Section', props: ['motionPreset'], aiProps: ['motionPreset'],
+      controls: [{ prop: 'motionPreset', type: 'select', options: ['none', 'slide'] }],
+    }];
+    contract.authoring.capabilities.motionRecipes = scenario !== 'unavailable';
+    contract.authoring.motion = {
+      version: 1,
+      policy: {
+        defaultRepeat: 'once', maxEntranceOwnersPerPage: 2,
+        maxFirstViewportEntranceOwners: scenario === 'budget' ? 0 : 1,
+        maxPointerEffectsPerPage: 1, maxPinnedScenesPerPage: 0, maxBackgroundEffectsPerPage: 1,
+        maxStaggerSpanMs: 300, maxEntranceDurationMs: 700, maxEntranceDelayMs: 150,
+        maxEntranceDistancePx: 32, forbiddenComponents: [], prohibitedInputs: [], rules: [],
+      },
+      recipes: [{ id: 'section-reveal', intent: 'reveal', components: ['Section'], props: { motionPreset: 'slide' } }],
+    };
+    if (scenario === 'private-recipe') {
+      contract.components[0].aiProps.push('secret');
+      contract.components[0].props.push('secret');
+      contract.components[0].controls.push({ prop: 'secret', type: 'text' });
+      contract.authoring.motion.recipes[0].props.secret = 'never-echo-recipe-secret';
+    }
+    const serverMap = ['success-metadata', 'missing-schema-contract'].includes(scenario) ? { schemaVersion: 2, ...COMPOSITION_PLAN_MAP }
+      : scenario === 'success-schema-one' ? { schemaVersion: 1, ...COMPOSITION_PLAN_MAP }
+      : scenario === 'invalid-schema' ? { schemaVersion: '1', ...COMPOSITION_PLAN_MAP }
+        : scenario === 'future-schema' ? { schemaVersion: 3, ...COMPOSITION_PLAN_MAP }
+        : scenario === 'unknown-metadata' ? { unknownMetadata: 1, ...COMPOSITION_PLAN_MAP }
+          : COMPOSITION_PLAN_MAP;
+    const original = {
+      valid: true, layout: scenario === 'success-metadata' ? serverMap : { version: 1, nodeMap: serverMap },
+      sections: [{ index: 0, compositionId: 'hero', rootNodeId: 'hero-1', nodeCount: 1 }],
+      errors: [], lint: [],
+      decisions: [{ section: 0, compositionId: 'hero', rootNodeId: 'hero-1', idStart: 1, nodeCount: 1, omittedOptional: [] }],
+    };
+    const posts = [];
+    const methods = [];
+    let validationResponse;
+    const server = await startServer(t, async (request, response) => {
+      methods.push(request.method);
+      if (request.url === '/wp-json/monteby/v1/contract') return sendJson(response, 200, contract);
+      const body = await readBody(request);
+      posts.push({ url: request.url, body });
+      if (request.url === '/wp-json/monteby/v1/compositions/plan') {
+        return sendJson(response, 200, scenario === 'malformed-plan-response' ? { ...original, sections: [] } : original);
+      }
+      if (request.url === '/wp-json/monteby/v1/motion-candidate/validate') {
+        if (scenario === 'validation-rejected') return sendJson(response, 400, { valid: false, errors: [{ code: 'rejected' }], lint: [] });
+        if (scenario === 'validation-malformed') return sendJson(response, 200, { valid: true });
+        if (scenario === 'validation-errors') return sendJson(response, 200, { valid: true, lint: [], errors: [{ code: 'contradictory' }] });
+        if (scenario === 'validation-private') return sendJson(response, 200, { valid: true, lint: [], secret: 'never-echo-response-secret' });
+        const validatedLayout = structuredClone(body.candidate);
+        if (scenario === 'validation-changed-layout') validatedLayout['hero-1'].props.motionPreset = 'none';
+        validationResponse = {
+          valid: true, errors: [], lint: [], layout: validatedLayout,
+          validatedCandidateSha256: nodeMapSha256(validatedLayout),
+        };
+        if (scenario === 'validation-missing-errors') delete validationResponse.errors;
+        if (scenario === 'validation-missing-layout') delete validationResponse.layout;
+        if (scenario === 'validation-wrong-hash') validationResponse.validatedCandidateSha256 = 'a'.repeat(64);
+        return sendJson(response, 200, validationResponse);
+      }
+      return sendJson(response, 500, { code: 'unexpected_request' });
+    });
+    const execution = await runClient([
+      'composition-plan', '--site', server.site, '--input', inputFile,
+      '--motion-plan', motionFile, '--motion-source-document', sourceFile, '--out', outFile,
+    ]);
+    assert.equal(execution.stderr, '');
+    assert.doesNotMatch(execution.stdout, /Approved private brief marker|never-echo|dGVzdDpzZWNyZXQ=/u);
+    assert.ok(methods.every((method) => ['GET', 'POST'].includes(method)));
+    assert.ok(posts.every(({ url }) => /\/(?:compositions\/plan|motion-candidate\/validate)$/u.test(url)));
+    if (scenario.startsWith('success')) {
+      assertEnvelope(execution.result, { ok: true, stage: 'composition-plan', code: 'COMPOSITION_PLAN_OK' });
+      assert.equal(execution.exitCode, 0);
+      assert.deepEqual(execution.result.response, original);
+      const candidate = execution.result.motionCandidate;
+      assert.equal(candidate.layout.nodeMap['hero-1'].props.motionPreset, 'slide');
+      assert.deepEqual(serverMap['hero-1'].props, {});
+      assert.equal(candidate.motionPlan.applied.length, 1);
+      assert.deepEqual(candidate.motionPlan.rejected, []);
+      assert.deepEqual(candidate.validation, validationResponse);
+      assert.deepEqual(candidate.bindings, {
+        sourceDocumentSha256, motionRequestsSha256: canonicalSha256(requests),
+        motionPlanSha256: canonicalSha256(motion), contractSha256: canonicalSha256(contract),
+        inputLayoutSha256: nodeMapSha256(serverMap), outputLayoutSha256: nodeMapSha256(candidate.layout.nodeMap),
+      });
+      assert.equal(execution.result.evidence.outputSha256, canonicalSha256(original));
+      assert.equal(execution.result.evidence.layoutSha256, nodeMapSha256(serverMap));
+      assert.deepEqual(posts, [
+        { url: '/wp-json/monteby/v1/compositions/plan', body: input },
+        { url: '/wp-json/monteby/v1/motion-candidate/validate', body: { candidate: candidate.layout.nodeMap, ...(input.postId ? { documentId: input.postId } : {}) } },
+      ]);
+    } else {
+      assert.equal(execution.exitCode, 1, execution.stdout);
+      assert.equal(execution.result.ok, false, execution.stdout);
+      assert.equal(execution.result.motionCandidate, undefined);
+      if (scenario.startsWith('validation-')) assert.equal(posts.length, 2);
+      else assert.ok(posts.length <= 1);
+      if (['stale-source', 'stale-requests', 'wrong-intent', 'missing-target', 'budget', 'unavailable'].includes(scenario)) {
+        assert.equal(execution.result.code, 'MOTION_PLAN_REJECTED');
+      }
+    }
+    assert.deepEqual(JSON.parse(fs.readFileSync(outFile, 'utf8')), execution.result);
+    assert.deepEqual(server.errors, []);
+  });
 });
 
 test('composition commands reject mismatched node operations and incomplete plan evidence', async (t) => {

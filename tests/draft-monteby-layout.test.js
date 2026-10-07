@@ -3617,6 +3617,17 @@ test('generic measured drafting recognizes a multi-field form as one contract-ba
   formComponent.props.push('inputLineHeight');
   formComponent.aiProps = [...new Set([...(formComponent.aiProps || formComponent.props), 'inputLineHeight'])];
   formComponent.controls.push({ type: 'css-value', props: ['inputLineHeight'], units: ['', 'px', 'rem', 'em'], min: 0, step: 0.1 });
+  formComponent.props.push('labelFontFamily', 'buttonFontFamily');
+  formComponent.aiProps.push('labelFontFamily', 'buttonFontFamily');
+  formComponent.controls.push({ type: 'font-picker', props: ['labelFontFamily', 'buttonFontFamily'] });
+  formContract.globalStyles = { typography: { presets: {
+    body: { fontFamily: 'Georgia', lineHeight: '1.9' }, button: { fontFamily: 'Arial' },
+  } } };
+  formContract.designTokens = { version: 1, typographyBindings: { FormBlock: {
+    labelFontFamily: { preset: 'body', field: 'font-family', reference: 'var(--gcb-typo-body-font-family)' },
+    inputLineHeight: { preset: 'body', field: 'line-height', reference: 'var(--gcb-typo-body-line-height)' },
+    buttonFontFamily: { preset: 'button', field: 'font-family', reference: 'var(--gcb-typo-button-font-family)' },
+  } } };
   fs.writeFileSync(contractPath, JSON.stringify(formContract));
   fs.writeFileSync(briefPath, JSON.stringify({
     ...visualBrief({ target: { variant: 'split-hero', archetype: '', referenceStyle: '' } }),
@@ -3667,6 +3678,8 @@ test('generic measured drafting recognizes a multi-field form as one contract-ba
   assert.equal(forms[0].props.formPaddingY, '24px');
   assert.equal(forms[0].props.inputHeight, '50px');
   assert.equal(forms[0].props.inputLineHeight, '24px');
+  assert.equal(forms[0].props.labelFontFamily, 'var(--gcb-typo-body-font-family)');
+  assert.equal(forms[0].props.buttonFontFamily, 'var(--gcb-typo-button-font-family)');
   assert.equal(forms[0].props.inputBorderWidth, 'border-2');
   assert.equal(forms[0].props.inputBorderRadius, 'rounded-lg');
   assert.equal(forms[0].props.inputColor, 'rgb(99, 99, 99)');

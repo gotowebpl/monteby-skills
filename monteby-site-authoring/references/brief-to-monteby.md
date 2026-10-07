@@ -128,6 +128,82 @@ do wyboru kompozycji; nie trafia do node mapy. Po rozwinięciu obowiązuje ta
 sama ścieżka co niżej: pre-flight `normalize-layout.js`, wersjonowany zapis
 i bramka „Zapis i ocena".
 
+### Motion po kompozycji serwerowej
+
+Jeżeli zatwierdzony brief wymaga ruchu, użyj opcjonalnego mostu w kanonicznym
+`composition-plan`. Nie dopisuj `motion` do body REST ani propsów do odpowiedzi
+serwera. Najpierw uruchom komendę bez opcji motion, aby poznać deterministyczne
+ID i komponenty:
+
+```bash
+node monteby-site-authoring/scripts/wordpress-layout-client.js composition-plan \
+  --site https://example.test \
+  --input .monteby/plan-<slug>.json \
+  --out .monteby/composition-base-<slug>.json
+```
+
+W osobnym `motion-requests-<slug>.json` zapisz tablicę żądań z `recipeId`,
+`intent`, `target` (`nodeId` albo `component` i zerowy `occurrence`) oraz jawnym
+`firstViewport`. Receptury i intent muszą pochodzić z pełnego live contract;
+cel musi istnieć w kompozycji i być zgodny z recepturą. Bez pomiaru viewportu
+całe pierwsze pasmo — również jego linked slots — konserwatywnie liczy się
+do pierwszego viewportu. Nie ustawiaj `firstViewport: false`, by ominąć budżet.
+Brief musi autoryzować te żądania, nie tylko ogólnie opisywać branżę strony.
+
+Utwórz plan przez istniejące wiązanie źródła; SHA dokumentu obejmuje dokładne
+bajty, bez normalizacji białych znaków. Przykład uruchamiany z katalogu skilla:
+
+```js
+const fs = require('node:fs');
+const { createHash } = require('node:crypto');
+const { buildMotionPlanBindings } = require('./monteby-site-authoring/scripts/motion-contract');
+const requests = JSON.parse(fs.readFileSync('.monteby/motion-requests-<slug>.json', 'utf8'));
+const sourceDocumentSha256 = createHash('sha256')
+  .update(fs.readFileSync('.monteby/brief-<slug>.md')).digest('hex');
+const motionPlan = {
+  version: 1,
+  source: 'explicit-brief',
+  requests,
+  bindings: buildMotionPlanBindings('explicit-brief', { sourceDocumentSha256 }, requests),
+};
+fs.writeFileSync('.monteby/motion-<slug>.json', JSON.stringify(motionPlan, null, 2));
+```
+
+```bash
+node monteby-site-authoring/scripts/wordpress-layout-client.js composition-plan \
+  --site https://example.test \
+  --input .monteby/plan-<slug>.json \
+  --motion-plan .monteby/motion-<slug>.json \
+  --motion-source-document .monteby/brief-<slug>.md \
+  --out .monteby/composition-motion-<slug>.json
+```
+
+Obie opcje są wymagane razem i dostępne tylko dla `composition-plan`.
+Klient ponownie rozwija plan na serwerze, stosuje istniejący
+`resolvedDesignProfile` / `applySemanticMotionPlan`, a potem obowiązkowo
+wywołuje oficjalny zasób walidacji z deskryptora live contract (z `postId`,
+jeśli był w wejściu). Nie wykonuje zapisu. Parametry motion i tekst briefu
+pozostają lokalne. Nieaktualny hash, zły intent/cel, przekroczony budżet lub
+niepełna odpowiedź walidacji kończą się błędem, bez gotowego kandydata.
+
+Raport `ok: true`, `code: COMPOSITION_PLAN_OK` zachowuje oryginalną odpowiedź
+w `response`, włącznie z `response.layout`. Wynik ruchu jest osobny:
+
+- **`motionCandidate.layout`** — dokładnie ten layout wyodrębnij do pliku
+  dla dalszego pre-flight, preview i wersjonowanego zapisu; nie scalaj propsów
+  i nie używaj zamiast niego bazowego `response.layout`;
+- `motionCandidate.motionPlan` — zastosowane i odrzucone żądania;
+- `motionCandidate.validation` — wynik obowiązkowej walidacji serwera;
+- `motionCandidate.bindings` — `sourceDocumentSha256`, `motionPlanSha256`,
+  `motionRequestsSha256`, `contractSha256`, `inputLayoutSha256` oraz
+  `outputLayoutSha256`. Dotychczasowe `evidence` nadal opisuje bazową odpowiedź
+  serwera, nie kandydata z motion.
+
+To dowód walidacji danych, nie jakości animacji. Nadal obowiązuje preview,
+wersjonowany zapis i publiczny WordPress/PHP z dowodem motion na desktopie,
+tablecie i telefonie, reduced-motion/no-JS/coarse-pointer, widocznością karty
+oraz klawiaturą. Nie deklaruj działającego ruchu wyłącznie z raportu CLI.
+
 ### Trasa offline: `layout-kit.mjs`
 
 Obowiązuje, gdy bramka nie jest dostępna (starszy Builder to
@@ -198,6 +274,12 @@ wartości jako literału. Kolejność jest stała: wartość istniejąca lub dok
 pomiar, zatwierdzone tokeny projektu, `globalStyles`, `designTokens`, neutralny
 fallback. Konflikt koloru lub typografii rozstrzyga `globalStyles` i trafia do
 uwag kitu. `customCSS` nigdy nie jest wejściem profilu.
+
+Typografia etykiet, pól i przycisku `FormBlock` korzysta z opublikowanych
+`designTokens.typographyBindings`, odczytywanych przez ten sam resolver Kita
+i draftera. Jawny pomiar pozostaje nadrzędny, a istniejący binding komponentowy
+(np. waga przycisku) ma pierwszeństwo przed presetem. Starszy kontrakt bez tych
+bindingów nie uprawnia do wymyślania referencji `var(--gcb-typo-*)`.
 
 ## Procedura
 

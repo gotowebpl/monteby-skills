@@ -326,6 +326,7 @@ function orderedNodeIds(nodeMap) {
     visited.add(id);
     if (id !== 'ROOT') ordered.push(id);
     for (const childId of Array.isArray(nodeMap[id].nodes) ? nodeMap[id].nodes : []) visit(childId);
+    for (const childId of Object.values(isRecord(nodeMap[id].linkedNodes) ? nodeMap[id].linkedNodes : {})) visit(childId);
   };
   visit('ROOT');
   return ordered;

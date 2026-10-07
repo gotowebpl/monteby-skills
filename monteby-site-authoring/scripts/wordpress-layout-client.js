@@ -145,6 +145,8 @@ function parseArgs(argv) {
     renderContextUrl: '',
     logoUrl: '',
     input: '',
+    motionPlan: '',
+    motionSourceDocument: '',
     cache: '',
     mode: 'full',
     components: 'full',
@@ -212,6 +214,10 @@ function parseArgs(argv) {
       options.logoUrl = requiredValue(argv, index += 1, option);
     } else if (option === '--input') {
       options.input = path.resolve(requiredValue(argv, index += 1, option));
+    } else if (option === '--motion-plan') {
+      options.motionPlan = path.resolve(requiredValue(argv, index += 1, option));
+    } else if (option === '--motion-source-document') {
+      options.motionSourceDocument = path.resolve(requiredValue(argv, index += 1, option));
     } else if (option === '--cache') {
       options.cache = path.resolve(requiredValue(argv, index += 1, option));
     } else if (option === '--mode') {
@@ -315,6 +321,21 @@ function normalizeLogoUrl(rawUrl, stage) {
 function validateOptions(options) {
   requireOption(options, 'site', '--site');
   options.site = normalizeSite(options.site, options.command);
+
+  if (options.motionPlan || options.motionSourceDocument) {
+    if (options.command !== 'composition-plan' || !options.motionPlan || !options.motionSourceDocument) {
+      throw new ClientError('--motion-plan and --motion-source-document must be paired and are only supported by composition-plan.', {
+        code: 'CLI_USAGE', stage: options.command,
+        nextAction: 'Use both motion options with composition-plan, or omit both for an unchanged server composition.',
+      });
+    }
+    if ([options.input, options.motionPlan, options.motionSourceDocument].includes(options.out)) {
+      throw new ClientError('The composition report must not overwrite its input, motion plan or source document.', {
+        code: 'CLI_USAGE', stage: options.command,
+        nextAction: 'Choose a separate --out report file.',
+      });
+    }
+  }
 
   if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(options.authHeaderEnv)) {
     throw new ClientError('--auth-header-env must name an environment variable.', {
@@ -594,7 +615,7 @@ function printHelp() {
   wordpress-layout-client.js preview-resource --site URL --input PREVIEW.json --out REPORT.json
   wordpress-layout-client.js bulk-create --site URL --input BATCH.json --out REPORT.json
   wordpress-layout-client.js compositions-list --site URL --out REPORT.json
-  wordpress-layout-client.js composition-plan --site URL --input PLAN.json --out REPORT.json
+  wordpress-layout-client.js composition-plan --site URL --input PLAN.json --out REPORT.json [--motion-plan MOTION.json --motion-source-document BRIEF.md]
   wordpress-layout-client.js composition-instantiate --site URL --input COMPOSITION.json --out REPORT.json
   wordpress-layout-client.js global-styles-get --site URL --out REPORT.json
   wordpress-layout-client.js global-styles-patch --site URL --input PATCH.json --out REPORT.json
@@ -626,6 +647,12 @@ Every 1.6 resource command resolves its route, carrier, query fields and
 precondition names from the live Site Contract. JSON inputs are capability-specific,
 reject operational secrets and Custom CSS/JS, and are never echoed with authorization.
 contract-fetch supports conditional ETag caching and component hydration.
+composition-plan can apply an explicit-brief motion plan bound to the exact source
+document bytes and requests. The paired motion options stay local, never enter the
+composition REST request, and require official validation of the derived candidate.
+response remains the original server response; motionCandidate.layout is the
+separate validated layout for subsequent preview and versioned save. Source text
+is not copied to reports; bindings contain its SHA-256 and the input/output digests.
 `);
 }
 
@@ -4801,15 +4828,23 @@ function compositionRequest(resource, input, recipes, stage, kind) {
   return input;
 }
 
-function validateCanonicalNodeGraph(nodeMap, rootNodeId, externalParentId, stage, label) {
+function validateCanonicalNodeGraph(nodeMap, rootNodeId, externalParentId, stage, label, currentSchemaVersion) {
   if (!isObject(nodeMap) || Object.keys(nodeMap).length === 0 || !isObject(nodeMap[rootNodeId])) {
     throw new ClientError(`${label} does not contain its declared root node.`, {
       code: 'CAPABILITY_RESPONSE_INVALID', stage,
       nextAction: 'Repair the composition response before using its node tree.',
     });
   }
+  if (rootNodeId === 'ROOT' && Object.hasOwn(nodeMap, 'schemaVersion')
+    && (!Number.isSafeInteger(currentSchemaVersion) || currentSchemaVersion < 1 || nodeMap.schemaVersion !== currentSchemaVersion)) {
+    throw new ClientError(`${label} has an unsupported schemaVersion.`, {
+      code: 'CAPABILITY_RESPONSE_INVALID', stage,
+      nextAction: 'Repair the composition layout metadata before using the response.',
+    });
+  }
+  const nodeEntries = Object.entries(nodeMap).filter(([nodeId]) => rootNodeId !== 'ROOT' || nodeId !== 'schemaVersion');
   const owners = new Map();
-  for (const [nodeId, node] of Object.entries(nodeMap)) {
+  for (const [nodeId, node] of nodeEntries) {
     const required = [
       'type', 'displayName', 'custom', 'isCanvas', 'props', 'parent', 'hidden', 'nodes', 'linkedNodes',
     ];
@@ -4875,7 +4910,7 @@ function validateCanonicalNodeGraph(nodeMap, rootNodeId, externalParentId, stage
     visited.add(nodeId);
   };
   visit(rootNodeId);
-  if (visited.size !== Object.keys(nodeMap).length) {
+  if (visited.size !== nodeEntries.length) {
     throw new ClientError(`${label} contains unreachable nodes.`, {
       code: 'CAPABILITY_RESPONSE_INVALID', stage,
       nextAction: 'Repair the composition tree reachability before using the response.',
@@ -4883,7 +4918,7 @@ function validateCanonicalNodeGraph(nodeMap, rootNodeId, externalParentId, stage
   }
 }
 
-function validateCompositionResponse(response, input, kind, stage) {
+function validateCompositionResponse(response, input, kind, stage, currentSchemaVersion) {
   const responseFields = kind === 'instantiate'
     ? ['valid', 'recipeId', 'rootNodeId', 'nodes', 'operation', 'errors', 'lint', 'decisions']
     : ['valid', 'layout', 'sections', 'errors', 'lint', 'decisions'];
@@ -4990,7 +5025,7 @@ function validateCompositionResponse(response, input, kind, stage) {
     });
   }
   const nodeMap = extractNodeMap(response.layout);
-  validateCanonicalNodeGraph(nodeMap, 'ROOT', null, stage, 'plan.layout');
+  validateCanonicalNodeGraph(nodeMap, 'ROOT', null, stage, 'plan.layout', currentSchemaVersion);
   const requestedSections = input.plan.sections;
   if (
     !Array.isArray(requestedSections)
@@ -5052,11 +5087,47 @@ function validateCompositionResponse(response, input, kind, stage) {
 
 async function runComposition(options, authHeader, kind) {
   const input = await loadCapabilityInput(options);
+  let motionPlan;
+  let sourceDocumentSha256;
+  if (options.motionPlan) {
+    motionPlan = await readJsonFile(options.motionPlan, 'motionPlan', options.command);
+    assertSafeCapabilityInput(motionPlan, options.command);
+    assertExactFields(motionPlan, ['version', 'source', 'requests', 'bindings'], options.command, 'motionPlan');
+    if (motionPlan.version !== 1 || motionPlan.source !== 'explicit-brief'
+      || !Array.isArray(motionPlan.requests) || motionPlan.requests.length === 0) {
+      throw new ClientError('Composition motion requires a version 1 explicit-brief plan with non-empty requests.', {
+        code: 'MOTION_PLAN_INVALID', stage: options.command,
+        nextAction: 'Bind the approved explicit brief to published motion recipes and deterministic targets.',
+      });
+    }
+    const sourceDocument = await fs.readFile(options.motionSourceDocument).catch((error) => {
+      throw new ClientError('The motion source document could not be read.', {
+        code: error?.code === 'ENOENT' ? 'INPUT_NOT_FOUND' : 'INPUT_READ_FAILED', stage: options.command,
+        artifacts: { motionSourceDocument: options.motionSourceDocument },
+        nextAction: 'Restore the approved source document without changing its bound bytes.',
+      });
+    });
+    if (sourceDocument.length === 0) {
+      throw new ClientError('The motion source document is empty.', {
+        code: 'MOTION_PLAN_INVALID', stage: options.command,
+        nextAction: 'Provide the non-empty approved brief and its matching motion bindings.',
+      });
+    }
+    sourceDocumentSha256 = createHash('sha256').update(sourceDocument).digest('hex');
+  }
   const fetched = await fullContractForCapability(options, authHeader);
   if (fetched.failure) return fetched.failure;
   const compositions = compositionContract(fetched.contract, options.command);
   const resource = compositions.resources[kind];
   const body = compositionRequest(resource, input, compositions.recipes, options.command, kind);
+  const motionValidation = motionPlan ? validationCapability(fetched.contract, input.postId, options.command) : null;
+  const candidateDigestField = fetched.contract.layoutPersistence.candidateDigestField;
+  if (motionPlan && !isFieldName(candidateDigestField)) {
+    throw new ClientError('The live contract omits the canonical validation candidate digest field.', {
+      code: 'VALIDATION_RESOURCE_MISSING', stage: options.command,
+      nextAction: 'Repair the live persistence descriptor before validating composition motion.',
+    });
+  }
   const endpoint = declaredResourcePath(resource.path, {}, options.command);
   const response = await requestDeclared(options, authHeader, {
     method: resource.method,
@@ -5064,10 +5135,70 @@ async function runComposition(options, authHeader, kind) {
     body,
   });
   if (!response.ok) return httpFailureResult(options.command, response, { input: options.input });
-  validateCompositionResponse(response.data, input, kind, options.command);
+  validateCompositionResponse(response.data, input, kind, options.command, fetched.contract.layoutPersistence.currentSchemaVersion);
   const inputSha256 = canonicalSha256(body);
   const outputSha256 = canonicalSha256(response.data);
-  return capabilitySuccess(options, kind === 'instantiate' ? 'COMPOSITION_INSTANTIATE_OK' : 'COMPOSITION_PLAN_OK', {
+  let motionCandidate;
+  if (motionPlan) {
+    safeCapabilityOutput(response.data, options.command);
+    const { applySemanticMotionPlan } = require('./motion-contract');
+    const { buildResolvedDesignProfile } = require('./resolved-design-profile');
+    const candidate = structuredClone(extractNodeMap(response.data.layout));
+    const appliedMotion = applySemanticMotionPlan(
+      candidate, buildResolvedDesignProfile(fetched.contract).motion, motionPlan, { sourceDocumentSha256 }
+    );
+    if (appliedMotion.rejected.length > 0 || appliedMotion.applied.length !== motionPlan.requests.length) {
+      throw new ClientError('The motion plan could not be applied within the published contract and evidence.', {
+        code: 'MOTION_PLAN_REJECTED', stage: options.command,
+        response: safeCapabilityOutput(appliedMotion, options.command),
+        nextAction: 'Resolve the reported binding, target, intent or budget errors; do not merge motion props manually.',
+      });
+    }
+    safeCapabilityOutput(candidate, options.command);
+    const outputLayoutSha256 = nodeMapSha256(candidate);
+    const validation = await validateNodeMap(
+      { ...options, pageId: input.postId || null }, authHeader, candidate,
+      { input: options.input, motionPlan: options.motionPlan, layoutSha256: outputLayoutSha256 }, motionValidation
+    );
+    safeCapabilityOutput(validation.response, options.command);
+    if (!validation.ok) return validation;
+    if (!validation.response.lint.every(isObject)
+      || !Array.isArray(validation.response.errors) || validation.response.errors.length > 0) {
+      throw new ClientError('Motion candidate validation returned contradictory or malformed evidence.', {
+        code: 'VALIDATION_EVIDENCE_INVALID', stage: options.command,
+        nextAction: 'Repair the validation resource before treating the motion candidate as ready.',
+      });
+    }
+    let validatedNodeMap = null;
+    try {
+      validatedNodeMap = extractNodeMap(validation.response, motionValidation.carrier);
+    } catch {
+      validatedNodeMap = null;
+    }
+    const validatedDigest = validation.response[candidateDigestField];
+    if (!validatedNodeMap || !validSha(validatedDigest)
+      || nodeMapSha256(validatedNodeMap) !== validatedDigest
+      || canonicalSha256(validatedNodeMap) !== canonicalSha256(candidate)) {
+      throw new ClientError('Validation did not prove the same canonical motion candidate and its digest.', {
+        code: 'VALIDATION_CANDIDATE_EVIDENCE_INVALID', stage: options.command,
+        nextAction: 'Resolve the canonical candidate mismatch before preview or save; do not accept rewritten motion silently.',
+      });
+    }
+    motionCandidate = {
+      layout: { version: 1, nodeMap: candidate },
+      motionPlan: appliedMotion,
+      validation: validation.response,
+      bindings: {
+        sourceDocumentSha256,
+        motionPlanSha256: canonicalSha256(motionPlan),
+        motionRequestsSha256: canonicalSha256(motionPlan.requests),
+        contractSha256: canonicalSha256(fetched.contract),
+        inputLayoutSha256: nodeMapSha256(extractNodeMap(response.data.layout)),
+        outputLayoutSha256,
+      },
+    };
+  }
+  const result = capabilitySuccess(options, kind === 'instantiate' ? 'COMPOSITION_INSTANTIATE_OK' : 'COMPOSITION_PLAN_OK', {
     artifacts: { input: options.input },
     response: response.data,
     evidence: {
@@ -5084,6 +5215,7 @@ async function runComposition(options, authHeader, kind) {
       ? 'The published composition was instantiated and validated without writing.'
       : 'The composition plan produced a validated page candidate without writing.',
   });
+  return motionCandidate ? { ...result, motionCandidate } : result;
 }
 
 function globalStylesContract(contract, stage) {

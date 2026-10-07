@@ -672,7 +672,7 @@ async function compositionCli() {
     },
   });
   await writeFile(options['--out'], `${JSON.stringify(result.layout, null, 2)}\n`);
-  const report = { verdict: 'diagnostic_passed', nodes: Object.keys(result.layout).length, notes: result.notes, decisions: result.decisions };
+  const report = { verdict: 'diagnostic_passed', nodes: Object.keys(result.layout).length, notes: result.notes, decisions: result.decisions, motionPlan: result.motionPlan };
   if (options['--report']) await writeFile(options['--report'], `${JSON.stringify(report, null, 2)}\n`);
   console.log(JSON.stringify(report));
 }

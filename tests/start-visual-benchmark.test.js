@@ -154,7 +154,7 @@ if (path.basename(process.argv[1] || '') === 'generate-random-html-target.js') {
   }
 });
 
-test('start visual benchmark reports a generated viewport timeout with partial fallback artifacts', async (t) => {
+test('start visual benchmark reports a generated viewport timeout with partial fallback artifacts after cooperative shutdown', async (t) => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'monteby-start-viewport-timeout-'));
   const binDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'monteby-start-viewport-timeout-bin-'));
   const fakeNpxPath = path.join(binDirectory, 'npx');
@@ -165,7 +165,7 @@ test('start visual benchmark reports a generated viewport timeout with partial f
 const fs = require('node:fs');
 fs.writeFileSync(process.env.MONTEBY_TARGET_SCREENSHOT_OUT, 'partialpng');
 fs.writeFileSync(process.env.MONTEBY_HUNG_BROWSER_PID, String(process.pid));
-process.on('SIGTERM', () => {});
+process.on('SIGTERM', () => process.exit(0));
 setInterval(() => {}, 1000);
 `);
   fs.chmodSync(fakeNpxPath, 0o755);
