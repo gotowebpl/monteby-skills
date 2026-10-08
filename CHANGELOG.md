@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.6.1 - 2026-10-08
+
+- Admit explicitly declared Builder release-candidate floors using real SemVer
+  precedence and the matching live capabilities; keep older-version fallbacks
+  and the published 0.6.0 tag unchanged.
+- Consume canonical partial-operation revision fields in public-prop proof,
+  retain compatible legacy evidence, and reject contradictory aliases while
+  preserving the static Core-render digest scope.
+- Apply approved, source-hash-bound motion through the canonical
+  `composition-plan` client, keep the original server response, and return a
+  separate candidate only after official validation proves its exact layout
+  and digest. Motion options never become extra PHP request fields or writes.
+- Validate composition schema metadata against the current live contract
+  without treating `schemaVersion` as a node or accepting future schemas.
+- Include linked slots in motion targeting, scope, budgets, signatures and
+  verification, with cycle protection and deduplication; include the applied
+  motion report in the existing offline Kit output.
+- Consume published FormBlock typography bindings through the shared design
+  resolver in the Kit and drafter; preserve explicit and measured props,
+  component-token precedence and legacy contracts without inventing references.
+- Separate cooperative viewport-timeout reporting from the existing forced
+  process-tree termination tests without increasing production timeouts.
+- Verify every Builder 1.6 feature gate on stable and admitted RC versions,
+  reject missing or malformed capability values, and keep package, lockfile
+  and compatibility versions aligned at 0.6.1.
+
 ## 0.6.0 - 2026-09-21
 
 - Accept the `description` field Builder 1.6 publishes on every composition

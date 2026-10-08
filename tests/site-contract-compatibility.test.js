@@ -14,10 +14,11 @@ const manifestPath = path.join(root, manifestRelativePath);
 test('site contract compatibility manifest requires the exact live contract without a phantom baseline', () => {
   const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
   const packageMetadata = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8'));
+  const packageLock = JSON.parse(fs.readFileSync(path.join(root, 'package-lock.json'), 'utf8'));
 
   assert.deepEqual(manifest, {
     schemaVersion: 3,
-    skillVersion: '0.6.0',
+    skillVersion: '0.6.1',
     minimumBuilderVersion: '1.4.0',
     contractEndpoint: '/wp-json/monteby/v1/contract',
     liveContractRequired: true,
@@ -232,6 +233,8 @@ test('site contract compatibility manifest requires the exact live contract with
     reason: "No verified portable Builder contract snapshot is bundled. Authoring must use the current target site's live contract.",
   });
   assert.equal(manifest.skillVersion, packageMetadata.version);
+  assert.equal(packageLock.version, packageMetadata.version);
+  assert.equal(packageLock.packages[''].version, packageMetadata.version);
 });
 
 test('site contract compatibility manifest ships in the npm package', () => {
@@ -250,6 +253,7 @@ test('site contract compatibility manifest ships in the npm package', () => {
   const packResult = JSON.parse(result.stdout);
   assert.equal(Array.isArray(packResult), true);
   assert.equal(packResult.length, 1);
+  assert.equal(packResult[0].version, JSON.parse(fs.readFileSync(manifestPath, 'utf8')).skillVersion);
   assert.equal(
     packResult[0].files.some((file) => file.path === manifestRelativePath),
     true,

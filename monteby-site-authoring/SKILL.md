@@ -78,13 +78,12 @@ reusable across sites belongs in Builder/Core. Return `blocked_product_gap` and 
 `monteby-widget-development`; do not approximate it with classes, raw CSS, or
 theme code.
 
-**Version and contract boundary.** Classify a missing advertised feature before
-authoring: `blocked_plugin_version` when `productVersion` is below the feature's
-`minimumBuilderVersion`; `blocked_contract_inconsistency` when that Builder
-version should expose the feature but the declared capability/schema/component
-is missing; `blocked_product_gap` only when the live contract is internally
-consistent and the requested reusable behavior is genuinely absent. Never use
-one code as a catch-all for the other two.
+**Version and contract boundary.** Check the feature gate before authoring:
+`blocked_plugin_version` means `productVersion` fails `minimumBuilderVersion`
+and any explicit same-release `minimumPrereleaseVersion`.
+`blocked_contract_inconsistency` means a supported version omits the required capability/schema/component.
+`blocked_product_gap` means a consistent live contract genuinely lacks the requested reusable behavior.
+These three codes are not interchangeable.
 
 **Legal copy — `blocked_legal_copy`.** Author a consent checkbox, privacy link,
 or any legal wording only when approved project requirements explicitly include
@@ -133,10 +132,11 @@ For a static diagnostic preview, pass that same full response through
 from a family name. Unresolved references or font sources block the diagnostic,
 and generated HTML alone never proves the font loaded. Canonical acceptance
 still requires the saved WordPress/PHP render.
-Schema 3 also publishes this skill's `skillVersion`, `minimumBuilderVersion`,
-and named feature gates. Compare those gates to the live contract's
-`productVersion`; the contract's existing `version` remains the contract schema
-version and must never be treated as a plugin version.
+Schema 3 publishes `skillVersion`, `minimumBuilderVersion` and named feature gates.
+Use `evaluateFeatureGate` from `scripts/contract-capabilities.js` with the live
+`productVersion`; explicit prerelease floors admit that release's qualifying
+candidates without rewriting versions or replacing capability checks.
+The contract's `version` is its schema version, never the plugin version.
 
 When the full live contract publishes `iconCatalog`, bind each captured icon
 surface through `scripts/icon-mapping.js` before drafting. The mapping artifact

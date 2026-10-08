@@ -1,8 +1,11 @@
 # Monteby Skills
 
-Current release: `0.6.0`. Site Authoring 0.6.0 requires Monteby Builder 1.4.0
+Package version: `0.6.1`.
+The published `v0.6.0` tag remains unchanged. Site Authoring 0.6.1 requires Monteby Builder 1.4.0
 or newer for canonical writes and uses named feature gates from the live
-contract. Its complete 1.6 capability path requires Builder 1.6.0; older
+contract. Its complete 1.6 capability path requires Builder 1.6.0 or an
+explicitly admitted candidate from `1.6.0-rc.2`; the candidate's actual version
+and live capabilities are still checked. Older
 supported Builders keep the documented fallback workflows. Query controls
 remain available from Builder 1.3.9. Builder 1.5.0
 adds the optional live `designTokens` contract consumed by the shared design
@@ -23,6 +26,11 @@ request-scoped render filters, server-side composition planning and
 instantiation, revision restore, bulk page creation, global styles PATCH,
 design profiles, contract projections, per-component reads and WordPress
 Abilities — each with a named fallback so older sites keep the 1.5 routes.
+
+The 0.6.1 patch includes canonical operation-proof compatibility, hash-bound
+composition motion with mandatory server validation, linked-slot motion audits,
+and published FormBlock typography defaults shared by the Kit and drafter.
+It does not migrate saved layouts or install itself into existing agent directories.
 
 Reusable Agent Skills for working with the Monteby ecosystem.
 

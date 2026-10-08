@@ -205,7 +205,7 @@ test('abilities use the REST fallback when the host WordPress version cannot reg
   }, 'providerRenderedWidgetSave', manifest).code, 'blocked_contract_inconsistency');
 });
 
-test('every Builder 1.6 gate is optional, names a fallback, and blocks older plugins by version', () => {
+test('every Builder 1.6 gate validates stable and scoped RC capabilities without disabling older fallback rules', () => {
   const gates = ['contractLightProjection', 'contractDesignProjection', 'contractAuthoringProjection',
     'contractCatalogsProjection', 'contractComponentsSummary', 'annotatedRender', 'renderLayoutFilter',
     'renderGlobalStylesFilter', 'renderGlobalTemplateFilter', 'previewGlobalTemplates',
@@ -219,5 +219,28 @@ test('every Builder 1.6 gate is optional, names a fallback, and blocks older plu
     assert.match(gate.fallback, /^[a-z][a-z0-9-]+$/, `${name} fallback slug`);
     assert.equal(evaluateFeatureGate({ productVersion: '1.5.3' }, name, manifest).code, 'blocked_plugin_version');
     assert.equal(evaluateFeatureGate({ productVersion: '1.6.0' }, name, manifest).code, 'blocked_contract_inconsistency');
+    for (const productVersion of ['1.6.0', '1.6.0-rc.2']) {
+      const contract = { productVersion };
+      const parts = gate.contractPath.split('.');
+      const prop = parts.pop();
+      let owner = contract;
+      for (const key of parts) {
+        owner[key] = {};
+        owner = owner[key];
+      }
+      owner[prop] = gate.valueType === 'object' ? {} : gate.expectedValue;
+      assert.deepEqual(evaluateFeatureGate(contract, name, manifest), {
+        ok: true, code: 'feature_available', productVersion, featureName: name,
+      }, `${name} on ${productVersion}`);
+      contract.productVersion = '1.6.0-rc.1';
+      assert.equal(evaluateFeatureGate(contract, name, manifest).code, 'blocked_plugin_version', name);
+      contract.productVersion = productVersion;
+      for (const malformed of [null, [], 17, 'unsupported']) {
+        owner[prop] = malformed;
+        assert.equal(evaluateFeatureGate(contract, name, manifest).code, 'blocked_contract_inconsistency', `${name}: ${JSON.stringify(malformed)}`);
+      }
+      delete owner[prop];
+      assert.equal(evaluateFeatureGate(contract, name, manifest).code, 'blocked_contract_inconsistency', `${name} missing`);
+    }
   }
 });
