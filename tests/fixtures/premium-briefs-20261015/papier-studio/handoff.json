@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "artifact": "monteby-design-handoff",
   "mode": "content-brief-authoring",
-  "status": "offline-proposal-awaiting-live-revalidation",
-  "page": { "id": 11253, "site": "http://127.0.0.1:8192", "slug": "qa-papier-studio", "title": "Papier Studio — fikcyjne demo QA" },
+  "status": "refinement-operations-ready-for-canonical-validation",
+  "page": { "id": 11253, "site": "http://127.0.0.1:8192", "slug": "premium-qa-papier-studio-20261015", "title": "Papier Studio — fikcyjne demo QA" },
   "provenance": {
     "brief": "brief.md",
     "briefSha256": "a81a34af38086066dbabff6cc0ebef18df1ca3ff83bebad0c1eb9692311161f6",
@@ -24,16 +24,17 @@
     "reason": "Redakcyjna hierarchia i spokojne czytanie dłuższych opisów; bez fotografii, opinii i dekoracyjnych animacji."
   },
   "visualDirection": {
-    "hierarchy": "Jeden H1 otwiera szeroką ramę tekstową; krótsze wprowadzenie obok, zakres jako trzy pełne wiersze z liniami. Proces niżej jest jedynym pasmem kart.",
-    "rhythm": "Zwarta nawigacja → rozbudowane redakcyjne otwarcie z zakresem → uporządkowany proces → krótsze kontrastowe zaproszenie → spokojna stopka.",
-    "typography": "Presety h1/h2/h3/body/eyebrow/button z live globals; brak lokalnych rozmiarów i kopiowania obliczonych wartości. Zatwierdzony profil testować tymczasowo i sekwencyjnie na lokalnej witrynie; po pomiarze przywrócić oryginalne ustawienia z weryfikacją.",
+    "hierarchy": "Jeden H1 otwiera redakcyjną ramę tekstową; wprowadzenie ma kontrolowaną miarę. Osobny H2 Zakres pracy poprzedza trzy pełne wiersze usług. Proces jest uporządkowaną sekwencją wierszy, nie ścianą kart.",
+    "rhythm": "Zwarta nawigacja → przestronne redakcyjne otwarcie → zwięzły zakres z liniami → proces o spokojniejszym rytmie → krótsze kontrastowe zaproszenie → spokojna stopka.",
+    "typography": "Presety h1/h2/body/eyebrow/button z live globals. Kontrakt nie publikuje h3, dlatego sześć semantycznych H3 zachowuje tag h3 i wiąże istniejący preset h2 z lokalną hierarchią 24/24/22 px; rodzina i pozostała typografia nadal pochodzą z presetu. Navbar nie publikuje fontFamily ani typographyPreset — bez nielegalnego obejścia, rzeczywiste dziedziczenie fontu wymaga pomiaru. Profil pozostaje tymczasowy i wymaga przywrócenia z weryfikacją.",
     "interaction": "Tylko kotwice i responsywna nawigacja. Bez motion i bez formularza.",
-    "mobile": "Tytuł, wprowadzenie i CTA przed zakresem; każdy temat oraz opis w jednej kolejności DOM. Proces składa się pionowo. Sprawdzić długość wiersza i brak osieroconych kart na 375 px."
+    "mobile": "Tytuł, wprowadzenie i CTA przed zakresem; każdy temat oraz opis w jednej kolejności DOM. Proces od tabletu ma jedną kolumnę, bez wąskich kart. Na telefonie wiersze mają krótsze odstępy, a Kontakt pozostaje widoczną akcją. Sprawdzić 390 i 375 px."
   },
   "sections": [
     { "id": "start", "compositionId": "site-navigation", "rhythm": "compact" },
-    { "id": "zakres", "compositionId": "hero-agenda", "rhythm": "editorial-introduction-and-rows" },
-    { "id": "wspolpraca", "compositionId": "content-cards", "rhythm": "three-step-process" },
+    { "id": "opening", "compositionId": "hero-editorial", "rhythm": "editorial-introduction" },
+    { "id": "zakres", "compositionId": "services-list", "rhythm": "editorial-service-rows-after-refinement" },
+    { "id": "wspolpraca", "compositionId": "text-columns", "rhythm": "editorial-process-rows-after-refinement" },
     { "id": "kontakt", "compositionId": "closing-cta", "rhythm": "contrast" },
     { "id": "footer", "compositionId": "site-footer", "rhythm": "compact" }
   ],
@@ -41,12 +42,41 @@
   "assets": [],
   "chrome": { "scope": "standalone-qa-page", "globalTemplatesMayBeChanged": false, "duplicateHeaderFooterAllowed": false, "presentationPendingLiveCapabilityCheck": true },
   "decisions": [
-    "Zakres pracy pozostaje częścią otwarcia, dlatego #zakres prowadzi do hero-agenda. Nie dodaję osobnego, pustego pasma z powtórzonym tytułem.",
+    "Hero-agenda nie publikuje slotu nagłówka grupy. Osobne services-list zachowuje dokładny tytuł Zakres pracy i jego trzy opisy; #zakres prowadzi do tej sekcji. Sześć pasm pozostaje w granicach briefu.",
+    "Kontakt występuje raz w nawigacji jako wymagany CTA. Operacja Navbar.ctaContentModeMobile=label zachowuje mobilną akcję; menuButtonContentMode=icon zostawia dostarczoną etykietę Na tej stronie jako nazwę dostępną. Konieczna jest kontrola na 390/375 px.",
+    "Receptury są strukturą wyjściową. Po server-compose usuwamy wyłącznie trzy dekoracyjne IconBlock w services-list, a istniejące kontenery ustawiamy jako redakcyjne wiersze. Proces text-columns otrzyma jedną kolumnę zamiast trzech ciasnych kart; nie dodajemy surowego CSS ani technicznych klas.",
+    "Operacje są związane z canonical snapshotem zapisanej kompozycji v2; nie używają starych ID hero-agenda/content-cards. Dwa nowe kontenery ograniczają miarę akapitów, ponieważ Heading/Text nie publikują maxWidth.",
+    "Wszystkie 24 Heading/Text otrzymują jawny marginTop=0px obok istniejącego marginBottom=0px. Odstępy kontroluje gap kontenera, nie zależny od motywu margines elementu tekstowego; inspekcja obejmuje typography_styles_from_props oraz preview Heading/Text.",
     "Nazwa etapu Rozpoznanie, Wspólne decyzje i Przekazanie nie jest rzekomą liczbą sukcesów ani obietnicą terminu.",
     "Lokalne Navbar/site-navigation służy wyłącznie samodzielnej stronie QA. W prawdziwym globalnym nagłówku obowiązuje SiteBranding + WPMenu z live host choices."
   ],
+  "refinement": {
+    "operationsPath": "/Users/michalmadejski/.codex/worktrees/skills-premium-authoring/monteby-skills/output/papier-refinement-operations.json",
+    "operationsSha256": "2750c05e32444cf1d45a03887bbe6376565cfa894636e72bcb642c5416d71847",
+    "operationCount": 50,
+    "snapshotPath": "/Users/michalmadejski/.codex/worktrees/builder-premium-authoring/monteby-builder/output/premium-authoring-20261015/papier-studio/refinement/layout-before.json",
+    "snapshotSha256": "87d6f6789c58796f56c384e4e7b75d5200778b873e8b961406150341f656c3ee",
+    "sourceLayoutSha256": "883c383b7ff6d7855b084f5656b721b86eb7af0e22bcb782b5923535cb2d4430",
+    "sourcePostModifiedGmt": "2026-10-15 20:47:52",
+    "contractPath": "/Users/michalmadejski/.codex/worktrees/builder-premium-authoring/monteby-builder/output/premium-authoring-20261015/papier-studio/refinement/contract.json",
+    "contractSha256": "7eb2611df50040aa7ca08615dc30d078b21db1b2e952c43df195c91f0559c1c4",
+    "offlineVerification": {
+      "structuralOwner": "StoredLayoutMigrator::migrate → Monteby Core NodeMapOperations::apply",
+      "validator": "normalize-layout.js with captured live contract",
+      "nodeCount": 53,
+      "rootSectionCount": 6,
+      "h1Count": 1,
+      "existingTextAndPresetBindingsPreserved": true,
+      "motionOwnerCount": 0,
+      "errors": [],
+      "repairs": [],
+      "warnings": [],
+      "liveSaveExecuted": false,
+      "publicVisualVerdict": "pending"
+    }
+  },
   "contentVerification": { "documentVersion": 2, "status": "not-prepared-no-existing-markdown-generator", "pageId": 11253, "scopeViewUrlSource": "canonical-layout-snapshot.viewUrl-required", "sourceHashPolicy": "canonicalClientSourceSha256 hashes ordered approved entries; raw brief bytes remain bound by provenance.briefSha256", "safeRoute": "README.md#dokument-treści-v2--potwierdzona-trasa-i-brak-generatora", "canonicalVerified": false },
-  "pending": ["Odświeżony live contract po instalacji kandydata", "Rozwinięcie przez composition-plan i walidacja", "Snapshot globals → compose/preview → autoryzowany test profilu → przywrócenie i readback", "Porównanie briefu i liczby wystąpień z publicznym capture; bez deklaracji 1:1", "Publiczny PHP i niezależny review zrzutów 1440/834/390/375"],
-  "technicalVerdict": "not-executed",
-  "visualVerdict": "not-reviewed"
+  "pending": ["Potwierdzić sourceLayoutSha256 oraz świeże preconditions → patch-validate → patch-save → readback przez integratora", "Snapshot globals → autoryzowany test profilu → przywrócenie i readback", "Inwentarz całej treści briefu oraz liczby wystąpień po publicznym PHP", "Rzeczywiście załadowane fonty H1/H3/body/Navbar i niezależny review zrzutów 1440/834/390/375", "Sprawdzić widoczny Kontakt, nazwę przycisku menu, keyboard/focus i układ redakcyjnych wierszy na telefonie"],
+  "technicalVerdict": "refinement-not-executed",
+  "visualVerdict": "initial-review-competent-not-premium-refinement-pending"
 }

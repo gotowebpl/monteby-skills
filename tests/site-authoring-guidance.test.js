@@ -33,6 +33,16 @@ test('brief workflow requires source-bound content and a separate qualitative vi
   assert.match(brief, /`complete: true` oraz `sourceBound: true`/);
   assert.match(brief, /`expectedModifiedGmt` i `expectedLayoutSha256`/);
   assert.match(brief, /samo HTTP 200 nie jest dowodem/);
+  assert.match(brief, /inwentarz treści przed `composition-plan`/);
+  assert.match(brief, /nagłówki grup, etykiety nawigacji i pary `label`\/`href`/);
+  assert.match(brief, /po zapisie z publicznym WordPress\/PHP/);
+  assert.match(brief, /Brak odpowiedniego slotu nie uprawnia do pominięcia nagłówka/);
+  assert.match(brief, /sąsiedni link i CTA o tym samym celu/);
+  assert.match(brief, /jedyną dostępną akcją na telefonie/);
+  assert.match(brief, /faktycznie używanym foncie/);
+  assert.match(brief, /Sam `font-family` w computed style/);
+  assert.match(brief, /nie jest dowodem pobrania fontu/);
+  assert.doesNotMatch(brief, /Papier Studio|Orbit Desk|Forma Wnętrz/);
   assert.match(handoff, /passing tests are necessary but do not\s+prove premium design/);
   assert.match(handoff, /reviewer who did not build the\s+page/);
   assert.match(handoff, /only then use the existing explicit-brief motion plan/);

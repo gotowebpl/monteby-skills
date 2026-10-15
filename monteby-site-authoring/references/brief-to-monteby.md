@@ -41,6 +41,23 @@ Przed rozwinięciem planu sprawdź zgodność z briefem:
 - Dla pełnej strony sprawdź obecność nagłówka z nawigacją, hero i stopki; uwzględnij istniejące globalne szablony nagłówka i stopki, aby nie dodawać ich ponownie w treści strony.
 - Wybierz dostępny hero pasujący do dostarczonych zasobów. Bez zatwierdzonego zdjęcia wybierz hero bez mediów; nie wymyślaj zdjęcia, aby wypełnić slot.
 
+Przygotuj inwentarz treści przed `composition-plan`: uwzględnij także krótkie
+nagłówki grup, etykiety nawigacji i pary `label`/`href`, nie tylko główne akapity.
+Każdy wpis powiąż z zatwierdzonym briefem, rolą, docelowym slotem i oczekiwaną
+liczbą wystąpień. Porównaj ten sam inwentarz z rozwiniętym layoutem, a potem
+po zapisie z publicznym WordPress/PHP. Brak odpowiedniego slotu nie uprawnia do pominięcia nagłówka
+ani wklejenia go do opisu, etykiety ozdobnej lub tytułu innej grupy. Wybierz
+inną recepturę albo połącz istniejące pasma zachowujące właściwą hierarchię;
+jeśli to niemożliwe, zgłoś konkretną lukę kontraktu. Powtarzająca się marka
+w nagłówku i stopce jest innym przypadkiem niż przypadkowo zdublowany CTA.
+
+Sprawdź sąsiedni link i CTA o tym samym celu: bez jawnego uzasadnienia nie
+pokazuj tej samej akcji dwa razy w jednym obszarze nawigacji. Przy deduplikacji
+sprawdź każdy breakpoint i otwarte menu — usuwany link może być
+jedyną dostępną akcją na telefonie, jeśli receptura ukrywa tam CTA. Zachowaj
+etykietę i cel z briefu oraz co najmniej jedną widoczną, klikalną drogę do celu;
+używaj wyłącznie opublikowanych kontrolek, nie dodatkowego CSS-u.
+
 Zapisz `.monteby/plan-<slug>.json` w kształcie:
 
 ```json
@@ -335,6 +352,14 @@ z jego `globalStyles`, `designTokens`, `typographyPreset` i `fontCatalog`,
 bez przepisywania powiązań na literały w JSON. Nierozpoznana referencja, preset
 lub brak źródła opublikowanego fontu blokuje podgląd; nie zastępuj go przypadkowym
 fontem ani paletą. Samo poprawne wygenerowanie HTML nie potwierdza pobrania fontu.
+
+Przed oceną typografii zapisz dowód o faktycznie używanym foncie na publicznym
+H1 i tekście body: rodzinę, używaną wagę, źródło z `fontCatalog`, stan żądania
+zasobu oraz informację przeglądarki o wyrenderowanym foncie. Sam `font-family` w computed style
+nie jest dowodem pobrania fontu ani braku zastępczego kroju. Dla fontu systemowego
+żądanie sieciowe nie jest wymagane. Brak fontu, brak glifów lub syntetyczna
+waga wymaga jawnego rozliczenia przed werdyktem wizualnym; nie zmieniaj po cichu
+rodziny ani nie udawaj, że zgodny preset w JSON potwierdza wygląd.
 
 ## Bramka końcowa: porównanie zrzutów
 
