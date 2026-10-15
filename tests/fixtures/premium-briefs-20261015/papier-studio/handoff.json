@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "artifact": "monteby-design-handoff",
   "mode": "content-brief-authoring",
-  "status": "refinement-operations-ready-for-canonical-validation",
+  "status": "polish-v3-canonical-save-readback-and-visual-review-complete",
   "page": { "id": 11253, "site": "http://127.0.0.1:8192", "slug": "premium-qa-papier-studio-20261015", "title": "Papier Studio — fikcyjne demo QA" },
   "provenance": {
     "brief": "brief.md",
@@ -28,7 +28,96 @@
     "rhythm": "Zwarta nawigacja → przestronne redakcyjne otwarcie → zwięzły zakres z liniami → proces o spokojniejszym rytmie → krótsze kontrastowe zaproszenie → spokojna stopka.",
     "typography": "Presety h1/h2/body/eyebrow/button z live globals. Kontrakt nie publikuje h3, dlatego sześć semantycznych H3 zachowuje tag h3 i wiąże istniejący preset h2 z lokalną hierarchią 24/24/22 px; rodzina i pozostała typografia nadal pochodzą z presetu. Navbar nie publikuje fontFamily ani typographyPreset — bez nielegalnego obejścia, rzeczywiste dziedziczenie fontu wymaga pomiaru. Profil pozostaje tymczasowy i wymaga przywrócenia z weryfikacją.",
     "interaction": "Tylko kotwice i responsywna nawigacja. Bez motion i bez formularza.",
-    "mobile": "Tytuł, wprowadzenie i CTA przed zakresem; każdy temat oraz opis w jednej kolejności DOM. Proces od tabletu ma jedną kolumnę, bez wąskich kart. Na telefonie wiersze mają krótsze odstępy, a Kontakt pozostaje widoczną akcją. Sprawdzić 390 i 375 px."
+    "mobile": "Tytuł, wprowadzenie i CTA przed zakresem; każdy temat oraz opis w jednej kolejności DOM. Proces od tabletu ma jedną kolumnę, bez wąskich kart. Na telefonie wiersze mają krótsze odstępy, a Kontakt pozostaje dostępny po otwarciu menu. Poprawka v3 zapisuje H1 42px na mobile i maksymalną szerokość grupy procesu 560px od tabletu. Nowe zrzuty 834/390/375 potwierdzają spokojniejsze łamanie H1 oraz krótszą miarę opisów procesu."
+  },
+  "polishV3": {
+    "status": "canonical-patch-save-readback-verified",
+    "operationsPath": "/Users/michalmadejski/.codex/worktrees/skills-premium-authoring/monteby-skills/output/papier-polish-operations.json",
+    "operationsSha256": "3945192dd92cb0cccd29fd684d86e6d7d488300014777feaefafcfd7c211356c",
+    "operationCount": 2,
+    "sourceSnapshotPath": "/Users/michalmadejski/.codex/worktrees/builder-premium-authoring/monteby-builder/output/premium-authoring-20261015/papier-studio/refinement/saved-patch/layout-before.json",
+    "sourceSnapshotSha256": "a5fd9595d482f96f6626988e9601e0bff90a834275927e85d004cc7337807557",
+    "sourceLayoutSha256": "6e6dd0940f81664c2c196ef20b2bdc2d5a10cd00397b7ce60d400ed9fa59cac0",
+    "freshSnapshotRequiredBeforeApply": true,
+    "changes": [
+      "hero-editorial-4: fontSizeMobile=42px; zachowany preset h1 oraz desktop/tablet. Celem jest spokojniejsze łamanie przy 375px bez ręcznych podziałów ani zmiany treści.",
+      "text-columns-4: maxWidthTablet=560px; istniejące trzy wiersze dziedziczą kontrolowaną miarę. Desktop zachowuje maxWidth=960px; mobile pozostaje ograniczony dostępną szerokością. Nie powstają nowe wrappery."
+    ],
+    "offlineVerification": {
+      "owners": "StoredLayoutMigrator::migrate → Core NodeMapOperations::apply; normalize-layout.js with captured live contract",
+      "onlyTwoRequestedPropsChanged": true,
+      "nodeCount": 53,
+      "errors": [],
+      "repairs": [],
+      "warnings": [],
+      "liveSaveExecuted": false
+    },
+    "canonicalVerification": {
+      "executor": "integrator-through-canonical-wordpress-layout-client",
+      "reviewer": "independent-artifact-and-screenshot-review",
+      "validate": {
+        "path": "/Users/michalmadejski/.codex/worktrees/builder-premium-authoring/monteby-builder/output/premium-authoring-20261015/papier-studio/polish/patch-validate-response.json",
+        "sha256": "d768aa304d264bc74eb73933b77e5767de459bbeb13ffcd6171e7b3ef112175b",
+        "code": "PATCH_VALIDATION_OK",
+        "httpStatus": 200,
+        "valid": true,
+        "lint": []
+      },
+      "save": {
+        "path": "/Users/michalmadejski/.codex/worktrees/builder-premium-authoring/monteby-builder/output/premium-authoring-20261015/papier-studio/polish/patch-save-response.json",
+        "sha256": "b4197bf8c454a94c1e701a53a779bb8a1a45dcc3fa9b3a68b25173bee54b2201",
+        "code": "PATCH_SAVE_OK",
+        "httpStatus": 200,
+        "saved": true,
+        "revisionId": 11276,
+        "postModifiedGmt": "2026-10-15 21:09:31"
+      },
+      "readback": {
+        "path": "/Users/michalmadejski/.codex/worktrees/builder-premium-authoring/monteby-builder/output/premium-authoring-20261015/papier-studio/polish/saved-patch/layout-before.json",
+        "sha256": "d5be44444993d68f24b7a8ac3647715d127ef1aa6c8e585e61edc1baadca539a",
+        "capturedAt": "2026-10-15T21:09:32.802Z"
+      },
+      "operationCount": 2,
+      "operationsPayloadSha256": "0b856bb16a7e8493528b296c8af10047927262dfe89792e29704330c14b99dc7",
+      "updatedNodeIds": ["hero-editorial-4", "text-columns-4"],
+      "insertedNodeIds": [],
+      "deletedNodeIds": [],
+      "nodeCountIncludingRoot": 53,
+      "serializedEntryCountIncludingSchemaVersion": 54,
+      "layoutSha256": "a15f00037c3f6456abeadc318ee5fc7763a7f673ab421637f5b46348ba669226",
+      "validateSaveAndReadbackDigestsMatch": true
+    },
+    "visualReview": {
+      "surface": "canonical-public-PHP-with-temporary-authorized-editorial-serif-profile",
+      "screenshots": [
+        { "path": "/Users/michalmadejski/.codex/worktrees/builder-premium-authoring/monteby-builder/output/playwright/premium-authoring-20261015/papier-polish-1440.png", "sha256": "69ee1784c508eba1a9b45d61e5ddf2daddcfd3bd3b7e02dfad9e147767500564", "width": 1440, "height": 2094 },
+        { "path": "/Users/michalmadejski/.codex/worktrees/builder-premium-authoring/monteby-builder/output/playwright/premium-authoring-20261015/papier-polish-834.png", "sha256": "cdf3171f4a6dd8e7302be7c0c16778d49ae2a5af6ff0889444def6a0e40656ae", "width": 834, "height": 2116 },
+        { "path": "/Users/michalmadejski/.codex/worktrees/builder-premium-authoring/monteby-builder/output/playwright/premium-authoring-20261015/papier-polish-390.png", "sha256": "3a119366aac1fc580a9627e94b06922c8ea3ba2c921718eae907e9e68260c990", "width": 390, "height": 2330 },
+        { "path": "/Users/michalmadejski/.codex/worktrees/builder-premium-authoring/monteby-builder/output/playwright/premium-authoring-20261015/papier-polish-375.png", "sha256": "285ba1a93889d66cbc1adbceb187278a55acc5795e2f9b8d970cd16111186585", "width": 375, "height": 2356 }
+      ],
+      "improvements": [
+        "Na 375 i 390 px H1 ma trzy zrównoważone wiersze bez wcześniejszego rozdzielenia Dajemy i tekstom; hero jest spokojniejsze i krótsze.",
+        "Na 834 px opisy procesu mają kontrolowaną miarę oraz czytelne dwuwierszowe akapity, bez poprzednich nadmiernie długich linii.",
+        "Na 1440 px pozostaje redakcyjna hierarchia i rytm bez zauważonego pogorszenia po dwóch lokalnych zmianach."
+      ],
+      "remainingQualityGaps": [
+        "Układ jest kompetentny i czytelny, ale jego sekcje oraz wyśrodkowane kontrastowe CTA pozostają rozpoznawalnymi recepturami; brak wyraźnego autorskiego wyróżnika premium.",
+        "Zrzuty nie dowodzą działania klawiatury, kotwic ani pełnej zgodności inwentarza treści. Brak zdjęć i dekoracyjnego motion jest zgodny z briefem, nie stanowi brakującej funkcji."
+      ],
+      "verdict": "competent-editorial-not-distinctive-premium"
+    },
+    "globalRestore": {
+      "status": "restored-and-layout-digest-unchanged",
+      "readbackPath": "/Users/michalmadejski/.codex/worktrees/builder-premium-authoring/monteby-builder/output/premium-authoring-20261015/global-styles-restored.json",
+      "readbackSha256": "e4a4af79fa69c7291077a9555dbb1175ad26d15ed95b6112e71b37647eaf6660",
+      "revision": "f5c745e82e4ec26a5ac1a9a9e29b507fc64a0a7c4927cddf9849d8cf7a85a8e0",
+      "pageReadbackPath": "/Users/michalmadejski/.codex/worktrees/builder-premium-authoring/monteby-builder/output/premium-authoring-20261015/papier-studio/after-global-restore/layout-before.json",
+      "pageReadbackSha256": "3af14edc8e1d16a5c90aa1e4db55ec1162b021ab103f9ed8eee2f5e7016f8e03",
+      "pageReadbackCapturedAt": "2026-10-15T21:18:04.873Z",
+      "layoutSha256": "a15f00037c3f6456abeadc318ee5fc7763a7f673ab421637f5b46348ba669226",
+      "screenshotsDescribeTemporaryProfileNotPostRestoreAppearance": true
+    },
+    "visualVerdict": "competent-editorial-not-distinctive-premium"
   },
   "sections": [
     { "id": "start", "compositionId": "site-navigation", "rhythm": "compact" },
@@ -76,7 +165,7 @@
     }
   },
   "contentVerification": { "documentVersion": 2, "status": "not-prepared-no-existing-markdown-generator", "pageId": 11253, "scopeViewUrlSource": "canonical-layout-snapshot.viewUrl-required", "sourceHashPolicy": "canonicalClientSourceSha256 hashes ordered approved entries; raw brief bytes remain bound by provenance.briefSha256", "safeRoute": "README.md#dokument-treści-v2--potwierdzona-trasa-i-brak-generatora", "canonicalVerified": false },
-  "pending": ["Potwierdzić sourceLayoutSha256 oraz świeże preconditions → patch-validate → patch-save → readback przez integratora", "Snapshot globals → autoryzowany test profilu → przywrócenie i readback", "Inwentarz całej treści briefu oraz liczby wystąpień po publicznym PHP", "Rzeczywiście załadowane fonty H1/H3/body/Navbar i niezależny review zrzutów 1440/834/390/375", "Sprawdzić widoczny Kontakt, nazwę przycisku menu, keyboard/focus i układ redakcyjnych wierszy na telefonie"],
-  "technicalVerdict": "refinement-not-executed",
-  "visualVerdict": "initial-review-competent-not-premium-refinement-pending"
+  "pending": ["Inwentarz całej treści briefu oraz liczby wystąpień po publicznym PHP; brak formalnej deklaracji 1:1"],
+  "technicalVerdict": "v3-canonical-patch-save-readback-verified-global-restore-verified",
+  "visualVerdict": "v3-competent-editorial-not-distinctive-premium"
 }

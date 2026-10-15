@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "artifact": "monteby-design-handoff",
   "mode": "content-brief-authoring",
-  "status": "offline-proposal-with-approved-imported-media",
-  "page": { "id": 11257, "site": "http://127.0.0.1:8192", "slug": "qa-forma-wnetrz", "title": "Forma Wnętrz — fikcyjne demo QA" },
+  "status": "final-alignment-saved-public-screenshots-reviewed",
+  "page": { "id": 11257, "site": "http://127.0.0.1:8192", "slug": "premium-qa-forma-wnetrz-20261015", "title": "Premium QA — Forma Wnętrz", "viewUrl": "http://127.0.0.1:8192/premium-qa-forma-wnetrz-20261015/" },
   "provenance": {
     "brief": "brief.md",
     "briefSha256": "e27e364202db11c43b901b2d4d5804e65723b5a74a0cdcee99a02eef7dc78819",
@@ -25,16 +25,16 @@
   },
   "visualDirection": {
     "hierarchy": "Jeden H1 z krótkim wprowadzeniem i CTA nad szerokim obrazem, bez nakładki tekstowej na zdjęciu. Kolejny blok jest deklaracją, nie kolejną galerią.",
-    "rhythm": "Duże medium → krótszy manifest z oddechem → trzy kroki procesu → kontakt bez formularza → stopka.",
-    "typography": "Presety globalne h1/h2/body/eyebrow/button; zatwierdzony profil testować wyłącznie tymczasowo i sekwencyjnie na lokalnej witrynie, z przywróceniem oryginalnych ustawień i potwierdzeniem readback. Nie kopiować wartości do lokalnych propsów.",
+    "rhythm": "Duże medium → krótszy manifest z oddechem → trzy liniowe wiersze procesu na tle paper → kontakt bez formularza → stopka. Refinement zmienia wyłącznie istniejące kontenery procesu, bez nowych pasm.",
+    "typography": "Presety globalne h1/h2/body/eyebrow/button; zatwierdzony profil testować wyłącznie tymczasowo i sekwencyjnie na lokalnej witrynie, z przywróceniem oryginalnych ustawień i potwierdzeniem readback. H3 procesu zachowują semantyczne tagi i dostają preset h2 z lokalną skalą 28/26/24px: rodzina, waga, interlinia i tracking pozostają globalne. Nie kopiować wartości globalnych do lokalnych propsów.",
     "interaction": "Kotwice i nawigacja. Brak parallax, zoomu tła, autoplay oraz dodanych opinii.",
-    "mobile": "Po obejrzeniu zrzutu dobrać kadr tak, aby widoczny pozostał fotel i fragment okna. Obecna receptura kadruje cover: nie deklarować zatwierdzonego kadru przed publicznym pomiarem. Czytelne CTA przed obrazem."
+    "mobile": "Na publicznych zrzutach 390 i 375px fotel, stolik i okno pozostają widoczne; zachować obecny kadr i CTA przed obrazem. Proces po refinement ma jedną kolumnę, tytuł przed opisem. Zachować link Kontakt w menu, ponieważ osobny CTA jest na telefonie ukryty."
   },
   "sections": [
     { "id": "start", "compositionId": "site-navigation", "rhythm": "compact" },
     { "id": "hero", "compositionId": "hero-photo-led", "rhythm": "photo-led" },
     { "id": "podejscie", "compositionId": "manifesto", "rhythm": "statement" },
-    { "id": "proces", "compositionId": "content-cards", "rhythm": "three-step-process" },
+    { "id": "proces", "compositionId": "content-cards", "rhythm": "three-editorial-process-rows", "refinement": "Existing composition nodes only; horizontal 30/70 title/description rows on desktop/tablet, stacked on mobile." },
     { "id": "kontakt", "compositionId": "closing-cta", "rhythm": "contrast" },
     { "id": "footer", "compositionId": "site-footer", "rhythm": "compact" }
   ],
@@ -57,7 +57,107 @@
   }],
   "chrome": { "scope": "standalone-qa-page", "globalTemplatesMayBeChanged": false, "duplicateHeaderFooterAllowed": false, "presentationPendingLiveCapabilityCheck": true },
   "contentVerification": { "documentVersion": 2, "status": "not-prepared-no-existing-markdown-generator", "pageId": 11257, "scopeViewUrlSource": "canonical-layout-snapshot.viewUrl-required", "sourceHashPolicy": "canonicalClientSourceSha256 hashes ordered approved entries; raw brief bytes remain bound by provenance.briefSha256", "safeRoute": "README.md#dokument-treści-v2--potwierdzona-trasa-i-brak-generatora", "canonicalVerified": false },
-  "pending": ["Ponowne potwierdzenie live contract po instalacji nowej paczki", "Snapshot globals → compose/preview → autoryzowany test profilu → przywrócenie i readback", "Porównanie briefu i liczby wystąpień z publicznym capture; bez deklaracji 1:1", "Kadry i czytelność na 1440/834/390/375", "Publiczny PHP i niezależny review"],
-  "technicalVerdict": "not-executed",
-  "visualVerdict": "not-reviewed"
+  "refinement": {
+    "mode": "live-page-edit",
+    "status": "applied-readback-confirmed",
+    "operations": "../../../../output/forma-refinement-operations.json",
+    "operationsSha256": "c57495ea51fd725dd721d636e5e30a3cd4ca9e8ebda1f69fff346942810909d4",
+    "operationsFileSha256": "bbb62a2d078f7695b420bd5d5230153c8704cef59d23f43c5644db3597b3331c",
+    "snapshotPath": "/Users/michalmadejski/.codex/worktrees/builder-premium-authoring/monteby-builder/output/premium-authoring-20261015/forma-wnetrz/refinement/layout-before.json",
+    "snapshotFileSha256": "5a9e41eb182e8c94193920efc034506ad95ce8abb5d84478ed5d699e466b33da",
+    "layoutSha256": "dad04467083ae3452c7bb2c6a000a32fbbf253dc29d44bbb5e6f1b205738f620",
+    "postModifiedGmt": "2026-10-15 20:45:11",
+    "contractPath": "/Users/michalmadejski/.codex/worktrees/builder-premium-authoring/monteby-builder/output/premium-authoring-20261015/forma-wnetrz/refinement/contract.json",
+    "contractFileSha256": "733facac0a7ca4248db83ff6a3244d91675b1ad0ce7790d9b5df312bbb56bec5",
+    "decisions": [
+      "Hide only the duplicated Navbar CTA on desktop/tablet; keep all supplied menu labels and destinations, including the mobile Kontakt link. The existing mobile CTA is already hidden.",
+      "Use the published paper reference for the process band, separating it from the soft manifesto background without guessing a new color.",
+      "Replace boxed three-column process cards with three full-width rows using existing grid controls, 30/70 columns on desktop/tablet and one column on mobile; retain the existing line-color reference and all copy.",
+      "Bind each semantic H3 to the published h2 preset and override size only at 28/26/24px; use zero top margin to let the row padding own spacing. No font-family, weight, line-height or tracking literals are added.",
+      "Keep the approved hero image, crop, alt, all other bands, semantic tags, links, node IDs and parent/child relationships unchanged. No motion, proof, photos or new copy are introduced."
+    ],
+    "offlineChecks": { "operations": 9, "validatedProps": 71, "nodeCount": 45, "normalizationChanges": 0, "contentAndTreeUnchanged": true, "globalTypographyBindingsPreserved": true, "serverValidation": "confirmed-from-integrator-report", "savedPublicRender": "integrator-captured-four-widths-reviewed" },
+    "canonicalEvidence": {
+      "executionOwner": "integrator; independently read and compared here, not re-executed",
+      "validation": { "path": "/Users/michalmadejski/.codex/worktrees/builder-premium-authoring/monteby-builder/output/premium-authoring-20261015/forma-wnetrz/refinement/patch-validate-response.json", "fileSha256": "5f1269f7c71bbab101d1766633d016ef3e270fdb50621c221195ec8fdd1b79e8", "code": "PATCH_VALIDATION_OK", "httpStatus": 200, "valid": true, "lint": [] },
+      "save": { "path": "/Users/michalmadejski/.codex/worktrees/builder-premium-authoring/monteby-builder/output/premium-authoring-20261015/forma-wnetrz/refinement/patch-save-response.json", "fileSha256": "bedabb5aece8da5dc62716b7eabcc31d7cd0b9302175cf00de11a38e42020f24", "code": "PATCH_SAVE_OK", "httpStatus": 200, "revisionId": 11289, "postModifiedGmt": "2026-10-15 21:14:18" },
+      "readback": { "path": "/Users/michalmadejski/.codex/worktrees/builder-premium-authoring/monteby-builder/output/premium-authoring-20261015/forma-wnetrz/refinement/saved-patch/layout-before.json", "fileSha256": "e720622d7d460887b9cc1f0d99b2a6965a7fb85f45caa56109063bfec209cfb5", "capturedAt": "2026-10-15T21:14:55.667Z", "layoutSha256": "7b4fe62c4d05d8e43bc40a0c49e6d427432a1ebbb8edbffa5284439ff2af32df", "postModifiedGmt": "2026-10-15 21:14:18" },
+      "compiledHtmlSha256": "8eafd4af4e86524008fda54b12505e6d06e4e4e0deb5e446f934717b1932d8ac",
+      "changedNodeIds": ["content-cards-1", "content-cards-11", "content-cards-12", "content-cards-4", "content-cards-5", "content-cards-6", "content-cards-8", "content-cards-9", "site-navigation-2"],
+      "noInsertedMovedOrDeletedNodes": true,
+      "savedReadbackMatchesCandidateAndVersion": true,
+      "readbackPreservesTreeTextMediaAndLinks": true,
+      "presentation": { "layout": "canvas", "disableGlobalTemplates": true }
+    }
+  },
+  "visualReview": {
+    "scope": "Read-only review of integrator-provided public screenshots before refinement; not a browser interaction, network-font or source-bound 1:1 verification.",
+    "screenshots": [
+      "/Users/michalmadejski/.codex/worktrees/builder-premium-authoring/monteby-builder/output/playwright/premium-authoring-20261015/forma-final-1440.png",
+      "/Users/michalmadejski/.codex/worktrees/builder-premium-authoring/monteby-builder/output/playwright/premium-authoring-20261015/forma-final-834.png",
+      "/Users/michalmadejski/.codex/worktrees/builder-premium-authoring/monteby-builder/output/playwright/premium-authoring-20261015/forma-final-390.png",
+      "/Users/michalmadejski/.codex/worktrees/builder-premium-authoring/monteby-builder/output/playwright/premium-authoring-20261015/forma-final-375.png"
+    ],
+    "strengths": ["Hero image is the dominant asset and has a coherent warm architectural subject.", "Text stays outside the photograph and the demonstration disclaimer is readable.", "Mobile order keeps the introduction and primary action before the image; the chair and window remain in the crop."],
+    "findings": ["Desktop navigation repeats Kontakt as adjacent link and CTA.", "Process cards are generic boxed UI and narrow on tablet; their headings are missing the global typographyPreset in the snapshot.", "Manifesto and process currently merge into one long soft-colored region; the proposed paper process band restores a distinct reading beat."],
+    "limits": ["The closed-menu screenshots do not prove mobile drawer interaction or focus.", "Screenshots do not prove downloaded/rendered font identity.", "This subsection records the pre-refinement baseline; the saved result is reviewed separately below."]
+  },
+  "postRefinementVisualReview": {
+    "scope": "Independent review of four integrator-captured public PHP screenshots after the canonical patch and matching saved snapshot; no browser actions executed by this reviewer.",
+    "screenshots": [
+      { "path": "/Users/michalmadejski/.codex/worktrees/builder-premium-authoring/monteby-builder/output/playwright/premium-authoring-20261015/forma-polish-1440.png", "width": 1440, "height": 2609, "sha256": "ec2421a0499ffe0028c4ebbffbbdc0ac4c527abfa867b14be9594265f3ad6adb" },
+      { "path": "/Users/michalmadejski/.codex/worktrees/builder-premium-authoring/monteby-builder/output/playwright/premium-authoring-20261015/forma-polish-834.png", "width": 834, "height": 2638, "sha256": "81cfe00ba5184c52c2b766d559366f6300187fc6ea991f5bddc7b98459fdee15" },
+      { "path": "/Users/michalmadejski/.codex/worktrees/builder-premium-authoring/monteby-builder/output/playwright/premium-authoring-20261015/forma-polish-390.png", "width": 390, "height": 3238, "sha256": "2c52196991fe5efcf9e17ac994df2a225febf8bef3695b99e2d450fd5b01aa02" },
+      { "path": "/Users/michalmadejski/.codex/worktrees/builder-premium-authoring/monteby-builder/output/playwright/premium-authoring-20261015/forma-polish-375.png", "width": 375, "height": 3265, "sha256": "ba1dfb550057980cdd4f1338a1d91d044196d26803e22970ef784fa895115adc" }
+    ],
+    "resolved": ["Desktop navigation no longer shows the duplicated Kontakt CTA.", "The paper process band now reads as a distinct section after the soft manifesto band.", "Three linear process rows give descriptions usable width on tablet and preserve title-before-description order on both mobile widths.", "Process H3s now have a consistent visual role and a verified saved global typographyPreset binding."],
+    "assessment": "A coherent, restrained photo-led editorial demonstration, materially more finished than the composition scaffold. The hero image, serif/sans hierarchy and quiet process rows suit the supplied interior-studio brief. This is a qualitative judgment of this short demonstration, not a universal premium-design score, a 1:1 claim or proof that every unrelated brief will achieve the same quality.",
+    "remainingPolish": [
+      { "severity": "minor", "observation": "On desktop/tablet the process descriptions start visibly below the tops of their adjacent headings. This is a small optical-alignment issue, not clipping or lost content.", "status": "resolved-by-finalAlignment", "confirmedCause": "Integrator measured Text marginTop=16px against H3 marginTop=0px and a matching 16px top-coordinate difference; see /tmp/monteby-premium-forma-alignment.log." },
+      { "severity": "design-opportunity", "observation": "The centered dark closing CTA remains a conventional composition. It is coherent and satisfies the brief, but is not distinctive brand art direction.", "decision": "Keep within the current short fictional brief; do not invent portfolio imagery, claims or extra sections to simulate uniqueness." }
+    ],
+    "limits": ["No independent interaction, font-network, changed-copy stress or computed-overflow execution is claimed by this screenshot review.", "The temporary global profile must still be restored and verified by the integrator.", "The approved asset remains a labeled generated visualization, not evidence of a real studio project."]
+  },
+  "finalAlignment": {
+    "status": "applied-readback-and-public-alignment-confirmed",
+    "operations": "../../../../output/forma-alignment-operations.json",
+    "operationsSha256": "9c04c58764aaab2e6d248a1035209313e4a9241dab42f03bf8930966a7ceba59",
+    "operationsFileSha256": "01f26bbfaf3fc60f18df48ac3fa5b120d3ea1a3f04beb3c46ad16a5cd1ac8aea",
+    "scope": "Exactly three update_props operations setting marginTop to 0px on content-cards-7, content-cards-10 and content-cards-13; no other content, layout, media or global-style changes.",
+    "validation": { "path": "/Users/michalmadejski/.codex/worktrees/builder-premium-authoring/monteby-builder/output/premium-authoring-20261015/forma-wnetrz/alignment/patch-validate-response.json", "fileSha256": "02432fed529b9e2a5e6177e91d8c0a0730c833a728cd5b8d138150cdb11602f7", "code": "PATCH_VALIDATION_OK", "httpStatus": 200, "valid": true, "lint": [] },
+    "save": { "path": "/Users/michalmadejski/.codex/worktrees/builder-premium-authoring/monteby-builder/output/premium-authoring-20261015/forma-wnetrz/alignment/patch-save-response.json", "fileSha256": "1efc4116f77d856d5f3142f92ee5bd1d54525b32eef7a5acc153dab1e9733677", "code": "PATCH_SAVE_OK", "httpStatus": 200, "revisionId": 11290, "postModifiedGmt": "2026-10-15 21:23:33" },
+    "readback": { "path": "/Users/michalmadejski/.codex/worktrees/builder-premium-authoring/monteby-builder/output/premium-authoring-20261015/forma-wnetrz/alignment/saved-patch/layout-before.json", "fileSha256": "62295dacb4e2b639d06a2ee15e40bac08c9116c557a8fe6a4d0a6934cf490fed", "capturedAt": "2026-10-15T21:24:03.365Z", "layoutSha256": "24a1e08cc83da927ab41030c2e2466d0e6dda3423b6aca0e5348dbd0c953a1e3", "postModifiedGmt": "2026-10-15 21:23:33" },
+    "compiledHtmlSha256": "85f98072ff151f4376f705532d60d0b11dbbf6697b33f8a0c83f904a4b38f6be",
+    "browserEvidence": {
+      "path": "/tmp/monteby-premium-forma-aligned-browser.log",
+      "fileSha256": "1066e6c49005a94cc0a878263a966d3b507afa3b66644aa766631675bcb4c187",
+      "executionOwner": "integrator; original browser output independently read, not re-executed by this reviewer",
+      "desktopAndTabletProcessTopCoordinateDeltasPx": [0, 0, 0],
+      "allProcessParagraphTopMarginsPx": 0,
+      "horizontalOverflowPxByWidth": { "1440": 0, "834": 0, "390": 0, "375": 0 },
+      "h1CountByWidth": { "1440": 1, "834": 1, "390": 1, "375": 1 },
+      "mobilePreservesTitleThenDescriptionStack": true
+    },
+    "screenshots": [
+      { "path": "/Users/michalmadejski/.codex/worktrees/builder-premium-authoring/monteby-builder/output/playwright/premium-authoring-20261015/forma-aligned-1440.png", "width": 1440, "height": 2578, "sha256": "4ee5854a7b271d9971188ee4f48c096c6d99faa092133b278c3975e2bb1dde54" },
+      { "path": "/Users/michalmadejski/.codex/worktrees/builder-premium-authoring/monteby-builder/output/playwright/premium-authoring-20261015/forma-aligned-834.png", "width": 834, "height": 2590, "sha256": "4ac217310c0a88f69e1be6af1475522723b462889a1fcb4dee0f6c100a7c5bcc" },
+      { "path": "/Users/michalmadejski/.codex/worktrees/builder-premium-authoring/monteby-builder/output/playwright/premium-authoring-20261015/forma-aligned-390.png", "width": 390, "height": 3190, "sha256": "6723f888206cfc8582180412e3c46dd528bf038e421cf24112583f5bb4d19c89" },
+      { "path": "/Users/michalmadejski/.codex/worktrees/builder-premium-authoring/monteby-builder/output/playwright/premium-authoring-20261015/forma-aligned-375.png", "width": 375, "height": 3217, "sha256": "5d60f6d8969343c4671a51bbc4cc24d6ea2b26adb8148b4b01450057e48c0e00" }
+    ],
+    "visualReview": "All four final public screenshots inspected. The process-row alignment issue is closed: desktop/tablet align titles and descriptions at the top, while mobile retains the intended stacked reading order. The restrained photo-led editorial result remains coherent and materially beyond the starting scaffold; the conventional closing CTA is an optional art-direction opportunity, not an unresolved defect in this brief. No universal premium or 1:1 claim is made."
+  },
+  "integratorFinalVerification": {
+    "pathBase": "builder-repository-root",
+    "originalGlobalsRestored": true,
+    "restoredRevision": "f5c745e82e4ec26a5ac1a9a9e29b507fc64a0a7c4927cddf9849d8cf7a85a8e0",
+    "exactColorsAndTypographyReadback": "output/premium-authoring-20261015/forma-wnetrz/alignment/after-global-restore/contract.json",
+    "unchangedLayoutReadback": "output/premium-authoring-20261015/forma-wnetrz/alignment/after-global-restore/layout-before.json",
+    "layoutSha256": "24a1e08cc83da927ab41030c2e2466d0e6dda3423b6aca0e5348dbd0c953a1e3",
+    "finalPublicCaptureLog": "output/premium-authoring-20261015/logs/monteby-premium-forma-aligned-browser.log",
+    "browserOnlyCopyStressLog": "output/premium-authoring-20261015/logs/monteby-premium-forma-stress.log",
+    "scope": "Original globals were restored after final alignment and four-viewport recapture. Exact colors, typography and revision match the pre-test snapshot; the saved node map is unchanged. The earlier screenshot review's restoration warning is superseded by this readback. Copy stress preceded the margin-only alignment patch and was not persisted."
+  },
+  "pending": ["Dołączenie dowodów integratora dla otwartego menu, kotwic i klawiatury", "Porównanie briefu i liczby wystąpień z publicznym capture; bez deklaracji 1:1", "Dołączenie osobnego dowodu rzeczywistego fontu, nie wyciąganie go ze zrzutu"],
+  "technicalVerdict": "final-canonical-patch-readback-and-integrator-browser-alignment-overflow-evidence-verified",
+  "visualVerdict": "coherent-refined-editorial-demo-alignment-closed-no-universal-premium-claim"
 }

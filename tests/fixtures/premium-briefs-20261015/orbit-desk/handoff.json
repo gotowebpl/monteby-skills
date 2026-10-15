@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "artifact": "monteby-design-handoff",
   "mode": "content-brief-authoring",
-  "status": "offline-base-plan-incomplete-interaction",
-  "page": { "id": 11255, "site": "http://127.0.0.1:8192", "slug": "qa-orbit-desk", "title": "Orbit Desk — fikcyjna koncepcja QA" },
+  "status": "bounded-refinement-applied-canonical-readback-reviewed",
+  "page": { "id": 11255, "site": "http://127.0.0.1:8192", "slug": "premium-qa-orbit-desk-20261015", "title": "Orbit Desk — fikcyjna koncepcja QA" },
   "provenance": {
     "brief": "brief.md",
     "briefSha256": "6cab1da0e5925fbb34c903739d7fd6c5e89883d79597d674793b05413981c90c",
@@ -24,8 +24,8 @@
     "reason": "Mocny, krótki komunikat i czytelna produktowa prezentacja. Nie potrzebuje monospaced dekoracji sugerującej nieistniejące API."
   },
   "visualDirection": {
-    "hierarchy": "Jeden H1 bez sztucznego screenshotu. Możliwości są spokojnym pasmem listy; pokaz jest głównym interaktywnym punktem strony.",
-    "rhythm": "Otwarcie tekstowe → mniejsza lista możliwości → większy, manualny pokaz jednego scenariusza naraz → krótka refleksja → stopka.",
+    "hierarchy": "Jeden mocniejszy H1 bez sztucznego screenshotu. Możliwości: wprowadzenie z lewej i trzy pełne wiersze z prawej na desktopie, jeden słupek na mniejszych ekranach. Pokaz pozostaje głównym interaktywnym punktem strony.",
+    "rhythm": "Mniej pustej przestrzeni nad hero, mocniejszy tytuł i lead → asymetryczne pasmo możliwości bez siatki 2+1 → manualny pokaz → krótsza refleksja → niezmieniona stopka.",
     "typography": "Globalne presety i referencje. Obecny SliderBlock ma własne title/subtitle controls: nie zakładać nieopublikowanego typographyPreset ani referencji; sprawdzić live metadata przed dobraniem lokalnych wartości.",
     "interaction": "Istniejący SliderBlock, trzy scenariusze, autoplay=false, widoczne strzałki i kropki. Zmiana tylko po działaniu użytkownika, bez dodatkowego motion; reduced-motion instant. Wynik bez JS i klawiatura wymagają realnego sprawdzenia.",
     "mobile": "Pokaz po liście możliwości; tytuł i cały opis slajdu mieszczą się bez obcinania, a strzałki nie zakrywają tekstu. Nie opierać obsługi wyłącznie na swipe."
@@ -34,25 +34,151 @@
     { "id": "start", "compositionId": "site-navigation", "rhythm": "compact" },
     { "id": "hero", "compositionId": "hero-editorial", "rhythm": "large-message" },
     { "id": "mozliwosci", "compositionId": "services-list", "rhythm": "supporting-list" },
-    { "id": "pokaz", "compositionId": "content-cards", "rhythm": "pending-manual-slider", "finalInteractionImplemented": false },
+    { "id": "pokaz", "compositionId": "content-cards", "rhythm": "manual-slider-refined", "finalInteractionImplemented": true },
     { "id": "dalej", "compositionId": "closing-cta", "rhythm": "compact-conclusion" },
     { "id": "footer", "compositionId": "site-footer", "rhythm": "compact" }
   ],
   "breakpoints": { "tabletSheetMaxPx": 900, "mobileSheetMaxPx": 767, "measurement": ["1440x1200", "834x1112", "390x844"], "stressWidthPx": 375 },
   "assets": [],
-  "chrome": { "scope": "standalone-qa-page", "globalTemplatesMayBeChanged": false, "duplicateHeaderFooterAllowed": false, "presentationPendingLiveCapabilityCheck": true },
+  "chrome": { "scope": "standalone-qa-page", "globalTemplatesMayBeChanged": false, "duplicateHeaderFooterAllowed": false, "presentationPendingLiveCapabilityCheck": false, "snapshotPresentation": { "layout": "canvas", "disableGlobalTemplates": true } },
   "followUp": {
     "required": true,
     "reason": "Katalog 24 kompozycji nie publikuje treściowego slidera; bootstrap contract publikuje SliderBlock. To brak gotowej receptury, nie dowód braku widgetu.",
     "existingOwner": "SliderBlock",
-    "route": "Po odświeżeniu live contract rozwinąć bazowy plan, rozpoznać exact IDs w sekcji #pokaz i przygotować oficjalne insert_tree/delete_subtree/update_props zgodnie z operationSchemas. Zachować tytuł, wprowadzenie i dokładne trzy teksty, usunąć statyczne duplikaty. Nie zapisywać bazowego planu jako ukończonej strony.",
+    "route": "Bazowy content-cards zastąpiono istniejącym SliderBlock przez wcześniejsze oficjalne operacje. Następnie 23 update_props przeszły PATCH_VALIDATION_OK, PATCH_SAVE_OK i dokładny canonical readback. Nie odtwarzać bazowego planu ani nie powtarzać żadnego zapisu. Dalsza korekta wymaga odrębnego zakresu i nowego snapshotu; obecnie pozostał przegląd residuals i przypięcie dowodów interakcji przez integratora.",
     "contentMapping": "items[].title → slides[].title; items[].body → slides[].subtitle; bez imageUrl, chyba że później zatwierdzono własny jawnie oznaczony materiał demonstracyjny.",
     "behavior": { "autoplay": false, "showArrows": true, "showDots": true, "transitionReducedMotion": "instant" },
-    "operationPayloadPrepared": false,
+    "operationPayloadPrepared": true,
     "runtimeVerified": false
   },
   "contentVerification": { "documentVersion": 2, "status": "not-prepared-no-existing-markdown-generator", "pageId": 11255, "scopeViewUrlSource": "canonical-layout-snapshot.viewUrl-required", "sourceHashPolicy": "canonicalClientSourceSha256 hashes ordered approved entries; raw brief bytes remain bound by provenance.briefSha256", "safeRoute": "README.md#dokument-treści-v2--potwierdzona-trasa-i-brak-generatora", "canonicalVerified": false },
-  "pending": ["Świeży live contract", "Oficjalny plan i preflight operacji SliderBlock", "Snapshot globals → compose/preview → autoryzowany test profilu → przywrócenie i readback", "Porównanie briefu i liczby wystąpień z publicznym capture; bez deklaracji 1:1", "Klawiatura, focus, reduced-motion, no-JS i 375 px", "Publiczny PHP i niezależny review"],
-  "technicalVerdict": "not-executed",
-  "visualVerdict": "not-reviewed"
+  "refinement": {
+    "status": "applied-canonical-readback-matched-four-width-visual-review-completed",
+    "operationsPath": "output/orbit-refinement-operations.json",
+    "operationsPathBase": "skills-repository-root",
+    "operationsFileSha256": "d80da785158b5ef8033f81105ac739768b679c6e0e1e19ca00ddc2000d5f6781",
+    "operationCount": 23,
+    "propCount": 64,
+    "snapshot": {
+      "path": "/Users/michalmadejski/.codex/worktrees/builder-premium-authoring/monteby-builder/output/premium-authoring-20261015/orbit-desk/refinement/layout-before.json",
+      "fileSha256": "b8b716c38c87a0a2038de3c461d34589896770925d34bc1a230c747278f88c26",
+      "capturedAt": "2026-10-15T21:06:01.464Z",
+      "layoutSha256": "498309dfa5f23316736e5e31c5a57865d43f1a427a1cc47a921e80b721cbd508",
+      "postModifiedGmt": "2026-10-15 20:44:19",
+      "publicPageUrl": "http://127.0.0.1:8192/premium-qa-orbit-desk-20261015/"
+    },
+    "contract": {
+      "path": "/Users/michalmadejski/.codex/worktrees/builder-premium-authoring/monteby-builder/output/premium-authoring-20261015/orbit-desk/refinement/contract.json",
+      "fileSha256": "d1e7e46df9bf5be9809e5919d8fb0552f054fed66fe9ec913e7cec5b2ee4ad83",
+      "globalStylesRevision": "68c8ff1e4f9d6c24476800cca64153569b467ac48d6bdb3f94240f857b6da92a",
+      "profileAtCapture": "modern-grotesk",
+      "policy": "Before public review, the integrator must verify the authorized temporary profile is active. Do not mutate globals or infer their current state from this saved contract."
+    },
+    "reviewedScreenshots": [
+      { "width": 1440, "path": "output/playwright/premium-authoring-20261015/orbit-final-1440.png", "sha256": "f0476096f8d259dd745bde9e6ce3ec36782211e723b0216af93645059227dbb0" },
+      { "width": 834, "path": "output/playwright/premium-authoring-20261015/orbit-final-834.png", "sha256": "3b787ea5379d392a1516b280dfde3d5ddcced3036a0a476cb09334e435c50d3a" },
+      { "width": 390, "path": "output/playwright/premium-authoring-20261015/orbit-final-390.png", "sha256": "9e4312830a5c8ba98add68bd5661cd52c733f5d52c172ee31ccd757dc3f19324" },
+      { "width": 375, "path": "output/playwright/premium-authoring-20261015/orbit-final-375.png", "sha256": "c5c7dac91f8a79b06652e9917ab51e6415b4ee2b861d29d675df9008ee7ed174" }
+    ],
+    "screenshotPathBase": "builder-repository-root",
+    "decisions": [
+      { "scope": "hero", "change": "Spacious → standard desktop, standard → compact tablet; H1 64/52/40 px with the existing h1 preset; lead uses the published lead preset, 18 px mobile override.", "reason": "Replace excessive opening whitespace with a clear typographic hierarchy. Local size overrides are intentional art direction; font, weight, leading and tracking remain globally bound." },
+      { "scope": "possibilities", "change": "Section grid 38/62 on desktop, one column on tablet/mobile. Existing list becomes three full rows. H3 tags remain h3, bind to the published h2 preset with explicit 24 px size on all devices.", "reason": "Remove the unsupported visual hierarchy of a 2+1 card scaffold and tiny unbound headings. The host has no h3 preset; do not invent it or silently grow these labels to the h2 36 px size." },
+      { "scope": "text-spacing", "change": "Explicit marginTop=0 only on text nodes inside the refined four bands; gaps remain responsible for internal rhythm.", "reason": "Remove theme-dependent top margins while preserving every text byte and semantic tag. Header and footer remain unchanged." },
+      { "scope": "slider", "change": "Content padding 56 → 64 px, title 28 → 24 px, subtitle 18 → 16 px. Keep every slide, min-height, color reference, manual arrows/dots, fade duration and instant reduced-motion policy unchanged.", "reason": "Public arrows occupy 14+38=52 px from each edge; 64 px gives a nominal 12 px text clearance. The live widget has no responsive padding or arrow-position controls, so do not invent either. Public geometry at 390/375 must still confirm clearance, wrapping and complete text." },
+      { "scope": "closing", "change": "Compact rhythm on desktop/tablet; existing mobile compact, text, CTA and color tokens remain.", "reason": "A shorter reflective ending creates contrast with the larger interactive demo without adding decoration or claims." }
+    ],
+    "offlineChecks": {
+      "historicalStage": "before-canonical-preflight-and-save",
+      "existingControlContractNormalizer": "passed",
+      "normalizationChanges": 0,
+      "nodeCountBefore": 46,
+      "nodeCountAfter": 46,
+      "h1CountBefore": 1,
+      "h1CountAfter": 1,
+      "graphAndSemanticTagsUnchanged": true,
+      "copyAnchorsAndInteractionPropsUnchanged": true,
+      "existingCssVariableReferencesPreserved": true,
+      "headerAndFooterUnchanged": true,
+      "restValidation": "not-executed",
+      "saved": false,
+      "publicVisualReview": "not-executed"
+    },
+    "canonicalEvidence": {
+      "pathBase": "builder-repository-root",
+      "validation": {
+        "path": "output/premium-authoring-20261015/orbit-desk/refinement/patch-validate-response.json",
+        "fileSha256": "ea23f6113e1ecc57af579806f2ffae3946cabd3af8da83d1c44177c60bc5f4c4",
+        "code": "PATCH_VALIDATION_OK",
+        "httpStatus": 200,
+        "valid": true,
+        "lintCount": 0,
+        "operationCount": 23
+      },
+      "save": {
+        "path": "output/premium-authoring-20261015/orbit-desk/refinement/patch-save-response.json",
+        "fileSha256": "d7b5e04b8869b52ac4f47be1c6b8eb42787d8d1bfea3d6085d36277b624165fa",
+        "code": "PATCH_SAVE_OK",
+        "httpStatus": 200,
+        "saved": true,
+        "id": 11255,
+        "revisionId": 11288,
+        "postModifiedGmt": "2026-10-15 21:13:45"
+      },
+      "readback": {
+        "path": "output/premium-authoring-20261015/orbit-desk/refinement/saved-patch/layout-before.json",
+        "fileSha256": "171f99fb585dbf275e5b2c01976b2fee5e0e1f669df449399a4dcd7080160d8e",
+        "capturedAt": "2026-10-15T21:14:17.254Z",
+        "id": 11255,
+        "postModifiedGmt": "2026-10-15 21:13:45",
+        "exactCandidateAndSaveLayoutMatch": true,
+        "exactBeforePlusPreparedOperationsMatch": true,
+        "contractPath": "output/premium-authoring-20261015/orbit-desk/refinement/saved-patch/contract.json",
+        "contractFileSha256": "34f90b920ea8ba86954c32403686e9723d9df5611d259c95c64a73445ead2272"
+      },
+      "canonicalOperationsSha256": "721042f9f020d0842227aca89e70f1d75c68877add9d1fa2af2415bd3b0d5ac6",
+      "candidateSavedAndReadbackLayoutSha256": "e64eedecc7d4fec70303455d226de2c65799112d4504f63f746748cd8f8bb9af",
+      "compiledHtmlSha256": "9db18cee3dcc44a2dcc91aaf3489c94871a4e0ea987410ecc8eb224be7f30e31",
+      "digestVerification": "Existing wordpress-layout-client operationsSha256 and nodeMapSha256(extractNodeMap(layout)) verified the operations and saved node map; all report scopes, version tokens and layout representations matched. File-byte hashes are recorded separately. Generic object canonicalSha256 is not the node-map digest algorithm.",
+      "saved": true,
+      "publicationAuthorized": false
+    },
+    "postSaveVisualReview": {
+      "pathBase": "builder-repository-root",
+      "screenshots": [
+        { "width": 1440, "height": 2134, "path": "output/playwright/premium-authoring-20261015/orbit-polish-1440.png", "sha256": "65de9d9a097d82eaa1810186ec1b02dcaa8f8fedfe659b51b1d1a07579fb08da" },
+        { "width": 834, "height": 2089, "path": "output/playwright/premium-authoring-20261015/orbit-polish-834.png", "sha256": "dfc1e4d3c81721e2e4932b49a7e943538cc8ec6d3e8455982e52aab941cbc0d0" },
+        { "width": 390, "height": 2452, "path": "output/playwright/premium-authoring-20261015/orbit-polish-390.png", "sha256": "961c70f60437770bbcc467622624ce3130c14d82e00c1f925e6d5d8b07aca56c" },
+        { "width": 375, "height": 2452, "path": "output/playwright/premium-authoring-20261015/orbit-polish-375.png", "sha256": "c1a5b646752361fff097029f3f827c8dfe238434b19cfd6e3a51753083a92817" }
+      ],
+      "verdict": "competent-refined-scaffold-not-yet-distinctive-premium",
+      "premiumClaim": false,
+      "improvements": [
+        "Wyraźniejszy H1 i lead, mniej pustki nad hero; kompozycja tekstowa pozostaje zgodna z zakazem fikcyjnych screenshotów aplikacji.",
+        "Asymetryczna lista desktop zastąpiła 2+1, H3 ma czytelną hierarchię. Tablet i oba mobile mają konsekwentny pojedynczy słupek.",
+        "Na oglądanych screenshotach strzałki nie zasłaniają tekstu slajdu, a zakończenie jest krótsze. Nie widać poziomego ucięcia tekstu."
+      ],
+      "residuals": [
+        { "scope": "slider", "kind": "visual-composition", "finding": "Główny pokaz nadal wygląda jak duża, niemal pusta czarna plansza z małym blokiem tekstu, szczególnie na desktopie. Obecne ograniczone controls nie dają niezależnego układu sterowania i responsywnego paddingu; nie zastępować tego fikcyjnym screenshotem ani ozdobnym UI." },
+        { "scope": "hero-to-possibilities", "kind": "visual-rhythm", "finding": "Na desktopie nadal pozostaje szeroki pusty pas między CTA hero a nagłówkiem możliwości. Hierarchia jest lepsza, ale przejście nie ma jeszcze precyzji indywidualnie zaprojektowanej strony premium." },
+        { "scope": "accent-color", "kind": "visual-consistency", "finding": "Ikony listy są fioletowe, a aktywna kropka slidera niebieska. To widoczna niespójność akcentu; screenshot nie rozstrzyga, czy właścicielem jest konfiguracja globalna, runtime czy brak kontrolki." },
+        { "scope": "mobile-slider", "kind": "visual-composition", "finding": "Przy 390/375 px tekst jest czytelny, lecz nadal wąski i otoczony ciężką ciemną ramą. Zwiększony odstęp od strzałek poprawił czytelność, nie rozwiązał ograniczenia kompozycyjnego widgetu." }
+      ],
+      "scopeLimits": "Independent review of these four saved public screenshots and exact canonical reports. Screenshots show the first slide only; they do not prove keyboard behavior, all slide states, reduced motion, no-JS, programmatic overflow measurements, global-style restoration or complete accessibility. No 1:1 or release-readiness claim."
+    }
+  },
+  "integratorFinalVerification": {
+    "pathBase": "builder-repository-root",
+    "originalGlobalsRestored": true,
+    "restoredRevision": "f5c745e82e4ec26a5ac1a9a9e29b507fc64a0a7c4927cddf9849d8cf7a85a8e0",
+    "exactColorsAndTypographyReadback": "output/premium-authoring-20261015/forma-wnetrz/alignment/after-global-restore/contract.json",
+    "unchangedLayoutReadback": "output/premium-authoring-20261015/orbit-desk/after-global-restore/layout-before.json",
+    "layoutSha256": "e64eedecc7d4fec70303455d226de2c65799112d4504f63f746748cd8f8bb9af",
+    "publicCaptureLog": "output/premium-authoring-20261015/logs/monteby-premium-orbit-polish-browser.log",
+    "browserOnlyCopyStressLog": "output/premium-authoring-20261015/logs/monteby-premium-orbit-stress.log",
+    "scope": "Exact colors, typography and revision match the pre-test snapshot; the saved node map is unchanged by restoration. Screenshots preserve the temporary profile, not the restored live appearance. Copy stress was browser-only and did not mutate saved content."
+  },
+  "pending": ["Integrator: associate existing interaction-test evidence for every slide, keyboard/focus, reduced motion and no-JS; this screenshot review does not requalify those behaviors", "Record programmatic arrow-clearance measurements separately from visual inspection", "Preserve the exact brief and existing global bindings in any later art-direction work; do not call this distinctive premium or 1:1"],
+  "technicalVerdict": "canonical-patch-validation-save-and-readback-confirmed",
+  "visualVerdict": "competent-refined-scaffold-not-yet-distinctive-premium"
 }
