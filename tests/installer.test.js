@@ -60,3 +60,52 @@ test('installer bundles screenshot comparison runtime dependencies for site auth
     false
   );
 });
+
+test('check detects missing, changed and stale files without modifying an installation', () => {
+  const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'monteby-skills-check-'));
+  const args = [installer, '--target', 'codex', '--scope', 'project', '--project-dir', projectDir];
+  try {
+    const installed = spawnSync(process.execPath, args, { encoding: 'utf8' });
+    assert.equal(installed.status, 0, installed.stderr);
+    const clean = spawnSync(process.execPath, [...args, '--check'], { encoding: 'utf8' });
+    assert.equal(clean.status, 0, clean.stderr);
+    const reports = clean.stdout.trim().split('\n').map((line) => JSON.parse(line));
+    assert.equal(reports.length, 2);
+    for (const report of reports) {
+      assert.match(report.sourceSha256, /^[a-f0-9]{64}$/);
+      assert.deepEqual([report.missing, report.changed, report.extra], [[], [], []]);
+    }
+    const skillDir = path.join(projectDir, '.agents', 'skills', 'monteby-widget-development');
+    fs.appendFileSync(path.join(skillDir, 'SKILL.md'), '\nStale local edit.\n');
+    fs.unlinkSync(path.join(skillDir, 'references', 'widget-development-playbook.md'));
+    fs.writeFileSync(path.join(skillDir, 'obsolete.js'), 'stale');
+    const changedBefore = fs.readFileSync(path.join(skillDir, 'SKILL.md'), 'utf8');
+    const drift = spawnSync(process.execPath, [...args, '--check', '--dry-run'], { encoding: 'utf8' });
+    assert.equal(drift.status, 1, drift.stderr);
+    const report = drift.stdout.trim().split('\n').map((line) => JSON.parse(line)).find((item) => item.skill === 'monteby-widget-development');
+    assert.deepEqual(report.changed, ['SKILL.md']);
+    assert.deepEqual(report.missing, ['references/widget-development-playbook.md']);
+    assert.deepEqual(report.extra, ['obsolete.js']);
+    assert.equal(fs.readFileSync(path.join(skillDir, 'SKILL.md'), 'utf8'), changedBefore);
+    assert.equal(fs.existsSync(path.join(skillDir, 'references', 'widget-development-playbook.md')), false);
+    assert.equal(fs.readFileSync(path.join(skillDir, 'obsolete.js'), 'utf8'), 'stale');
+    fs.symlinkSync(path.join(skillDir, 'SKILL.md'), path.join(skillDir, 'linked.md'));
+    const symlink = spawnSync(process.execPath, [...args, '--check'], { encoding: 'utf8' });
+    assert.equal(symlink.status, 1);
+    assert.match(symlink.stderr, /Refusing to follow skill symlink/);
+  } finally {
+    fs.rmSync(projectDir, { recursive: true, force: true });
+  }
+});
+
+test('check reports absent installations without creating directories', () => {
+  const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'monteby-skills-missing-'));
+  try {
+    const checked = spawnSync(process.execPath, [installer, '--check', '--target', 'codex', '--scope', 'project', '--project-dir', projectDir], { encoding: 'utf8' });
+    assert.equal(checked.status, 1, checked.stderr);
+    assert.equal(fs.existsSync(path.join(projectDir, '.agents')), false);
+    assert.ok(checked.stdout.trim().split('\n').map((line) => JSON.parse(line)).every((item) => item.missing.includes('SKILL.md')));
+  } finally {
+    fs.rmSync(projectDir, { recursive: true, force: true });
+  }
+});

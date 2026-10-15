@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "artifact": "monteby-design-handoff",
+  "mode": "content-brief-authoring",
+  "status": "offline-proposal-awaiting-live-revalidation",
+  "page": { "id": 11253, "site": "http://127.0.0.1:8192", "slug": "qa-papier-studio", "title": "Papier Studio — fikcyjne demo QA" },
+  "provenance": {
+    "brief": "brief.md",
+    "briefSha256": "a81a34af38086066dbabff6cc0ebef18df1ca3ff83bebad0c1eb9692311161f6",
+    "designSkill": "monteby-site-authoring",
+    "plan": "plan.json",
+    "generatedHtml": null,
+    "generatedImages": [],
+    "bootstrapContractPath": "/Users/michalmadejski/.codex/worktrees/builder-premium-authoring/monteby-builder/output/premium-authoring-20261015/contract-before.json",
+    "bootstrapContractSha256": "bcdba2d66e0840ba933568f44eb0f67724e250a16c447e432af5ac95b94d943b"
+  },
+  "tokens": { "designTokens": "../project-tokens.json", "brand": "brand.json" },
+  "designProfile": {
+    "id": "editorial-serif",
+    "publishedInBootstrap": true,
+    "application": "authorized-local-sequential-test-with-restore",
+    "siteWideWriteAuthorized": true,
+    "authorization": { "source": "explicit-user-approval-relayed-by-integrator", "site": "http://127.0.0.1:8192", "temporaryOnly": true, "sequentialOnly": true, "originalSnapshotRequired": true, "restoreRequired": true, "restoreVerificationRequired": true, "conflictPolicy": "stop-and-reconcile-no-blind-restore", "productionOrPublicationAuthorized": false },
+    "reason": "Redakcyjna hierarchia i spokojne czytanie dłuższych opisów; bez fotografii, opinii i dekoracyjnych animacji."
+  },
+  "visualDirection": {
+    "hierarchy": "Jeden H1 otwiera szeroką ramę tekstową; krótsze wprowadzenie obok, zakres jako trzy pełne wiersze z liniami. Proces niżej jest jedynym pasmem kart.",
+    "rhythm": "Zwarta nawigacja → rozbudowane redakcyjne otwarcie z zakresem → uporządkowany proces → krótsze kontrastowe zaproszenie → spokojna stopka.",
+    "typography": "Presety h1/h2/h3/body/eyebrow/button z live globals; brak lokalnych rozmiarów i kopiowania obliczonych wartości. Zatwierdzony profil testować tymczasowo i sekwencyjnie na lokalnej witrynie; po pomiarze przywrócić oryginalne ustawienia z weryfikacją.",
+    "interaction": "Tylko kotwice i responsywna nawigacja. Bez motion i bez formularza.",
+    "mobile": "Tytuł, wprowadzenie i CTA przed zakresem; każdy temat oraz opis w jednej kolejności DOM. Proces składa się pionowo. Sprawdzić długość wiersza i brak osieroconych kart na 375 px."
+  },
+  "sections": [
+    { "id": "start", "compositionId": "site-navigation", "rhythm": "compact" },
+    { "id": "zakres", "compositionId": "hero-agenda", "rhythm": "editorial-introduction-and-rows" },
+    { "id": "wspolpraca", "compositionId": "content-cards", "rhythm": "three-step-process" },
+    { "id": "kontakt", "compositionId": "closing-cta", "rhythm": "contrast" },
+    { "id": "footer", "compositionId": "site-footer", "rhythm": "compact" }
+  ],
+  "breakpoints": { "tabletSheetMaxPx": 900, "mobileSheetMaxPx": 767, "measurement": ["1440x1200", "834x1112", "390x844"], "stressWidthPx": 375 },
+  "assets": [],
+  "chrome": { "scope": "standalone-qa-page", "globalTemplatesMayBeChanged": false, "duplicateHeaderFooterAllowed": false, "presentationPendingLiveCapabilityCheck": true },
+  "decisions": [
+    "Zakres pracy pozostaje częścią otwarcia, dlatego #zakres prowadzi do hero-agenda. Nie dodaję osobnego, pustego pasma z powtórzonym tytułem.",
+    "Nazwa etapu Rozpoznanie, Wspólne decyzje i Przekazanie nie jest rzekomą liczbą sukcesów ani obietnicą terminu.",
+    "Lokalne Navbar/site-navigation służy wyłącznie samodzielnej stronie QA. W prawdziwym globalnym nagłówku obowiązuje SiteBranding + WPMenu z live host choices."
+  ],
+  "contentVerification": { "documentVersion": 2, "status": "not-prepared-no-existing-markdown-generator", "pageId": 11253, "scopeViewUrlSource": "canonical-layout-snapshot.viewUrl-required", "sourceHashPolicy": "canonicalClientSourceSha256 hashes ordered approved entries; raw brief bytes remain bound by provenance.briefSha256", "safeRoute": "README.md#dokument-treści-v2--potwierdzona-trasa-i-brak-generatora", "canonicalVerified": false },
+  "pending": ["Odświeżony live contract po instalacji kandydata", "Rozwinięcie przez composition-plan i walidacja", "Snapshot globals → compose/preview → autoryzowany test profilu → przywrócenie i readback", "Porównanie briefu i liczby wystąpień z publicznym capture; bez deklaracji 1:1", "Publiczny PHP i niezależny review zrzutów 1440/834/390/375"],
+  "technicalVerdict": "not-executed",
+  "visualVerdict": "not-reviewed"
+}

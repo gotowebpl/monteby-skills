@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "artifact": "monteby-design-handoff",
+  "mode": "content-brief-authoring",
+  "status": "offline-proposal-with-approved-imported-media",
+  "page": { "id": 11257, "site": "http://127.0.0.1:8192", "slug": "qa-forma-wnetrz", "title": "Forma Wnętrz — fikcyjne demo QA" },
+  "provenance": {
+    "brief": "brief.md",
+    "briefSha256": "e27e364202db11c43b901b2d4d5804e65723b5a74a0cdcee99a02eef7dc78819",
+    "designSkill": "monteby-site-authoring",
+    "plan": "plan.json",
+    "generatedHtml": null,
+    "generatedImages": ["/Users/michalmadejski/.codex/worktrees/builder-premium-authoring/monteby-builder/output/premium-authoring-20261015/assets/forma-interior-generated.png"],
+    "bootstrapContractPath": "/Users/michalmadejski/.codex/worktrees/builder-premium-authoring/monteby-builder/output/premium-authoring-20261015/contract-before.json",
+    "bootstrapContractSha256": "bcdba2d66e0840ba933568f44eb0f67724e250a16c447e432af5ac95b94d943b"
+  },
+  "tokens": { "designTokens": "../project-tokens.json", "brand": "brand.json" },
+  "designProfile": {
+    "id": "warm-humanist",
+    "publishedInBootstrap": true,
+    "application": "authorized-local-sequential-test-with-restore",
+    "siteWideWriteAuthorized": true,
+    "authorization": { "source": "explicit-user-approval-relayed-by-integrator", "site": "http://127.0.0.1:8192", "temporaryOnly": true, "sequentialOnly": true, "originalSnapshotRequired": true, "restoreRequired": true, "restoreVerificationRequired": true, "conflictPolicy": "stop-and-reconcile-no-blind-restore", "productionOrPublicationAuthorized": false },
+    "reason": "Ciepła, przyjazna hierarchia współgra z naturalnymi materiałami na wygenerowanej wizualizacji. Zamiast luksusowych deklaracji — spokojny proces i codzienne potrzeby."
+  },
+  "visualDirection": {
+    "hierarchy": "Jeden H1 z krótkim wprowadzeniem i CTA nad szerokim obrazem, bez nakładki tekstowej na zdjęciu. Kolejny blok jest deklaracją, nie kolejną galerią.",
+    "rhythm": "Duże medium → krótszy manifest z oddechem → trzy kroki procesu → kontakt bez formularza → stopka.",
+    "typography": "Presety globalne h1/h2/body/eyebrow/button; zatwierdzony profil testować wyłącznie tymczasowo i sekwencyjnie na lokalnej witrynie, z przywróceniem oryginalnych ustawień i potwierdzeniem readback. Nie kopiować wartości do lokalnych propsów.",
+    "interaction": "Kotwice i nawigacja. Brak parallax, zoomu tła, autoplay oraz dodanych opinii.",
+    "mobile": "Po obejrzeniu zrzutu dobrać kadr tak, aby widoczny pozostał fotel i fragment okna. Obecna receptura kadruje cover: nie deklarować zatwierdzonego kadru przed publicznym pomiarem. Czytelne CTA przed obrazem."
+  },
+  "sections": [
+    { "id": "start", "compositionId": "site-navigation", "rhythm": "compact" },
+    { "id": "hero", "compositionId": "hero-photo-led", "rhythm": "photo-led" },
+    { "id": "podejscie", "compositionId": "manifesto", "rhythm": "statement" },
+    { "id": "proces", "compositionId": "content-cards", "rhythm": "three-step-process" },
+    { "id": "kontakt", "compositionId": "closing-cta", "rhythm": "contrast" },
+    { "id": "footer", "compositionId": "site-footer", "rhythm": "compact" }
+  ],
+  "breakpoints": { "tabletSheetMaxPx": 900, "mobileSheetMaxPx": 767, "measurement": ["1440x1200", "834x1112", "390x844"], "stressWidthPx": 375 },
+  "assets": [{
+    "id": "forma-hero",
+    "path": "/Users/michalmadejski/.codex/worktrees/builder-premium-authoring/monteby-builder/output/premium-authoring-20261015/assets/forma-interior-generated.png",
+    "sha256": "276c439803d83a5a4172ff6cbb8a68d0460ba597209a68c9b42b2c446404ffac",
+    "role": "hero",
+    "rights": "owned-generated-for-this-project",
+    "provenance": "Obraz wygenerowany lokalnie z inicjatywy integratora dla tego fikcyjnego briefu, nie fotografia realizacji klienta.",
+    "visuallyInspected": true,
+    "altProposal": "Wygenerowana wizualizacja jasnego wnętrza z drewnianą biblioteczką, fotelem i dużym oknem wychodzącym na ogród.",
+    "publicationStatus": "webp-imported-by-integrator",
+    "attachmentId": 11252,
+    "importedFileSha256": "94b8ab62f4b64edd5c3216dfc72d726ac0c2c3a9d1193c6386455f65753b514b",
+    "publicUrl": "http://127.0.0.1:8192/wp-content/uploads/2026/10/monteby-premium-forma-20261015.webp",
+    "importEvidence": "/Users/michalmadejski/.codex/worktrees/builder-premium-authoring/monteby-builder/output/premium-authoring-20261015/assets/provenance.json",
+    "targetPlanPath": "sections[1].content.media"
+  }],
+  "chrome": { "scope": "standalone-qa-page", "globalTemplatesMayBeChanged": false, "duplicateHeaderFooterAllowed": false, "presentationPendingLiveCapabilityCheck": true },
+  "contentVerification": { "documentVersion": 2, "status": "not-prepared-no-existing-markdown-generator", "pageId": 11257, "scopeViewUrlSource": "canonical-layout-snapshot.viewUrl-required", "sourceHashPolicy": "canonicalClientSourceSha256 hashes ordered approved entries; raw brief bytes remain bound by provenance.briefSha256", "safeRoute": "README.md#dokument-treści-v2--potwierdzona-trasa-i-brak-generatora", "canonicalVerified": false },
+  "pending": ["Ponowne potwierdzenie live contract po instalacji nowej paczki", "Snapshot globals → compose/preview → autoryzowany test profilu → przywrócenie i readback", "Porównanie briefu i liczby wystąpień z publicznym capture; bez deklaracji 1:1", "Kadry i czytelność na 1440/834/390/375", "Publiczny PHP i niezależny review"],
+  "technicalVerdict": "not-executed",
+  "visualVerdict": "not-reviewed"
+}

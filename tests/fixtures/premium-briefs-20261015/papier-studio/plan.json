@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "sections": [
+    {
+      "compositionId": "site-navigation",
+      "content": {
+        "brand": "Papier Studio",
+        "menuLabel": "Na tej stronie",
+        "links": [
+          { "label": "Zakres", "href": "#zakres" },
+          { "label": "Współpraca", "href": "#wspolpraca" },
+          { "label": "Kontakt", "href": "#kontakt" }
+        ],
+        "cta": { "label": "Kontakt", "href": "#kontakt" },
+        "anchorId": "start"
+      }
+    },
+    {
+      "compositionId": "hero-agenda",
+      "content": {
+        "eyebrow": "FIKCYJNE STUDIO · DEMO QA",
+        "title": "Dajemy tekstom przestrzeń, by wybrzmiały.",
+        "intro": "Pomagamy małym wydawcom uporządkować publikację — od pierwszej redakcji po ostatnią korektę. Dbamy o sens, rytm i spójność, nie odbierając autorom własnego głosu.",
+        "topics": [
+          { "title": "Redakcja", "body": "Porządkujemy argumenty, strukturę i język. Zmiany wyjaśniamy, zamiast zostawiać autora z samą listą poprawek." },
+          { "title": "Korekta", "body": "Czytamy uważnie zapis, składnię i szczegóły typograficzne. Pilnujemy konsekwencji w całej publikacji." },
+          { "title": "Przygotowanie do składu", "body": "Ujednolicamy podpisy, przypisy i hierarchię tekstu, aby kolejne etapy miały czytelny punkt wyjścia." }
+        ],
+        "cta": { "label": "Zobacz, jak pracujemy", "href": "#wspolpraca" },
+        "anchorId": "zakres"
+      }
+    },
+    {
+      "compositionId": "content-cards",
+      "content": {
+        "title": "Od rozmowy do czytelnego tekstu",
+        "body": "Zakres i kolejność ustalamy dla konkretnej publikacji. Ten przykład pokazuje sposób rozmowy o pracy, nie gwarantowany harmonogram.",
+        "items": [
+          { "title": "Rozpoznanie", "body": "Czytamy próbkę i pytamy o odbiorców, etap publikacji oraz to, czego tekst najbardziej potrzebuje." },
+          { "title": "Wspólne decyzje", "body": "Ustalamy zakres zmian, formę komentarzy i sposób zatwierdzania kolejnych fragmentów." },
+          { "title": "Przekazanie", "body": "Oddajemy uporządkowane pliki z objaśnieniem decyzji i miejsc wymagających uwagi przy składzie." }
+        ],
+        "anchorId": "wspolpraca"
+      }
+    },
+    {
+      "compositionId": "closing-cta",
+      "content": {
+        "title": "Zacznijmy od fragmentu.",
+        "body": "Do rozmowy warto przygotować krótki opis publikacji, próbkę tekstu i informację o obecnym etapie prac. To demonstracja — ta strona nie zbiera zgłoszeń ani plików.",
+        "cta": { "label": "Wróć do zakresu pracy", "href": "#zakres" },
+        "anchorId": "kontakt"
+      }
+    },
+    {
+      "compositionId": "site-footer",
+      "content": {
+        "brand": "Papier Studio",
+        "description": "Redakcja, korekta i uważna praca z tekstem.",
+        "note": "Fikcyjna marka i treści demonstracyjne. Strona służy wyłącznie testom Monteby.",
+        "link": { "label": "Na początek", "href": "#start" }
+      }
+    }
+  ]
+}

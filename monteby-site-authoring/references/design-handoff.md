@@ -1,5 +1,47 @@
 # Design-skill seam: image references, owned generated HTML, handoff.json
 
+## Brief-led visual direction
+
+For a new page, read the brief and the live global design system before choosing
+compositions. Describe a page-specific direction in the existing handoff:
+
+- hierarchy: the primary message, action and the sequence that supports them;
+- rhythm: which bands need density, breathing room, contrast or a change of scale;
+- media: the role, subject, crop and mobile treatment of each approved asset;
+- typography: published presets and the few justified local overrides; a local
+  size change must preserve the remaining global binding;
+- interaction: what an interaction helps the visitor understand, including a
+  static/reduced-motion alternative; motion is optional, not a quality score;
+- responsive composition: reading order, stacking and content priorities rather
+  than merely shrinking the desktop layout.
+
+Use the user's scope to decide whether to proceed with reasonable design choices
+or request approval for a materially new direction. If proposing motion, write
+its purpose and affected elements into the design brief and obtain approval
+where required; only then use the existing explicit-brief motion plan. Do not
+silently reinterpret “premium” as permission for autoplay or scrolljacking.
+
+The composition catalog supplies valid editable structures, not a mandate to use
+the same split hero, repeated cards and closing CTA for every brief. Use live
+operations and published controls for refinements; report a missing capability
+instead of adding custom CSS, technical classes or a parallel interaction engine.
+Do not invent testimonials, metrics, prices, credentials or legal copy.
+
+### Visual acceptance, separate from technical acceptance
+
+Inspect the saved public PHP page, not only the editor or static preview. Keep
+full-page screenshots at 1440/834/390 px and check a 375 px content stress case.
+Review hierarchy, typography, spacing rhythm, asset quality/crop, content density,
+responsive reading order and interaction polish. Name concrete weak areas and
+iterate; “valid JSON”, no overflow and passing tests are necessary but do not
+prove premium design. A brief-only page has no reference-based 1:1 verdict.
+
+Record the technical result and an explicitly qualitative visual result
+separately. The latter includes screenshot paths, observations and unresolved
+issues, not a fabricated universal premium score. For a multi-brief evaluation,
+use unrelated audiences and compositions; ask a reviewer who did not build the
+page to assess the raw brief against the public screenshots and interactions.
+
 This reference wires the local design skills (for example `design-taste-frontend`,
 `gpt-taste`, `high-end-visual-design`, `image-to-code`,
 `redesign-existing-projects`) into the authoring modes. It closes three gaps:

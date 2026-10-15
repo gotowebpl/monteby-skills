@@ -3,7 +3,7 @@
 ## Repository Responsibilities
 
 - `monteby-core`: shared schema, validation, compiler/render contracts, host-neutral renderer behavior.
-- `monteby-builder`: WordPress plugin glue, REST, editor bootstrap, AI Chat, imports/exports, PHP runtime, shortcode/direct rendering, saved post/template adapters.
+- `monteby-builder`: WordPress plugin glue, canonical REST/Abilities, editor bootstrap, imports/exports, PHP runtime, shortcode/direct rendering, saved post/template adapters.
 - `wp-monteby-theme`: neutral frontend shell only. Change it for layout compatibility, wrapper suppression, theme metadata/release rules, or global CSS shell issues.
 
 ## New or Props-First Widget Checklist
@@ -27,7 +27,7 @@
 
 3. Keep AI clean.
 
-   AI props must be explicit control-backed props. Exclude Advanced/runtime props such as `className`, `cssId`, custom attributes, raw markup, raw CSS, utility strings, events, motion unless a dedicated safe motion slice exists, and hover/active state props.
+   AI props must be explicit control-backed props. Use the generated contract plus live host-scoped extensions as the allowlist. Bounded motion/interaction/visibility props are valid only where published; do not confuse them with the blocked legacy raw `motion` object. Keep `className`, `cssId`, custom attributes, raw markup/CSS/JS, utility strings and event handlers out of new authoring. Require matching editor controls, runtime semantics and tests for every newly published prop.
 
 4. Implement render parity.
 
@@ -41,9 +41,9 @@
 
    Legacy props can remain as runtime/editor compatibility surfaces. They should not become new default inserter props or AI authoring props.
 
-7. Validate imports and AI actions.
+7. Validate imports and canonical authoring operations.
 
-   Ensure template imports and AI modify actions strip globally blocked props and per-widget disallowed props, including nested repeater item props.
+   Ensure template imports and live `insert_tree`/`update_props` operations reject or sanitize according to their existing contracts, including nested repeater item props. Test permission, precondition and invalid-value failures without mutation. The removed AI Chat and `add_tree`/`modify_props` dialect are not compatibility requirements.
 
 8. Add tests.
 

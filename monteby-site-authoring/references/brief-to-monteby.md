@@ -13,6 +13,12 @@ offline i awaryjną dla starszych kontraktów. Bramką jakości jest
 
 ## Nowa kompozycja z briefu: plan danych
 
+Przed wyborem receptur ustal kierunek wizualny według
+`references/design-handoff.md#brief-led-visual-direction`. Zapisz hierarchię,
+rytm, rolę mediów, zachowanie mobilne i ewentualny ruch w istniejącym handoffie.
+Receptura jest punktem wyjścia, nie gotowym werdyktem jakości. Nie powielaj
+automatycznie tego samego hero i kart dla niepowiązanych briefów.
+
 Dla nowej strony bez wzorca preferuj kompozycje publikowane przez bieżący
 Builder. Pobierz pełny `GET /wp-json/monteby/v1/contract` do pliku dla narzędzi.
 Do wyboru kompozycji czytaj tylko
@@ -99,7 +105,10 @@ odczytu (`edit_pages`, bez tokenu zapisu) i niczego nie zapisują.
   unikalne kotwice (`invalid_anchor_reference`, `unresolved_anchor`), uruchamia
   pełną walidację i lint, a zwraca `{ valid, layout, sections, errors, lint,
   decisions }`. Zwrócony `layout` zapisuj przez wersjonowany
-  `PUT /pages/{id}/layout` z `expectedModifiedGmt`.
+  zapis przez kanoniczny `wordpress-layout-client.js`: świeży snapshot,
+  validate, save i readback. Wymagane są wszystkie preconditions z live
+  `layoutPersistence`, obecnie `expectedModifiedGmt` i `expectedLayoutSha256`
+  (oraz digest ustawień, gdy zasób go wymaga), nie sam timestamp.
 - `POST /wp-json/monteby/v1/compositions/instantiate { recipeId, slots,
   parentId?, index?, idPrefix?, postId? }` rozwija jedną recepturę i zwraca
   `{ valid, rootNodeId, nodes, operation, errors, lint, decisions }`;
@@ -258,8 +267,9 @@ Nigdy z pamięci ani z opisu słownego. Zawsze z jednego z dwóch źródeł:
    (`GET /wp-json/monteby/v1/pages/{id}/layout`) i czytaj wartości propów wprost
    z node mapy. To jest źródło rozstrzygające.
 2. **Specyfikacja z pomiaru** — jeśli wzorzec istnieje jako strona, ale chcesz
-   geometrii, użyj `extract-reference-spec.mjs` na niej i traktuj wynik jak
-   referencję (wtedy w praktyce wracasz do trasy mechanicznej).
+   geometrii, przejdź do `owned-html-reconstruction` i uruchom istniejący
+   `run-visual-iteration.js` z autoryzowaną referencją. Nie używaj wycofanego
+   `extract-reference-spec.mjs` ani ręcznej specyfikacji zamiast pełnego capture.
 
 Jawna nowa decyzja użytkownika w briefie ma pierwszeństwo przed zapisanym
 wzorcem. Wzorzec wypełnia tylko decyzje, których brief nie zmienia; każdą
@@ -288,13 +298,13 @@ bindingów nie uprawnia do wymyślania referencji `var(--gcb-typo-*)`.
 | 0 Tokeny | wczytaj zatwierdzone tokeny marki projektu: `.monteby/design-tokens.mjs` i `brand.json` (albo `handoff.json` z przekazania, patrz `references/design-handoff.md`) | kolory, fonty i skala odstępów pochodzą z tokenów, nie z pamięci; brak plików tokenów odnotuj jawnie w raporcie |
 | 1 Kontrakt | `GET /wp-json/monteby/v1/contract` → `.monteby/contract.json`; zbuduj `resolvedDesignProfile` | HTTP 200, jest `components`; pełne `globalStyles` i opcjonalne `designTokens` pochodzą z tego samego live response |
 | 2 Wzorzec | `GET .../pages/{wzorzec}/layout` → zapisz jako `.monteby/pattern.json` | masz wartości propów sekcji, których będziesz używać |
-| 3 Treść | zbierz treść w artefakcie `monteby-client-content-document` v1 (unikalne `id` + dokładny `text`) | teksty 1:1 z briefu, z zachowaniem U+00A0, bez skracania i parafraz |
+| 3 Treść | zbierz treść w source-bound `monteby-client-content-document` v2 (witryna, strona, zakres, SHA źródła, unikalne `id` + dokładny `text`) | teksty 1:1 z briefu, z zachowaniem U+00A0, bez skracania i parafraz; v1 pozostaje czytelny, ale nie stanowi dowodu 1:1 |
 | 4 Build per sekcja | `node .monteby/build-<slug>.mjs` na `layout-kit.mjs`, sekcja po sekcji z szybkim podglądem (niżej) | każda sekcja obejrzana w podglądzie zanim powstanie następna |
 | 5 Uwagi kitu | przeczytaj `result.notes` | **pusta lista** albo każda pozycja świadomie zaakceptowana i opisana |
 | 6 Pre-flight | `normalize-layout.js --contract … --layout …` | `Błędy: 0`, ostrzeżenia przeczytane |
 | 7 Walidacja | `POST /wp-json/monteby/v1/validate` | `valid: true` |
-| 8 Zapis | `GET .../layout` po `postModifiedGmt`, potem `PUT` z `expectedModifiedGmt` | HTTP 200 |
-| 9 Bramka treści | przechwyć żywą stronę przez `capture-template-reference.js`, potem uruchom `verify-client-content.js --client-document … --live-manifest …` | `complete: true`; brak `missing`, `truncatedOrChanged`, `duplicateCountMismatch` i `added` |
+| 8 Zapis | kanoniczny klient: świeży snapshot, validate, save z tokenem i digestami wymaganymi przez live `layoutPersistence`, potem readback | zgodna tożsamość strony, token i SHA zapisanego layoutu; samo HTTP 200 nie jest dowodem |
+| 9 Bramka treści | przechwyć żywą stronę przez `capture-template-reference.js`, potem uruchom `verify-client-content.js --client-document … --live-manifest …` | `complete: true` oraz `sourceBound: true`; zgodna witryna/strona/zakres/SHA; brak `missing`, `truncatedOrChanged`, `duplicateCountMismatch` i `added` |
 | 10 Bramka końcowa | porównanie zrzutów zapisanej strony na 1440/834/390 (niżej) | brak przepełnienia poziomego, sekcje wyrenderowane, różnice zrzutów rozliczone |
 
 Szerokości pomiaru: 1440/834/390. Wcześniejsza wersja tej tabeli podawała 768;

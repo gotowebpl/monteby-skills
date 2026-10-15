@@ -95,6 +95,17 @@ Preview what would be installed:
 npx github:gotowebpl/monteby-skills --dry-run
 ```
 
+Check an installation against the exact checkout you tested, without changing it:
+
+```bash
+npm ci
+node bin/monteby-skills.js --check --target codex --codex-legacy
+```
+
+The check reports the source file digest and missing, modified or stale files for
+each copy; it exits nonzero on drift. A local digest identifies a development
+tree, not a published release. Back up locally customized skills before installing.
+
 ## Manual Install From Clone
 
 Clone this repository:
@@ -120,17 +131,14 @@ Current Codex documentation describes global skills under `$HOME/.agents/skills`
 ### Global User Install
 
 ```bash
-mkdir -p "$HOME/.agents/skills"
-rsync -a --delete ./monteby-site-authoring "$HOME/.agents/skills/"
-rsync -a --delete ./monteby-widget-development "$HOME/.agents/skills/"
+npm ci
+node bin/monteby-skills.js --target codex
 ```
 
 Optional compatibility install for Codex setups that use `~/.codex/skills`:
 
 ```bash
-mkdir -p "$HOME/.codex/skills"
-rsync -a --delete ./monteby-site-authoring "$HOME/.codex/skills/"
-rsync -a --delete ./monteby-widget-development "$HOME/.codex/skills/"
+node bin/monteby-skills.js --target codex --codex-legacy
 ```
 
 ### Project Install
@@ -138,10 +146,11 @@ rsync -a --delete ./monteby-widget-development "$HOME/.codex/skills/"
 From the target project repository:
 
 ```bash
-mkdir -p .agents/skills
-rsync -a --delete /path/to/monteby-skills/monteby-site-authoring .agents/skills/
-rsync -a --delete /path/to/monteby-skills/monteby-widget-development .agents/skills/
+node /path/to/monteby-skills/bin/monteby-skills.js --target codex --scope project --project-dir .
 ```
+
+Use the installer rather than copying the entire source directory: it omits
+quarantined tools and includes the screenshot comparison dependencies.
 
 ### Use In Codex
 

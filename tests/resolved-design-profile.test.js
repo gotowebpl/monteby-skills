@@ -12,6 +12,7 @@ const scripts = path.join(root, 'monteby-site-authoring', 'scripts');
 const {
   applyResolvedDesignDefaults,
   buildResolvedDesignProfile,
+  effectiveTypographyValue,
   globalStyleLiteralMatch,
 } = require(path.join(scripts, 'resolved-design-profile.js'));
 
@@ -166,9 +167,83 @@ test('resolvedDesignProfile enforces precedence without consuming customCSS', ()
     { text: 'Project', tag: 'h1' },
     projectTypography
   );
-  assert.equal(projectHeading.typographyPreset, undefined);
+  assert.equal(projectHeading.typographyPreset, 'h1');
   assert.equal(projectHeading.fontFamily, 'Project Sans, sans-serif');
   assert.equal(projectHeading.fontSize, '66px');
+});
+
+test('partial project typography preserves the published preset without copying global values', async () => {
+  const current = contract();
+  Object.assign(current.globalStyles.typography.presets.h1, { fontWeight: '700', lineHeight: '1.05' });
+  const projectTokens = { typography: { presets: { h1: { fontSize: '80px' } } } };
+  const before = JSON.stringify({ current, projectTokens });
+  const profile = buildResolvedDesignProfile(current, projectTokens);
+  const input = { text: 'Partial override', tag: 'h1' };
+  const resolved = applyResolvedDesignDefaults('Heading', input, profile);
+
+  assert.deepEqual(resolved, { ...input, fontSize: '80px', typographyPreset: 'h1' });
+  assert.equal(effectiveTypographyValue(resolved, profile, 'fontFamily'), 'var(--gcb-font-body)');
+  assert.equal(effectiveTypographyValue(resolved, profile, 'fontSize'), '80px');
+  assert.equal(effectiveTypographyValue(resolved, profile, 'fontWeight'), '700');
+  assert.equal(effectiveTypographyValue(resolved, profile, 'lineHeight'), '1.05');
+  assert.deepEqual(input, { text: 'Partial override', tag: 'h1' });
+  assert.equal(JSON.stringify({ current, projectTokens }), before);
+
+  const { Kit } = await import(path.join(scripts, 'layout-kit.mjs'));
+  const kit = new Kit(current, { projectTokens });
+  const id = kit.heading(input.text, { tag: 'h1' });
+  assert.equal(kit.nodes[id].props.typographyPreset, 'h1');
+  assert.equal(kit.nodes[id].props.fontSize, '80px');
+  assert.equal(kit.nodes[id].props.fontFamily, undefined);
+  assert.equal(kit.nodes[id].props.lineHeight, undefined);
+  assert.equal(kit.notes.some((note) => note.includes('lineHeight')), false);
+});
+
+test('full project typography retains only published bindings and respects explicit node props', () => {
+  const current = contract();
+  const typography = {
+    fontFamily: 'var(--gcb-font-body)', fontSize: '80px', fontWeight: '800',
+    lineHeight: '1.15', letterSpacing: '-0.02em', textTransform: 'uppercase',
+  };
+  const heading = current.components.find((entry) => entry.name === 'Heading');
+  heading.props.push(...Object.keys(typography));
+  const projectTokens = { typography: { presets: { h1: typography } } };
+  const profile = buildResolvedDesignProfile(current, projectTokens);
+  assert.deepEqual(applyResolvedDesignDefaults('Heading', { tag: 'h1' }, profile), {
+    tag: 'h1', ...typography, typographyPreset: 'h1',
+  });
+  const input = { tag: 'h1', typographyPreset: 'h1', fontSize: '91px', fontFamily: 'Local Sans', fontWeight: '500' };
+  assert.deepEqual(applyResolvedDesignDefaults('Heading', input, profile), { ...typography, ...input });
+
+  delete current.globalStyles.typography.presets.h1;
+  const unpublished = buildResolvedDesignProfile(current, projectTokens);
+  assert.deepEqual(applyResolvedDesignDefaults('Heading', { tag: 'h1' }, unpublished), { tag: 'h1', ...typography });
+  assert.equal(effectiveTypographyValue({ typographyPreset: 'h1' }, unpublished, 'color'), '');
+  heading.props = heading.props.filter((prop) => prop !== 'typographyPreset');
+  heading.aiProps = heading.aiProps.filter((prop) => prop !== 'typographyPreset');
+  current.globalStyles.typography.presets.h1 = { fontSize: '60px' };
+  assert.equal(applyResolvedDesignDefaults('Heading', { tag: 'h1' }, buildResolvedDesignProfile(current, projectTokens)).typographyPreset, undefined);
+});
+
+test('partial responsive project typography keeps the global base and explicit breakpoint inheritance', () => {
+  const current = contract();
+  current.components.find((entry) => entry.name === 'Heading').props.push('fontSizeTablet', 'fontSizeMobile', 'lineHeight');
+  const profile = buildResolvedDesignProfile(current, { typography: { presets: {
+    h1: { fontSizeTablet: '48px', fontSizeMobile: '32px' },
+  } } });
+  const resolved = applyResolvedDesignDefaults('Heading', { tag: 'h1' }, profile);
+  assert.deepEqual(resolved, { tag: 'h1', fontSizeTablet: '48px', fontSizeMobile: '32px', typographyPreset: 'h1' });
+  assert.equal(effectiveTypographyValue(resolved, profile, 'fontSize'), '60px');
+  assert.equal(effectiveTypographyValue(resolved, profile, 'fontFamily'), 'var(--gcb-font-body)');
+  assert.deepEqual(applyResolvedDesignDefaults('Heading', { tag: 'h1', fontSize: '72px' }, profile), {
+    tag: 'h1', fontSize: '72px', typographyPreset: 'h1',
+  });
+  assert.deepEqual(applyResolvedDesignDefaults('Heading', { tag: 'h1', fontSizeTablet: '44px' }, profile), {
+    tag: 'h1', fontSizeTablet: '44px', typographyPreset: 'h1',
+  });
+  assert.deepEqual(applyResolvedDesignDefaults('Heading', { tag: 'h1', fontSizeMobile: '29px' }, profile), {
+    tag: 'h1', fontSizeTablet: '48px', fontSizeMobile: '29px', typographyPreset: 'h1',
+  });
 });
 
 test('resolvedDesignProfile applies bindings and semantic presets only to missing props', () => {
@@ -277,6 +352,9 @@ test('published Form typography bindings share resolver and Kit defaults without
   const project = buildResolvedDesignProfile(current, { typography: { presets: { body: { fontFamily: 'Project Sans', lineHeight: '1.9' } } } });
   assert.equal(applyResolvedDesignDefaults('FormBlock', {}, project).labelFontFamily, 'Project Sans');
   assert.equal(applyResolvedDesignDefaults('FormBlock', {}, project).inputLineHeight, '1.9');
+  assert.equal(applyResolvedDesignDefaults('FormBlock', {}, project).inputFontSize, 'var(--gcb-typo-body-font-size)');
+  assert.equal(applyResolvedDesignDefaults('FormBlock', {}, project).labelFontWeight, 'var(--gcb-typo-body-font-weight)');
+  assert.equal(applyResolvedDesignDefaults('FormBlock', {}, project).buttonFontFamily, 'var(--gcb-typo-button-font-family)');
   delete current.designTokens.typographyBindings;
   const legacy = applyResolvedDesignDefaults('FormBlock', { labelFontFamily: 'Georgia' }, buildResolvedDesignProfile(current));
   assert.equal(legacy.labelFontFamily, 'Georgia');
@@ -402,6 +480,14 @@ test('absent h3 preset receives bounded neutral typography without replacing liv
   assert.equal(fallback.lineHeight, '1.3');
   assert.equal(fallback.fontFamily, 'var(--gcb-font-body)');
   assert.equal(fallback.fontWeight, '600');
+  const partialHeadingProfile = buildResolvedDesignProfile(current, { typography: { presets: { h2: { fontSize: '60px' } } } });
+  const partialFallback = applyResolvedDesignDefaults('Heading', { tag: 'h3' }, partialHeadingProfile);
+  assert.equal(partialFallback.typographyPreset, undefined);
+  assert.equal(partialFallback.fontFamily, fallback.fontFamily);
+  assert.equal(partialFallback.fontWeight, fallback.fontWeight);
+  assert.equal(partialFallback.fontSize, '28px');
+  const explicitFallback = applyResolvedDesignDefaults('Heading', { tag: 'h3', fontWeight: '800' }, partialHeadingProfile);
+  assert.equal(explicitFallback.fontWeight, '800');
   const explicit = applyResolvedDesignDefaults('Heading', { tag: 'h3', fontSize: '32px' }, buildResolvedDesignProfile(current));
   assert.equal(explicit.fontSize, '32px');
   assert.equal(explicit.fontSizeTablet, undefined);
@@ -492,7 +578,7 @@ test('project typography completes independent families without breaking explici
   assert.equal(mobile.fontSizeTablet, undefined);
   assert.equal(mobile.fontSizeMobile, '11px');
   assert.equal(mobile.lineHeightMobile, undefined);
-  assert.deepEqual(applyResolvedDesignDefaults('Text', {}, profile, 'body'), typography);
+  assert.deepEqual(applyResolvedDesignDefaults('Text', {}, profile, 'body'), { ...typography, typographyPreset: 'body' });
   assert.equal(eyebrow.fontSizeMobile, undefined);
   const { Kit } = await import(path.join(scripts, 'layout-kit.mjs'));
   const kit = new Kit(current, { projectTokens });

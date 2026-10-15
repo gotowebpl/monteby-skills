@@ -15,7 +15,7 @@ Core is the framework-neutral source for shared rendering, schemas, validation, 
 
 Before changing code, inspect the relevant repo context:
 
-- `monteby-builder`: WordPress plugin integration, REST, editor enqueue, AI Chat, imports, PHP runtime, release packaging.
+- `monteby-builder`: WordPress plugin integration, versioned REST/Abilities, live host contracts, editor enqueue, imports, PHP runtime, release packaging. The removed AI Chat/OpenAI prototype is not an integration surface.
 - `monteby-core`: canonical framework-neutral core source, shared schemas, static/dynamic renderers, compiler contracts.
 - `wp-monteby-theme`: public frontend shell, global layout compatibility, neutral theme behavior.
 
@@ -33,7 +33,7 @@ Read each repo's `AGENTS.md` and the Builder `docs/PRODUCTION-PLAN.md` when pres
 
 3. Keep authoring props-first.
 
-   AI/default authoring must use schema-backed props, controls, `aiProps`, defaults, and `allowedParents`. Do not expose `className`, `cssId`, raw HTML, raw CSS, Tailwind utility strings, event handlers, custom attributes, positioning, transforms, visibility, hover/active props, or other Advanced/runtime props.
+   AI/default authoring must use schema-backed props, controls, `aiProps`, defaults, and `allowedParents`. The current generated contract and live host extensions decide what is supported, not a historical list of UI tab names. Typed, bounded motion, interaction, positioning and conditional visibility are supported only when published for that component and accepted by live validation. Keep `className`, `cssId`, raw HTML/CSS/JS, utility strings, event handlers, custom attributes and the legacy raw `motion` object outside new authoring. Do not restore removed `add_tree`/`modify_props` or the direct OpenAI adapter.
 
 4. Preserve compatibility deliberately.
 
@@ -54,6 +54,8 @@ Read each repo's `AGENTS.md` and the Builder `docs/PRODUCTION-PLAN.md` when pres
 8. Test the behavior.
 
    Every logical parser, validator, transformer, renderer change, or widget authoring change needs PHPUnit/Vitest coverage. Run the narrow tests first, then the relevant repo gates.
+
+   Test the visible promise, not just the presence of a prop: thumbnails must contain images in public PHP, a pause control must remain paused after focus/visibility changes, and a local style override must not detach unrelated global bindings. Include empty, one-item, maximum and over-limit collections; keyboard, reduced-motion and no-JS behavior; and changed copy at a narrow viewport. Compare editor and saved public output before calling a widget complete.
 
 9. Record the result.
 

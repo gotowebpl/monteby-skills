@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "artifact": "monteby-design-handoff",
+  "mode": "content-brief-authoring",
+  "status": "offline-base-plan-incomplete-interaction",
+  "page": { "id": 11255, "site": "http://127.0.0.1:8192", "slug": "qa-orbit-desk", "title": "Orbit Desk — fikcyjna koncepcja QA" },
+  "provenance": {
+    "brief": "brief.md",
+    "briefSha256": "6cab1da0e5925fbb34c903739d7fd6c5e89883d79597d674793b05413981c90c",
+    "designSkill": "monteby-site-authoring",
+    "plan": "plan.json",
+    "generatedHtml": null,
+    "generatedImages": [],
+    "bootstrapContractPath": "/Users/michalmadejski/.codex/worktrees/builder-premium-authoring/monteby-builder/output/premium-authoring-20261015/contract-before.json",
+    "bootstrapContractSha256": "bcdba2d66e0840ba933568f44eb0f67724e250a16c447e432af5ac95b94d943b"
+  },
+  "tokens": { "designTokens": "../project-tokens.json", "brand": "brand.json" },
+  "designProfile": {
+    "id": "modern-grotesk",
+    "publishedInBootstrap": true,
+    "application": "authorized-local-sequential-test-with-restore",
+    "siteWideWriteAuthorized": true,
+    "authorization": { "source": "explicit-user-approval-relayed-by-integrator", "site": "http://127.0.0.1:8192", "temporaryOnly": true, "sequentialOnly": true, "originalSnapshotRequired": true, "restoreRequired": true, "restoreVerificationRequired": true, "conflictPolicy": "stop-and-reconcile-no-blind-restore", "productionOrPublicationAuthorized": false },
+    "reason": "Mocny, krótki komunikat i czytelna produktowa prezentacja. Nie potrzebuje monospaced dekoracji sugerującej nieistniejące API."
+  },
+  "visualDirection": {
+    "hierarchy": "Jeden H1 bez sztucznego screenshotu. Możliwości są spokojnym pasmem listy; pokaz jest głównym interaktywnym punktem strony.",
+    "rhythm": "Otwarcie tekstowe → mniejsza lista możliwości → większy, manualny pokaz jednego scenariusza naraz → krótka refleksja → stopka.",
+    "typography": "Globalne presety i referencje. Obecny SliderBlock ma własne title/subtitle controls: nie zakładać nieopublikowanego typographyPreset ani referencji; sprawdzić live metadata przed dobraniem lokalnych wartości.",
+    "interaction": "Istniejący SliderBlock, trzy scenariusze, autoplay=false, widoczne strzałki i kropki. Zmiana tylko po działaniu użytkownika, bez dodatkowego motion; reduced-motion instant. Wynik bez JS i klawiatura wymagają realnego sprawdzenia.",
+    "mobile": "Pokaz po liście możliwości; tytuł i cały opis slajdu mieszczą się bez obcinania, a strzałki nie zakrywają tekstu. Nie opierać obsługi wyłącznie na swipe."
+  },
+  "sections": [
+    { "id": "start", "compositionId": "site-navigation", "rhythm": "compact" },
+    { "id": "hero", "compositionId": "hero-editorial", "rhythm": "large-message" },
+    { "id": "mozliwosci", "compositionId": "services-list", "rhythm": "supporting-list" },
+    { "id": "pokaz", "compositionId": "content-cards", "rhythm": "pending-manual-slider", "finalInteractionImplemented": false },
+    { "id": "dalej", "compositionId": "closing-cta", "rhythm": "compact-conclusion" },
+    { "id": "footer", "compositionId": "site-footer", "rhythm": "compact" }
+  ],
+  "breakpoints": { "tabletSheetMaxPx": 900, "mobileSheetMaxPx": 767, "measurement": ["1440x1200", "834x1112", "390x844"], "stressWidthPx": 375 },
+  "assets": [],
+  "chrome": { "scope": "standalone-qa-page", "globalTemplatesMayBeChanged": false, "duplicateHeaderFooterAllowed": false, "presentationPendingLiveCapabilityCheck": true },
+  "followUp": {
+    "required": true,
+    "reason": "Katalog 24 kompozycji nie publikuje treściowego slidera; bootstrap contract publikuje SliderBlock. To brak gotowej receptury, nie dowód braku widgetu.",
+    "existingOwner": "SliderBlock",
+    "route": "Po odświeżeniu live contract rozwinąć bazowy plan, rozpoznać exact IDs w sekcji #pokaz i przygotować oficjalne insert_tree/delete_subtree/update_props zgodnie z operationSchemas. Zachować tytuł, wprowadzenie i dokładne trzy teksty, usunąć statyczne duplikaty. Nie zapisywać bazowego planu jako ukończonej strony.",
+    "contentMapping": "items[].title → slides[].title; items[].body → slides[].subtitle; bez imageUrl, chyba że później zatwierdzono własny jawnie oznaczony materiał demonstracyjny.",
+    "behavior": { "autoplay": false, "showArrows": true, "showDots": true, "transitionReducedMotion": "instant" },
+    "operationPayloadPrepared": false,
+    "runtimeVerified": false
+  },
+  "contentVerification": { "documentVersion": 2, "status": "not-prepared-no-existing-markdown-generator", "pageId": 11255, "scopeViewUrlSource": "canonical-layout-snapshot.viewUrl-required", "sourceHashPolicy": "canonicalClientSourceSha256 hashes ordered approved entries; raw brief bytes remain bound by provenance.briefSha256", "safeRoute": "README.md#dokument-treści-v2--potwierdzona-trasa-i-brak-generatora", "canonicalVerified": false },
+  "pending": ["Świeży live contract", "Oficjalny plan i preflight operacji SliderBlock", "Snapshot globals → compose/preview → autoryzowany test profilu → przywrócenie i readback", "Porównanie briefu i liczby wystąpień z publicznym capture; bez deklaracji 1:1", "Klawiatura, focus, reduced-motion, no-JS i 375 px", "Publiczny PHP i niezależny review"],
+  "technicalVerdict": "not-executed",
+  "visualVerdict": "not-reviewed"
+}

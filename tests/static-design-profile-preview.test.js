@@ -152,6 +152,43 @@ test('layout kit references render through the same resolved live profile', asyn
   assert.match(rendered.fragment, /border-radius:var\(--monteby-token-buttons-radius\)/);
 });
 
+test('partial project typography keeps global rendering live without changing authored JSON', async () => {
+  const { Kit } = await import(path.join(root, 'monteby-site-authoring', 'scripts', 'layout-kit.mjs'));
+  const liveContract = contract();
+  const kit = new Kit(liveContract, { projectTokens: { typography: { presets: {
+    h1: { fontSize: '80px', fontSizeMobile: '32px' },
+  } } } });
+  const heading = kit.heading('Partial typography', { tag: 'h1' });
+  const nodeMap = kit.build([kit.section({}, [heading])]);
+  const serialized = JSON.stringify(nodeMap);
+  assert.equal(nodeMap[heading].props.typographyPreset, 'h1');
+  for (const prop of ['fontFamily', 'fontWeight', 'lineHeight', 'textColor']) {
+    assert.equal(nodeMap[heading].props[prop], undefined, prop);
+  }
+  const initial = renderDocument(nodeMap, 'Initial', liveContract);
+  assert.deepEqual(initial.diagnostics, []);
+  assert.match(initial.fragment, /font-size:80px/);
+  assert.match(initial.fragment, /--monteby-font-size-mobile:32px/);
+  assert.match(initial.fragment, /font-family:Arial,sans-serif/);
+  assert.match(initial.fragment, /font-weight:700/);
+  assert.match(initial.fragment, /line-height:1\.1/);
+
+  liveContract.globalStyles.typography.fonts.body.value = 'Georgia, serif';
+  liveContract.fontCatalog.system._system_Georgia = 'Georgia, serif';
+  Object.assign(liveContract.globalStyles.typography.presets.h1, { fontSize: '70px', fontWeight: '500', lineHeight: '1.3' });
+  liveContract.globalStyles.colors.text = '#654321';
+  const updated = renderDocument(nodeMap, 'Updated', liveContract);
+  assert.deepEqual(updated.diagnostics, []);
+  assert.match(updated.fragment, /font-size:80px/);
+  assert.match(updated.fragment, /--monteby-font-size-mobile:32px/);
+  assert.match(updated.fragment, /font-family:Georgia,serif/);
+  assert.match(updated.fragment, /font-weight:500/);
+  assert.match(updated.fragment, /line-height:1\.3/);
+  assert.match(updated.fragment, /color:var\(--gcb-color-text\)/);
+  assert.match(updated.html, /--gcb-color-text:#654321/);
+  assert.equal(JSON.stringify(nodeMap), serialized);
+});
+
 test('static preview rejects unsafe published values and keeps unknown presets unresolved', () => {
   const unsafe = contract();
   unsafe.globalStyles.colors.accent = 'red;}</style><script>alert(1)</script>';

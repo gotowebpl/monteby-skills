@@ -179,7 +179,7 @@ function typographyPresets(globalStyles, projectTokens) {
     projectTokens?.typography?.presets || projectTokens?.typographyPresets,
     'projectTokens'
   );
-  return { ...globalPresets, ...projectPresets };
+  return { presets: { ...globalPresets, ...projectPresets }, globalPresets };
 }
 
 function buildResolvedDesignProfile(contract, projectTokens = {}) {
@@ -220,7 +220,7 @@ function buildResolvedDesignProfile(contract, projectTokens = {}) {
     tokens[key] = { key, value, reference, source: 'projectTokens' };
   }
 
-  const presets = typographyPresets(globalStyles, projectTokens);
+  const { presets, globalPresets } = typographyPresets(globalStyles, projectTokens);
   const typographyBindings = {};
   const rejectedTypographyBindings = [];
   const publishedTypography = contract?.designTokens?.version === 1 && isRecord(contract.designTokens.typographyBindings)
@@ -267,6 +267,7 @@ function buildResolvedDesignProfile(contract, projectTokens = {}) {
     bindings: normalizedBindings(contract?.designTokens?.bindings),
     layout: isRecord(contract?.designTokens?.layout) ? { ...contract.designTokens.layout } : {},
     typographyPresets: presets,
+    globalTypographyPresets: globalPresets,
     typographyBindings,
     rejectedTypographyBindings,
     componentProps: componentProps(contract),
@@ -331,10 +332,10 @@ function applyResolvedDesignDefaults(component, props, profile, semanticRole = '
   const preset = cleanId(resolved.typographyPreset) || semanticPreset(component, resolved, semanticRole);
   const presetDefinition = preset ? profile?.typographyPresets?.[preset] : null;
   if (preset === 'h3' && !presetDefinition && resolved.typographyPreset === undefined) {
-    const heading = profile?.typographyPresets?.h2 || profile?.typographyPresets?.h1 || {};
+    const heading = { typographyPreset: profile?.typographyPresets?.h2 ? 'h2' : 'h1' };
     const fallback = {
-      fontFamily: heading.fontFamily,
-      fontWeight: heading.fontWeight,
+      fontFamily: effectiveTypographyValue(heading, profile, 'fontFamily'),
+      fontWeight: effectiveTypographyValue(heading, profile, 'fontWeight'),
       ...((resolved.fontSize === undefined || resolved.fontSize === null || resolved.fontSize === '')
         ? { fontSize: '28px', fontSizeTablet: '26px', fontSizeMobile: '24px' }
         : {}),
@@ -363,12 +364,11 @@ function applyResolvedDesignDefaults(component, props, profile, semanticRole = '
         }
       }
     }
-    return resolved;
   }
   if (
     preset
     && allowedProps.has('typographyPreset')
-    && presetDefinition
+    && profile?.globalTypographyPresets?.[preset]
     && resolved.typographyPreset === undefined
   ) {
     resolved.typographyPreset = preset;
@@ -408,7 +408,8 @@ function globalStyleLiteralMatch(profile, component, prop, value, requestedToken
 
 function effectiveTypographyValue(props, profile, prop) {
   return stringValue(props?.[prop])
-    || stringValue(profile?.typographyPresets?.[props?.typographyPreset]?.[prop]);
+    || stringValue(profile?.typographyPresets?.[props?.typographyPreset]?.[prop])
+    || stringValue(profile?.globalTypographyPresets?.[props?.typographyPreset]?.[prop]);
 }
 
 function localTypographyOverrides(props) {

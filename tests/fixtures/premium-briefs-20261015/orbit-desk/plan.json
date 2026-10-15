@@ -1,0 +1,72 @@
+{
+  "version": 1,
+  "sections": [
+    {
+      "compositionId": "site-navigation",
+      "content": {
+        "brand": "Orbit Desk",
+        "menuLabel": "Poznaj koncepcję",
+        "links": [
+          { "label": "Możliwości", "href": "#mozliwosci" },
+          { "label": "Pokaz", "href": "#pokaz" },
+          { "label": "Następny krok", "href": "#dalej" }
+        ],
+        "cta": { "label": "Obejrzyj pokaz", "href": "#pokaz" },
+        "anchorId": "start"
+      }
+    },
+    {
+      "compositionId": "hero-editorial",
+      "content": {
+        "eyebrow": "KONCEPCJA PRODUKTU · DEMO QA",
+        "title": "Mniej szukania. Więcej wspólnego obrazu pracy.",
+        "body": "Orbit Desk to fikcyjna koncepcja miejsca na zadania, ustalenia i spokojny przegląd dnia. Pokazujemy pomysł na organizację pracy — bez sugerowania, że aplikacja jest już dostępna.",
+        "cta": { "label": "Obejrzyj pokaz", "href": "#pokaz" }
+      }
+    },
+    {
+      "compositionId": "services-list",
+      "content": {
+        "title": "Każda informacja ma swoje miejsce.",
+        "body": "Trzy obszary porządkują koncepcję. Nie są listą funkcji wdrożonego produktu.",
+        "items": [
+          { "title": "Plan", "body": "Zobacz, nad czym pracuje zespół i co wymaga decyzji, bez przeskakiwania między długimi listami." },
+          { "title": "Kontekst", "body": "Zapisz ustalenie obok zadania, którego dotyczy, żeby kolejna osoba mogła zrozumieć powód zmiany." },
+          { "title": "Przegląd", "body": "Oddziel rzeczy gotowe, bieżące i oczekujące. Wybierz, czym zajmiesz się w następnym kroku." }
+        ],
+        "anchorId": "mozliwosci"
+      }
+    },
+    {
+      "compositionId": "content-cards",
+      "content": {
+        "title": "Przejdź przez dzień po swojemu.",
+        "body": "Zmień slajd przyciskiem. Pokaz nie uruchamia się sam i nie wysyła żadnych danych.",
+        "items": [
+          { "title": "Początek dnia", "body": "Zbierz sprawy wymagające uwagi i wybierz tę, od której chcesz zacząć." },
+          { "title": "Wspólna decyzja", "body": "Dopisz kontekst do zadania i zaznacz, które ustalenie czeka na odpowiedź zespołu." },
+          { "title": "Zamknięcie pętli", "body": "Podsumuj wykonane kroki i zostaw krótką wskazówkę dla osoby, która wróci do tematu." }
+        ],
+        "anchorId": "pokaz"
+      }
+    },
+    {
+      "compositionId": "closing-cta",
+      "content": {
+        "title": "Najpierw jasny problem. Potem narzędzie.",
+        "body": "Zastanów się, gdzie dziś giną informacje w Twoim zespole. Ten prototyp służy rozmowie o potrzebach, nie rejestracji konta.",
+        "cta": { "label": "Wróć do pokazu", "href": "#pokaz" },
+        "anchorId": "dalej"
+      }
+    },
+    {
+      "compositionId": "site-footer",
+      "content": {
+        "brand": "Orbit Desk",
+        "description": "Porządek pracy jako punkt wyjścia do rozmowy.",
+        "note": "Fikcyjna koncepcja produktu. Brak rejestracji, płatności i integracji z zewnętrznymi usługami.",
+        "link": { "label": "Na początek", "href": "#start" }
+      }
+    }
+  ]
+}

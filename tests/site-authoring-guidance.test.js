@@ -16,6 +16,28 @@ function read(file) {
 
 const skill = read(skillPath);
 
+test('current widget guidance distinguishes typed live capabilities from legacy escape hatches', () => {
+  const guidance = read(path.join(root, 'monteby-widget-development', 'SKILL.md'));
+  const playbook = read(path.join(root, 'monteby-widget-development', 'references', 'widget-development-playbook.md'));
+  assert.match(guidance, /current generated contract and live host extensions/);
+  assert.match(guidance, /legacy raw `motion` object/);
+  assert.match(playbook, /live `insert_tree`\/`update_props`/);
+  assert.match(playbook, /removed AI Chat and `add_tree`\/`modify_props`/);
+  assert.doesNotMatch(guidance, /custom attributes, positioning, transforms, visibility, hover\/active props/);
+});
+
+test('brief workflow requires source-bound content and a separate qualitative visual review', () => {
+  const brief = read(path.join(references, 'brief-to-monteby.md'));
+  const handoff = read(path.join(references, 'design-handoff.md'));
+  assert.match(brief, /monteby-client-content-document` v2/);
+  assert.match(brief, /`complete: true` oraz `sourceBound: true`/);
+  assert.match(brief, /`expectedModifiedGmt` i `expectedLayoutSha256`/);
+  assert.match(brief, /samo HTTP 200 nie jest dowodem/);
+  assert.match(handoff, /passing tests are necessary but do not\s+prove premium design/);
+  assert.match(handoff, /reviewer who did not build the\s+page/);
+  assert.match(handoff, /only then use the existing explicit-brief motion plan/);
+});
+
 test('site-authoring skill is a compact one-mode router with fixed verdicts', () => {
   const skill = read(skillPath);
   const lines = skill.split('\n');

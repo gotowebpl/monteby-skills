@@ -1,0 +1,72 @@
+{
+  "version": 1,
+  "sections": [
+    {
+      "compositionId": "site-navigation",
+      "content": {
+        "brand": "Forma Wnętrz",
+        "menuLabel": "Poznaj podejście",
+        "links": [
+          { "label": "Podejście", "href": "#podejscie" },
+          { "label": "Proces", "href": "#proces" },
+          { "label": "Kontakt", "href": "#kontakt" }
+        ],
+        "cta": { "label": "Kontakt", "href": "#kontakt" },
+        "anchorId": "start"
+      }
+    },
+    {
+      "compositionId": "hero-photo-led",
+      "content": {
+        "eyebrow": "FIKCYJNE STUDIO · DEMO QA",
+        "title": "Przestrzeń zaczyna się od sposobu życia.",
+        "intro": "Projekt wnętrza może zaczynać się od rozmowy o zwykłym dniu: świetle, rytuałach i rzeczach, dla których warto znaleźć dobre miejsce.",
+        "media": {
+          "src": "http://127.0.0.1:8192/wp-content/uploads/2026/10/monteby-premium-forma-20261015.webp",
+          "alt": "Wygenerowana wizualizacja jasnego wnętrza z drewnianą biblioteczką, fotelem i dużym oknem wychodzącym na ogród."
+        },
+        "context": "Wizualizacja demonstracyjna wygenerowana na potrzeby tego testu. Nie przedstawia zrealizowanego projektu studia.",
+        "cta": { "label": "Poznaj proces", "href": "#proces" }
+      }
+    },
+    {
+      "compositionId": "manifesto",
+      "content": {
+        "title": "Mniej przypadkowych decyzji. Więcej własnego miejsca.",
+        "statement": "W tej koncepcji pracy zaczynamy od potrzeb mieszkańców. Łączymy układ, światło i materiały w jedną opowieść, a decyzje sprawdzamy w kontekście codziennego użytkowania.",
+        "anchorId": "podejscie"
+      }
+    },
+    {
+      "compositionId": "content-cards",
+      "content": {
+        "title": "Od codzienności do projektu",
+        "body": "Każdy etap porządkuje kolejne pytania. To przykładowy opis współpracy, nie harmonogram ani oferta handlowa.",
+        "items": [
+          { "title": "Rozmowa", "body": "Zbieramy potrzeby, przyzwyczajenia i ograniczenia, które mają znaczenie dla przyszłego wnętrza." },
+          { "title": "Kierunek", "body": "Układamy priorytety przestrzeni i omawiamy nastrój, materiały oraz sposób korzystania z pomieszczeń." },
+          { "title": "Dopracowanie", "body": "Sprawdzamy spójność decyzji i przygotowujemy czytelne podsumowanie przyjętego rozwiązania." }
+        ],
+        "anchorId": "proces"
+      }
+    },
+    {
+      "compositionId": "closing-cta",
+      "content": {
+        "title": "Opowiedz o miejscu, które chcesz stworzyć.",
+        "body": "Przed rozmową warto zebrać plan wnętrza, potrzeby domowników i przykłady materiałów, które są Ci bliskie. Ta demonstracja nie przyjmuje zgłoszeń.",
+        "cta": { "label": "Wróć do podejścia", "href": "#podejscie" },
+        "anchorId": "kontakt"
+      }
+    },
+    {
+      "compositionId": "site-footer",
+      "content": {
+        "brand": "Forma Wnętrz",
+        "description": "Układ, światło i materiały w jednej opowieści.",
+        "note": "Fikcyjna marka, demonstracyjne treści i wygenerowana wizualizacja. Strona wyłącznie do testów Monteby.",
+        "link": { "label": "Na początek", "href": "#start" }
+      }
+    }
+  ]
+}

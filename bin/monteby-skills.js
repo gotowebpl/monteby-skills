@@ -4,6 +4,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { createHash } = require('node:crypto');
 
 const SKILLS = [
   'monteby-site-authoring',
@@ -35,6 +36,7 @@ Options:
   --claude-dir <path>              Override Claude Code skills directory
   --codex-legacy                   Also install Codex skills to ~/.codex/skills
   --dry-run                        Print actions without writing files
+  --check                          Compare installed files without writing; fail on drift
   --help                           Show this help
 
 Examples:
@@ -54,6 +56,7 @@ function parseArgs(argv) {
     claudeDir: '',
     codexLegacy: false,
     dryRun: false,
+    check: false,
     help: false,
   };
 
@@ -71,6 +74,10 @@ function parseArgs(argv) {
     }
     if (arg === '--dry-run') {
       options.dryRun = true;
+      continue;
+    }
+    if (arg === '--check') {
+      options.check = true;
       continue;
     }
     if (arg === '--codex-legacy') {
@@ -263,16 +270,53 @@ function install(options) {
   }
 
   for (const item of planned) {
+    if (options.check) {
+      const expected = skillFileHashes(item.source, UNSHIPPED_SKILL_PATHS[item.skill] || []);
+      if (item.skill === 'monteby-site-authoring') {
+        for (const dependency of ['pixelmatch', 'pngjs']) {
+          const dependencyPath = path.join(packageRoot(), 'node_modules', dependency);
+          if (!fs.existsSync(dependencyPath)) {
+            throw new Error(`Missing runtime dependency: ${dependency}. Run npm ci before checking installations.`);
+          }
+          for (const [file, hash] of skillFileHashes(dependencyPath)) {
+            expected.set(`scripts/node_modules/${dependency}/${file}`, hash);
+          }
+        }
+      }
+      const actual = skillFileHashes(item.destination);
+      const missing = [...expected.keys()].filter((file) => !actual.has(file));
+      const changed = [...expected.keys()].filter((file) => actual.has(file) && actual.get(file) !== expected.get(file));
+      const extra = [...actual.keys()].filter((file) => !expected.has(file));
+      const digest = createHash('sha256').update(JSON.stringify([...expected].sort(([a], [b]) => a.localeCompare(b)))).digest('hex');
+      console.log(JSON.stringify({ mode: 'check', skill: item.skill, destination: item.destination, sourceSha256: digest, missing, changed, extra }));
+      if (missing.length || changed.length || extra.length) process.exitCode = 1;
+      continue;
+    }
     console.log(`${options.dryRun ? '[dry-run] ' : ''}${item.agent}: ${item.skill} -> ${item.destination}`);
     copySkill(item.source, item.destination, options.dryRun);
     removeUnshippedSkillArtifacts(item.skill, item.destination, options.dryRun);
     copySkillRuntimeDependencies(item.skill, item.destination, options.dryRun);
   }
 
-  if (!options.dryRun) {
+  if (!options.dryRun && !options.check) {
     console.log('');
     console.log('Monteby skills installed.');
   }
+}
+
+function skillFileHashes(directory, excluded = [], prefix = '', hashes = new Map()) {
+  if (!fs.existsSync(directory)) return hashes;
+  if (fs.lstatSync(directory).isSymbolicLink()) throw new Error(`Refusing to follow skill symlink: ${directory}`);
+  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+    const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
+    if (excluded.some((item) => relative === item || relative.startsWith(`${item}/`))) continue;
+    const absolute = path.join(directory, entry.name);
+    if (entry.isSymbolicLink()) throw new Error(`Refusing to follow skill symlink: ${absolute}`);
+    if (entry.isDirectory()) skillFileHashes(absolute, excluded, relative, hashes);
+    else if (entry.isFile()) hashes.set(relative, createHash('sha256').update(fs.readFileSync(absolute)).digest('hex'));
+    else throw new Error(`Unsupported skill file: ${absolute}`);
+  }
+  return hashes;
 }
 
 function main() {
