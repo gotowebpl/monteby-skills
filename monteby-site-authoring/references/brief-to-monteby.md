@@ -302,6 +302,12 @@ pomiar, zatwierdzone tokeny projektu, `globalStyles`, `designTokens`, neutralny
 fallback. Konflikt koloru lub typografii rozstrzyga `globalStyles` i trafia do
 uwag kitu. `customCSS` nigdy nie jest wejściem profilu.
 
+Semantyczne H3 zachowuje `tag: h3`. Gdy witryna publikuje preset `h3`, użyj
+go; gdy nie publikuje `h3`, ale ma `h2`, powiąż `typographyPreset: h2`.
+Nie kopiuj z niego rodziny ani wagi i nie wymyślaj globalnej skali rozmiarów.
+Mniejszy rozmiar karty może być jawną decyzją receptury lub zatwierdzonego
+projektu; istniejące lokalne wartości i jawnie wybrany preset mają pierwszeństwo.
+
 Typografia etykiet, pól i przycisku `FormBlock` korzysta z opublikowanych
 `designTokens.typographyBindings`, odczytywanych przez ten sam resolver Kita
 i draftera. Jawny pomiar pozostaje nadrzędny, a istniejący binding komponentowy
@@ -315,19 +321,95 @@ bindingów nie uprawnia do wymyślania referencji `var(--gcb-typo-*)`.
 | 0 Tokeny | wczytaj zatwierdzone tokeny marki projektu: `.monteby/design-tokens.mjs` i `brand.json` (albo `handoff.json` z przekazania, patrz `references/design-handoff.md`) | kolory, fonty i skala odstępów pochodzą z tokenów, nie z pamięci; brak plików tokenów odnotuj jawnie w raporcie |
 | 1 Kontrakt | `GET /wp-json/monteby/v1/contract` → `.monteby/contract.json`; zbuduj `resolvedDesignProfile` | HTTP 200, jest `components`; pełne `globalStyles` i opcjonalne `designTokens` pochodzą z tego samego live response |
 | 2 Wzorzec | `GET .../pages/{wzorzec}/layout` → zapisz jako `.monteby/pattern.json` | masz wartości propów sekcji, których będziesz używać |
-| 3 Treść | zbierz treść w source-bound `monteby-client-content-document` v2 (witryna, strona, zakres, SHA źródła, unikalne `id` + dokładny `text`) | teksty 1:1 z briefu, z zachowaniem U+00A0, bez skracania i parafraz; v1 pozostaje czytelny, ale nie stanowi dowodu 1:1 |
+| 3 Treść | zatwierdź inwentarz tekstu, CTA i UI przed kompozycją; po otrzymaniu kanonicznego snapshotu uruchom `verify-client-content.js --prepare` według procedury niżej | dokładna treść i celowe wystąpienia z briefu; osobne SHA inwentarza i surowego dokumentu, jawna witryna/strona/zakres |
 | 4 Build per sekcja | `node .monteby/build-<slug>.mjs` na `layout-kit.mjs`, sekcja po sekcji z szybkim podglądem (niżej) | każda sekcja obejrzana w podglądzie zanim powstanie następna |
 | 5 Uwagi kitu | przeczytaj `result.notes` | **pusta lista** albo każda pozycja świadomie zaakceptowana i opisana |
 | 6 Pre-flight | `normalize-layout.js --contract … --layout …` | `Błędy: 0`, ostrzeżenia przeczytane |
 | 7 Walidacja | `POST /wp-json/monteby/v1/validate` | `valid: true` |
 | 8 Zapis | kanoniczny klient: świeży snapshot, validate, save z tokenem i digestami wymaganymi przez live `layoutPersistence`, potem readback | zgodna tożsamość strony, token i SHA zapisanego layoutu; samo HTTP 200 nie jest dowodem |
-| 9 Bramka treści | przechwyć żywą stronę przez `capture-template-reference.js`, potem uruchom `verify-client-content.js --client-document … --live-manifest …` | `complete: true` oraz `sourceBound: true`; zgodna witryna/strona/zakres/SHA; brak `missing`, `truncatedOrChanged`, `duplicateCountMismatch` i `added` |
+| 9 Bramka treści | `capture-template-reference.js --content-region … --capture-layout --full-page`, potem `verify-client-content.js --client-document … --live-manifest … --source-document …` | `complete: true` oraz `sourceBound: true`, a także `sourceDocumentBound: true`; każda szerokość ma zgodny tekst, role, nazwy i cele; nie jest to dowód widoczności ani działania |
 | 10 Bramka końcowa | porównanie zrzutów zapisanej strony na 1440/834/390 (niżej) | brak przepełnienia poziomego, sekcje wyrenderowane, różnice zrzutów rozliczone |
 
 Szerokości pomiaru: 1440/834/390. Wcześniejsza wersja tej tabeli podawała 768;
 obowiązuje jedna reguła szerokości tabletu z `mechanical-workflow-protocol.md`
 (arkusz tabletowy wtyczki działa do 900px, mobilny do 767px, a 834 to
 szerokość pomiarowa).
+
+### Source-bound v2: zatwierdzona treść i semantyka UI
+
+Kanoniczny artefakt tej trasy to `monteby-client-content-document` v2.
+Przed authoringiem oddziel instrukcje briefu od publicznej treści. W zatwierdzonej
+tablicy JSON zapisz każde zamierzone wystąpienie z osobnym `id`; dla CTA zapisz
+także cel, dla nagłówka poziom, dla kontrolki widoczny tekst i nazwę dostępną.
+Etykiety UI niepodane przez klienta wymagają jawnej decyzji przed capture.
+Nie wyprowadzaj oczekiwanej liczby wystąpień ani brakujących etykiet z DOM,
+zrzutów czy już zapisanego layoutu. Surowy brief i ten inwentarz są oddzielnymi
+wejściami: ich hashe dowodzą tożsamości, nie zastępują review kompletności briefu.
+
+```json
+[
+  { "id": "hero.title", "kind": "text", "role": "h1", "text": "Dokładny tytuł" },
+  { "id": "hero.cta", "kind": "link", "text": "Poznaj zakres", "href": "#zakres" },
+  { "id": "navigation.toggle", "kind": "control", "role": "button", "text": "Menu", "name": "Menu" },
+  { "id": "hero.photo", "kind": "alt", "text": "Zatwierdzony opis rzeczywistego zdjęcia" }
+]
+```
+
+`kind` przyjmuje `text`, `link`, `control`, `alt` lub `placeholder`. Zwykły tekst
+nie wymaga `role`; nagłówki mają `h1`–`h6`, kontrolki zamknięte role formularza/
+nawigacji, np. `button`, `tab`, `textbox`, `combobox`. Dla linku lub kontrolki
+pominięte `name` oznacza ten sam tekst, nie brak nazwy. `text: ""` jest poprawne
+dla dekoracyjnego `alt` albo kontrolki/linku z jawną nazwą, np. przycisku ikonowego.
+`href` względny i równoważny bezwzględny porównują się po rozwiązaniu URL;
+capture zachowuje rzeczywisty adres rozpoznany przez przeglądarkę, także przy
+`<base>`. Nie podawaj HTML: `<sample>` i `&amp;` są tutaj literalną treścią.
+Zwykłe białe znaki są normalizowane, U+00A0 pozostaje odrębnym znakiem.
+
+Inwentarz opisuje również semantykę, nie tylko liczbę napisów: akapit z linkiem
+wewnątrz ma wpis całego akapitu oraz osobny wpis linku z celem. Link będący
+obrazem ma pusty tekst, nazwę z `alt` i osobny wpis `alt`. Zagnieżdżone spany
+nie mnożą kopii tekstu. Celowe powtórzenie w nawigacji i stopce wymaga dwóch
+wpisów; klony oznaczone przez runtime slidera nie są kolejną autorską treścią.
+Nie ignoruj nowych napisów tylko dlatego, że są niewidoczne lub mają `aria-hidden`.
+
+Po oficjalnym `snapshot` wybierz zakres **przed** pomiarem: `full-render` obejmuje
+całe `body`, w tym globalne szablony i portale drawera; `page-content` obejmuje
+dokładnie jeden `main`/`role=main`. Brak lub wiele takich korzeni blokuje pomiar.
+Portal poza `main` nie należy do zakresu `page-content`; jeśli zawiera zatwierdzoną
+treść, użyj `full-render` i uwzględnij pozostałą publiczną treść tej strony.
+
+```bash
+node monteby-site-authoring/scripts/verify-client-content.js --prepare \
+  --inventory .monteby/approved-content.json \
+  --source-document .monteby/brief.md \
+  --snapshot .monteby/snapshot/layout-before.json \
+  --region full-render --label 'Zatwierdzona treść i UI' \
+  --out .monteby/content-v2.json
+
+node monteby-site-authoring/scripts/capture-template-reference.js \
+  --url <viewUrl-z-kanonicznego-snapshotu> \
+  --capture-layout --full-page --content-region full-render \
+  --out-dir .monteby/public-content-capture
+
+node monteby-site-authoring/scripts/verify-client-content.js \
+  --client-document .monteby/content-v2.json \
+  --source-document .monteby/brief.md \
+  --live-manifest .monteby/public-content-capture/reference-manifest.json \
+  --out .monteby/content-verification.json
+```
+
+`--prepare` nie weryfikuje strony: zwraca `prepared: true, verified: false`.
+Weryfikacja wymaga zgodnego raw-source SHA, inwentarza, adresu i zakresu oraz
+kompletnego niezależnego wyniku każdej przechwyconej szerokości. Pominięcie,
+dodatek, zmieniony cel/nazwa/poziom nagłówka/NBSP lub błędna liczba wystąpień
+blokują kompletność. Niepełny capture, nieobsługiwane osadzenie czy niejasna
+nazwa kontrolki to blocker, nie powód do pomniejszenia inwentarza.
+
+Raport obejmuje także nieaktywne panele, slajdy i ukrytą treść obecną w DOM.
+**Nie dowodzi**, że można ją zobaczyć, uruchomić lub odczytać klawiaturą.
+Zachowaj osobne zrzuty i dowody interakcji; ukryta kopia nie naprawia braku
+widocznej treści. V1 pozostaje kontrolą tekstu bez wiązania źródła. Historyczne
+V2 bez dowodu zakresu nie mogą zastąpić nowego source-bound capture.
 
 ## Iteracja per sekcja
 

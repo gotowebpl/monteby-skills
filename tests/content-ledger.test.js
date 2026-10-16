@@ -8,7 +8,29 @@ const {
   mergeDirectTextEntries,
   nodeMapContentEntries,
   normalizeContentText,
+  normalizeSemanticEntry,
 } = require('../monteby-site-authoring/scripts/content-ledger');
+
+test('semantic ledger compares literal copy and destinations without decoding source HTML-like characters', () => {
+  const source = { structureKey: 'one', text: 'Use <sample> &amp; \u00a0exactly', kind: 'text' };
+  const ledger = buildContentLedger([source], { semantic: true, viewUrl: 'https://example.test/a/' });
+  assert.equal(ledger.items[0].text, source.text);
+  assert.equal(ledger.schemaVersion, 2);
+  const entityChanged = buildContentLedger([{ ...source, text: 'Use <sample> & \u00a0exactly' }], { semantic: true });
+  assert.equal(compareContentLedgers(ledger, entityChanged).complete, false);
+  for (const entry of [
+    { text: 'CTA', kind: 'link', href: 'javascript:alert(1)' },
+    { text: 'CTA', kind: 'link', href: 'https://user:pass@example.test/' },
+    { text: 'CTA', kind: 'link', href: '/a\nb' },
+    { text: 'CTA', kind: 'link' },
+    { text: 'Label', kind: 'control', role: 'unknown' },
+    { text: 'Label', name: 'Hidden name' },
+    { text: 'Label', href: '/hidden-link' },
+    { text: '', kind: 'text' },
+    { text: 'Label', kind: 'control', role: 'button', name: 7 },
+  ]) assert.throws(() => normalizeSemanticEntry(entry, 'https://example.test/a/'));
+  assert.equal(normalizeSemanticEntry({ text: '', kind: 'alt' }).text, '');
+});
 
 test('content ledger preserves long Polish paragraphs and normalizes inline markup', () => {
   const longText = `Zażółć gęślą jaźń ${'bardzo długa treść '.repeat(30)}`.trim();

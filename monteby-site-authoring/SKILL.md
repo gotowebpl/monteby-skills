@@ -394,14 +394,14 @@ length, SHA-256, and occurrence counts, then compares that multiset with the
 actual node map. `missing`, `truncatedOrChanged`, or
 `duplicateCountMismatch`, or `added` entries block the run; long paragraphs and inline
 markup are never dropped from the ledger because of a display/evidence limit.
-For `content-brief-authoring`, prepare an explicit source-bound
-`monteby-client-content-document` v2 artifact, capture the canonical live page,
-and run `scripts/verify-client-content.js`. A claim such as “1:1, bez skrótów”
-is invalid without a complete verification report bound to the exact source
-SHA-256, public URL, and region. U+00A0 non-breaking spaces remain distinct
-authored characters in capture, node props, and ledger evidence. Legacy v1
-documents may be checked, but the report marks them unbound and they cannot
-support an exact client-source completion claim.
+For `content-brief-authoring`, follow `references/brief-to-monteby.md` for the
+existing verifier's `--prepare` → scoped capture → verification route.
+`monteby-client-content-document` v2 binds approved copy/CTA/UI, raw source bytes
+and canonical page identity; never infer expected counts from the candidate.
+“1:1, bez skrótów” requires every viewport to pass with
+`sourceBound` and `sourceDocumentBound`, exact source SHA, URL and region.
+Inactive DOM copy is semantic evidence, not visibility, interaction or visual
+quality. U+00A0 non-breaking spaces remain distinct. Legacy v1 is unbound.
 
 ## Utilities outside the reproduction state machine
 
@@ -414,9 +414,8 @@ only when their primary reference explicitly calls for it.
   repairs known renderer traps. A successful `write()` closes that document and
   resets node IDs/state, so the same Kit may safely write the next document;
   failed writes retain state for diagnosis.
-- `scripts/verify-client-content.js` — compares an approved structured client
-  content document with the `contentLedger` captured from the canonical live
-  page and fails on missing, changed, duplicate-count, or added copy.
+- `scripts/verify-client-content.js` — prepares source-bound v2 and compares approved
+  copy/CTA/UI per viewport; rejects missing, changed, duplicate or added entries.
 - `scripts/batch-layout-client.js` — preflights every page in a versioned batch
   before its first write, then saves sequentially; on conflict it stops and
   writes an exact resume ledger, then re-preflights every unapplied page before

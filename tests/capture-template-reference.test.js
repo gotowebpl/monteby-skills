@@ -7,6 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
 const { publicPropVerification } = require('../monteby-site-authoring/scripts/verify-public-props');
+const { captureSemanticContent, buildContentLedger } = require('../monteby-site-authoring/scripts/content-ledger');
 
 const captureScript = path.join(__dirname, '..', 'monteby-site-authoring', 'scripts', 'capture-template-reference.js');
 const {
@@ -70,6 +71,172 @@ test('reference capture accepts a local HTML file without a redundant URL', () =
     /Either --url or --html-file is required/,
   );
   assert.match(usage(), /--url <url> \| --html-file <path>/);
+});
+
+test('semantic capture is opt-in, requires full public capture and is carried through the existing browser runner', () => {
+  const options = parseArgs(['--url', 'https://example.test/page/', '--capture-layout', '--full-page', '--content-region', 'full-render']);
+  assert.equal(options.contentRegion, 'full-render');
+  for (const extra of [[], ['--capture-layout'], ['--capture-layout', '--full-page', '--skip-screenshots']]) {
+    assert.throws(() => parseArgs(['--url', 'https://example.test/page/', '--content-region', 'full-render', ...extra]), /content-region requires/);
+  }
+  assert.throws(() => parseArgs(['--html-file', '/tmp/page.html', '--capture-layout', '--full-page', '--content-region', 'full-render']), /content-region requires/);
+  assert.match(renderedLayoutCaptureScript(), /captureSemanticContent\(document, window.location.href, region\)/);
+});
+
+test('semantic capture keeps inactive copy, link targets and accessible controls without wrapper or icon duplication', () => {
+  const bounds = { x: 0, y: 0, top: 0, bottom: 40, left: 0, right: 300, width: 300, height: 40 };
+  const heading = textElement('h5', 'Heading\u00a0five', bounds, []);
+  const paragraph = textElement('p', 'Literal <sample> &amp; text', bounds, []);
+  const link = controlElement('a', bounds, { href: '#details' }, { textNodes: [{ nodeValue: 'Read\u00a0more', rangeRects: [] }] });
+  const decorative = controlElement('span', bounds, { 'aria-hidden': 'true', class: 'material-symbols-outlined' }, { textNodes: [{ nodeValue: 'arrow_forward', rangeRects: [] }] });
+  link.children = [decorative];
+  const menu = controlElement('button', bounds, { 'aria-label': 'Open menu' });
+  const second = textElement('p', 'Second slide, not currently visible', bounds, [], { display: 'none' });
+  const image = controlElement('img', bounds, { alt: '' });
+  const main = layoutElement('main', bounds, [heading, paragraph, link, menu, second, image]);
+  const result = captureWithMockDom([], [], {}, { bodyChildren: [main], contentRegion: 'page-content' }).semanticContent;
+  assert.equal(result.complete, true);
+  assert.deepEqual(result.entries.map(({ kind, role, text, href, name }) => ({ kind, role, text, href, name })), [
+    { kind: 'text', role: 'h5', text: 'Heading\u00a0five', href: undefined, name: undefined },
+    { kind: 'text', role: '', text: 'Literal <sample> &amp; text', href: undefined, name: undefined },
+    { kind: 'link', role: undefined, text: 'Read\u00a0more', href: '#details', name: 'Read\u00a0more' },
+    { kind: 'control', role: 'button', text: '', href: undefined, name: 'Open menu' },
+    { kind: 'text', role: '', text: 'Second slide, not currently visible', href: undefined, name: undefined },
+    { kind: 'alt', role: undefined, text: '', href: undefined, name: undefined },
+  ]);
+  const ledger = buildContentLedger(result.entries, { semantic: true, viewUrl: result.viewUrl });
+  assert.equal(ledger.totalOccurrences, 6);
+  assert.equal(ledger.items.some((entry) => entry.text.includes('arrow_forward')), false);
+  assert.equal(ledger.items.find((entry) => entry.kind === 'link').href, 'https://example.test/range-fixture/#details');
+});
+
+test('semantic content scope excludes a portal outside main and refuses ambiguous roots or missing names', () => {
+  const bounds = { x: 0, y: 0, top: 0, bottom: 40, left: 0, right: 300, width: 300, height: 40 };
+  const main = layoutElement('main', bounds, [textElement('h1', 'Page', bounds, [])]);
+  const portal = layoutElement('div', bounds, [textElement('p', 'Drawer copy', bounds, [])]);
+  const page = captureWithMockDom([], [], {}, { bodyChildren: [main, portal], contentRegion: 'page-content' }).semanticContent;
+  assert.deepEqual(page.entries.map((entry) => entry.text), ['Page']);
+  const full = captureWithMockDom([], [], {}, { bodyChildren: [main, portal], contentRegion: 'full-render' }).semanticContent;
+  assert.deepEqual(full.entries.map((entry) => entry.text), ['Page', 'Drawer copy']);
+  const ambiguous = captureWithMockDom([], [], {}, { bodyChildren: [main, layoutElement('main', bounds)], contentRegion: 'page-content' }).semanticContent;
+  assert.equal(ambiguous.complete, false);
+  assert.deepEqual(ambiguous.reasons, ['ambiguous-content-root']);
+  const unnamed = captureWithMockDom([], [], {}, { bodyChildren: [controlElement('button', bounds)], contentRegion: 'full-render' }).semanticContent;
+  assert.equal(unnamed.complete, false);
+  assert.deepEqual(unnamed.reasons, ['unnamed-control']);
+});
+
+test('semantic capture keeps repeated copy and inline link semantics without counting nested text twice', () => {
+  const bounds = rect(0, 0, 300, 40);
+  const link = controlElement('a', bounds, { href: '/guide/' }, { textNodes: [{ nodeValue: 'guide', rangeRects: [] }] });
+  const paragraph = textElement('p', 'Read the ', bounds, []);
+  paragraph.children = [link];
+  const first = textElement('p', 'Repeated', bounds, []);
+  const second = textElement('p', 'Repeated', bounds, []);
+  const main = layoutElement('main', bounds, [paragraph, first, second]);
+  const captured = captureWithMockDom([], [], {}, { bodyChildren: [main], contentRegion: 'full-render' }).semanticContent;
+  assert.equal(captured.complete, true);
+  assert.deepEqual(captured.entries.map(({ kind, text }) => ({ kind, text })), [
+    { kind: 'text', text: 'Read the guide' }, { kind: 'link', text: 'guide' },
+    { kind: 'text', text: 'Repeated' }, { kind: 'text', text: 'Repeated' },
+  ]);
+  assert.equal(buildContentLedger(captured.entries, { semantic: true, viewUrl: captured.viewUrl }).items.find((item) => item.text === 'Repeated').count, 2);
+});
+
+test('semantic capture fails closed for inaccessible names, unsupported content and bounded traversal', () => {
+  const bounds = rect(0, 0, 300, 40);
+  const cases = [
+    [controlElement('button', bounds, { 'aria-labelledby': 'missing' }), 'unresolved-accessible-name'],
+    [controlElement('img', bounds), 'missing-image-alt'],
+    [controlElement('iframe', bounds), 'unsupported-embedded-content'],
+    [controlElement('svg', bounds, { role: 'img', 'aria-label': 'Unmodeled diagram' }), 'unsupported-embedded-content'],
+    [controlElement('canvas', bounds), 'unsupported-embedded-content'],
+    [controlElement('a', bounds, { href: '/unnamed/' }), 'unnamed-link'],
+    [layoutElement('select', bounds, [textElement('option', 'Choose', bounds, []), textElement('option', 'Basic', bounds, [])]), 'unnamed-control'],
+    [textElement('textarea', 'Not an accessible label', bounds, []), 'unnamed-control'],
+    [controlElement('a', bounds, { href: '/action/', role: 'button' }, { textNodes: [{ nodeValue: 'Action', rangeRects: [] }] }), 'unsupported-link-role'],
+  ];
+  for (const [node, reason] of cases) {
+    const captured = captureWithMockDom([], [], {}, { bodyChildren: [node], contentRegion: 'full-render' }).semanticContent;
+    assert.equal(captured.complete, false, reason);
+    assert.ok(captured.reasons.includes(reason), reason);
+  }
+  let root = textElement('p', 'Deep text', bounds, []);
+  for (let depth = 0; depth < 135; depth += 1) root = layoutElement('div', bounds, [root]);
+  const deep = captureWithMockDom([], [], {}, { bodyChildren: [root], contentRegion: 'full-render' }).semanticContent;
+  assert.equal(deep.complete, false);
+  assert.ok(deep.reasons.some((reason) => reason === 'content-depth-limit' || reason === 'content-budget'));
+});
+
+test('semantic capture retains hidden ordinary copy and the browser-resolved link destination', () => {
+  const bounds = rect(0, 0, 300, 40);
+  const hidden = controlElement('span', bounds, { 'aria-hidden': 'true' }, { textNodes: [{ nodeValue: 'Unapproved hidden addition', rangeRects: [] }] });
+  const link = controlElement('a', bounds, { href: 'relative' }, { textNodes: [{ nodeValue: 'Destination', rangeRects: [] }] });
+  link.href = 'https://different-base.test/relative';
+  const captured = captureWithMockDom([], [], {}, { bodyChildren: [hidden, link], contentRegion: 'full-render' }).semanticContent;
+  assert.equal(captured.complete, true);
+  assert.equal(captured.entries.find((entry) => entry.kind === 'text').text, 'Unapproved hidden addition');
+  assert.equal(captured.entries.find((entry) => entry.kind === 'link').href, link.href);
+});
+
+test('semantic capture binds image-only links and labeled fields without exposing current field values', () => {
+  const bounds = rect(0, 0, 300, 40);
+  const link = controlElement('a', bounds, { href: '/' });
+  link.children = [controlElement('img', bounds, { alt: 'Approved brand' })];
+  const label = textElement('label', 'Email', bounds, []);
+  const input = controlElement('input', bounds, { type: 'email', placeholder: 'Your email' });
+  input.labels = [label]; input.value = 'private@example.test';
+  const captured = captureWithMockDom([], [], {}, { bodyChildren: [link, label, input], contentRegion: 'full-render' }).semanticContent;
+  assert.equal(captured.complete, true);
+  assert.deepEqual(captured.entries.map(({ kind, text, name }) => ({ kind, text, name })), [
+    { kind: 'link', text: '', name: 'Approved brand' },
+    { kind: 'alt', text: 'Approved brand', name: undefined },
+    { kind: 'text', text: 'Email', name: undefined },
+    { kind: 'control', text: '', name: 'Email' },
+    { kind: 'placeholder', text: 'Your email', name: undefined },
+  ]);
+  assert.equal(JSON.stringify(captured).includes(input.value), false);
+});
+
+test('semantic capture treats a link-only text wrapper as one link while retaining real heading semantics', () => {
+  const bounds = rect(0, 0, 300, 40);
+  const link = controlElement('a', bounds, { href: '#section' }, { textNodes: [{ nodeValue: 'Section', rangeRects: [] }] });
+  const nested = layoutElement('li', bounds, [layoutElement('span', bounds, [link])]);
+  const innerLink = controlElement('a', bounds, { href: '#inside' });
+  innerLink.children = [textElement('span', 'Inside link', bounds, [])];
+  const innerButton = controlElement('button', bounds);
+  innerButton.children = [textElement('span', 'Inside button', bounds, [])];
+  const headingLink = controlElement('a', bounds, { href: '#other' }, { textNodes: [{ nodeValue: 'Heading', rangeRects: [] }] });
+  const heading = layoutElement('h2', bounds, [headingLink]);
+  const captured = captureWithMockDom([], [], {}, { bodyChildren: [nested, heading, layoutElement('li', bounds, [innerLink]), layoutElement('p', bounds, [innerButton])], contentRegion: 'full-render' }).semanticContent;
+  assert.equal(captured.complete, true);
+  assert.deepEqual(captured.entries.map(({ kind, role, text }) => ({ kind, role, text })), [
+    { kind: 'link', role: undefined, text: 'Section' },
+    { kind: 'text', role: 'h2', text: 'Heading' },
+    { kind: 'link', role: undefined, text: 'Heading' },
+    { kind: 'link', role: undefined, text: 'Inside link' },
+    { kind: 'control', role: 'button', text: 'Inside button' },
+  ]);
+});
+
+test('reference manifest retains independent semantic counts for every viewport instead of a permissive union', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'monteby-semantic-manifest-'));
+  const url = 'https://example.test/range-fixture/';
+  const viewports = [{ label: 'desktop', width: 1440, height: 1200 }, { label: 'tablet', width: 834, height: 1112 }, { label: 'mobile', width: 390, height: 844 }];
+  const captures = viewports.map((viewport, index) => {
+    const node = textElement('p', index === 2 ? 'Wrong mobile copy' : 'Approved copy', rect(0, 0, 300, 40), []);
+    const captured = captureWithMockDom([], [], {}, { bodyChildren: [node], contentRegion: 'full-render' });
+    return { label: viewport.label, status: 'ok', file: `${viewport.label}.json`, viewport, layout: { ...captured.layout, semanticContent: captured.semanticContent } };
+  });
+  try {
+    const result = writeReferenceArtifacts({ url, outDir: tempDir, fullPage: true, contentRegion: 'full-render', viewports }, '<main></main>', [], [], { status: 'ok', layouts: captures, evidenceCompleteness: { complete: true, reasons: [] } }, 'complete', '');
+    assert.equal(result.manifest.semanticContent.complete, true);
+    assert.equal(result.manifest.contentScope.region, 'full-render');
+    assert.deepEqual(result.manifest.semanticContent.viewports.map((viewport) => viewport.ledger.items[0].text), ['Approved copy', 'Approved copy', 'Wrong mobile copy']);
+    assert.deepEqual(result.manifest.semanticContent.viewports.map((viewport) => viewport.ledger.totalOccurrences), [1, 1, 1]);
+    const partial = writeReferenceArtifacts({ url, outDir: tempDir, fullPage: true, contentRegion: 'full-render', viewports }, '<main></main>', [], [], { status: 'ok', layouts: captures.slice(0, 2), evidenceCompleteness: { complete: true, reasons: [] } }, 'complete', '');
+    assert.equal(partial.manifest.semanticContent.complete, false);
+  } finally { fs.rmSync(tempDir, { recursive: true, force: true }); }
 });
 
 test('browser capture measures settled layout before full-page screenshot viewport mutation', async () => {
@@ -3240,7 +3407,7 @@ function captureWithMockDom(elementOrElements, mediaElements = [], backgroundDim
       ...options.documentElementStyle,
     },
   };
-  const structuralElements = connectMockElementTree(body);
+  const structuralElements = connectMockElementTree(body, Boolean(options.contentRegion));
 
   global.NodeFilter = { SHOW_TEXT: 4 };
   global.document = {
@@ -3249,6 +3416,9 @@ function captureWithMockDom(elementOrElements, mediaElements = [], backgroundDim
     fonts: options.fonts,
     title: 'Range fixture',
     querySelectorAll(selector) {
+      if (selector === 'main,[role="main"]') {
+        return structuralElements.filter((element) => element.tagName === 'MAIN' || element.getAttribute?.('role') === 'main');
+      }
       if (selector === TEXT_SELECTOR) {
         return elements;
       }
@@ -3272,6 +3442,7 @@ function captureWithMockDom(elementOrElements, mediaElements = [], backgroundDim
       }
       return [];
     },
+    getElementById(id) { return structuralElements.find((element) => element.getAttribute?.('id') === id) || null; },
     createTreeWalker(target) {
       let index = 0;
       return {
@@ -3316,6 +3487,7 @@ function captureWithMockDom(elementOrElements, mediaElements = [], backgroundDim
 
   try {
     return {
+      ...(options.contentRegion ? { semanticContent: captureSemanticContent(global.document, global.window.location.href, options.contentRegion) } : {}),
       layout: captureRenderedLayout(
         undefined,
         backgroundDimensions,
@@ -3638,9 +3810,13 @@ function mockComputedStyle(styleOverrides = {}) {
   };
 }
 
-function connectMockElementTree(root) {
+function connectMockElementTree(root, semantic = false) {
   const descendants = [];
   const visit = (parent) => {
+    if (semantic) {
+      parent.childNodes ||= [...(parent.textNodes || []), ...(parent.children || [])];
+      for (const textNode of parent.textNodes || []) textNode.nodeType = 3;
+    }
     for (const child of Array.from(parent.children || [])) {
       child.parentElement = parent;
       for (const textNode of Array.from(child.textNodes || [])) {

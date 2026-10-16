@@ -329,25 +329,13 @@ function applyResolvedDesignDefaults(component, props, profile, semanticRole = '
     }
   }
 
-  const preset = cleanId(resolved.typographyPreset) || semanticPreset(component, resolved, semanticRole);
+  const requestedPreset = cleanId(resolved.typographyPreset) || semanticPreset(component, resolved, semanticRole);
+  const preset = requestedPreset === 'h3'
+    && !profile?.typographyPresets?.h3
+    && profile?.typographyPresets?.h2
+    && resolved.typographyPreset === undefined
+    ? 'h2' : requestedPreset;
   const presetDefinition = preset ? profile?.typographyPresets?.[preset] : null;
-  if (preset === 'h3' && !presetDefinition && resolved.typographyPreset === undefined) {
-    const heading = { typographyPreset: profile?.typographyPresets?.h2 ? 'h2' : 'h1' };
-    const fallback = {
-      fontFamily: effectiveTypographyValue(heading, profile, 'fontFamily'),
-      fontWeight: effectiveTypographyValue(heading, profile, 'fontWeight'),
-      ...((resolved.fontSize === undefined || resolved.fontSize === null || resolved.fontSize === '')
-        ? { fontSize: '28px', fontSizeTablet: '26px', fontSizeMobile: '24px' }
-        : {}),
-      lineHeight: '1.3',
-    };
-    for (const [prop, value] of Object.entries(fallback)) {
-      if (allowedProps.has(prop) && stringValue(value)
-          && (resolved[prop] === undefined || resolved[prop] === null || resolved[prop] === '')) {
-        resolved[prop] = value;
-      }
-    }
-  }
   if (presetDefinition?.source === 'projectTokens') {
     for (const key of LOCAL_TYPOGRAPHY_PROPS) {
       let inheritsExplicitValue = false;
@@ -365,13 +353,15 @@ function applyResolvedDesignDefaults(component, props, profile, semanticRole = '
       }
     }
   }
+  const bindingPreset = preset === 'h3' && !profile?.globalTypographyPresets?.h3
+    ? 'h2' : preset;
   if (
-    preset
+    bindingPreset
     && allowedProps.has('typographyPreset')
-    && profile?.globalTypographyPresets?.[preset]
+    && profile?.globalTypographyPresets?.[bindingPreset]
     && resolved.typographyPreset === undefined
   ) {
-    resolved.typographyPreset = preset;
+    resolved.typographyPreset = bindingPreset;
   }
   return resolved;
 }

@@ -6,7 +6,7 @@ const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 const { pathToFileURL } = require('url');
-const { buildContentLedger, mergeDirectTextEntries } = require('./content-ledger');
+const { buildContentLedger, captureSemanticContent, mergeDirectTextEntries } = require('./content-ledger');
 
 const DEFAULT_VIEWPORTS = [
   { label: 'desktop', width: 1440, height: 1200 },
@@ -26,6 +26,7 @@ Options:
   --full-page                   Capture full scroll height instead of the first viewport
   --skip-screenshots            Only write the media manifest and reference brief
   --capture-layout              Capture rendered DOM/layout boxes into reference-layout.json
+  --content-region <region>     Also capture semantic content: full-render or page-content (one main landmark)
   --require-layout              Fail when rendered layout capture fails
   --viewport-timeout-ms <ms>     Timeout for each browser viewport render. Default: derived, at least 210000ms
   --no-resource-throttle        Do not block media, tracker, and realtime requests during browser capture
@@ -48,6 +49,7 @@ function parseArgs(argv) {
     viewports: DEFAULT_VIEWPORTS,
     skipScreenshots: false,
     captureLayout: false,
+    contentRegion: '',
     requireLayout: false,
     viewportTimeoutMs: 0,
     resourceThrottle: true,
@@ -98,6 +100,7 @@ function parseArgs(argv) {
       '--viewport-timeout-ms',
       '--html-file',
       '--playwright-package',
+      '--content-region',
     ].includes(arg);
 
     if (!valueOption) {
@@ -129,6 +132,8 @@ function parseArgs(argv) {
       options.htmlFile = path.resolve(value);
     } else if (arg === '--playwright-package') {
       options.playwrightPackage = value;
+    } else if (arg === '--content-region') {
+      options.contentRegion = value;
     }
   }
 
@@ -138,6 +143,10 @@ function parseArgs(argv) {
 
   if (!options.help && !options.url && !options.htmlFile) {
     throw new Error('Either --url or --html-file is required');
+  }
+  if (options.contentRegion && (!['full-render', 'page-content'].includes(options.contentRegion)
+      || !options.captureLayout || !options.fullPage || options.skipScreenshots || options.htmlFile)) {
+    throw new Error('--content-region requires a public URL, --capture-layout and --full-page without --skip-screenshots');
   }
 
   return options;
@@ -1883,6 +1892,7 @@ function captureViewportArtifacts(options, viewport, screenshotFile, layoutFile)
         MONTEBY_REFERENCE_CAPTURE_WAIT_MS: String(options.waitMs),
         MONTEBY_REFERENCE_CAPTURE_CHANNEL: options.channel,
         MONTEBY_REFERENCE_CAPTURE_FULL_PAGE: options.fullPage ? '1' : '',
+        MONTEBY_REFERENCE_CAPTURE_CONTENT_REGION: options.contentRegion || '',
         MONTEBY_REFERENCE_CAPTURE_RESOURCE_THROTTLE: options.resourceThrottle ? '1' : '',
         MONTEBY_REFERENCE_SCREENSHOT_URL: referenceBrowserUrl(options),
         MONTEBY_REFERENCE_SCREENSHOT_OUT: screenshotPath,
@@ -4753,6 +4763,13 @@ const warmLazyMedia = ${warmLazyMedia.toString()};
       },
     });
     capturedLayout = layout;
+    const contentRegion = process.env.MONTEBY_REFERENCE_CAPTURE_CONTENT_REGION || '';
+    if (contentRegion) {
+      capturedLayout.semanticContent = await page.evaluate(({ region }) => {
+        const captureSemanticContent = ${captureSemanticContent.toString()};
+        return captureSemanticContent(document, window.location.href, region);
+      }, { region: contentRegion });
+    }
   }
 
   const screenshotOut = process.env.MONTEBY_REFERENCE_CAPTURE_SCREENSHOT_OUT || process.env.MONTEBY_REFERENCE_SCREENSHOT_OUT || '';
@@ -5395,6 +5412,23 @@ function writeReferenceArtifacts(options, html, resourceCandidates, screenshots,
   }));
   const manifest = {
     sourceUrl: options.url,
+    ...(options.contentRegion ? {
+      contentScope: { viewUrl: options.url, region: options.contentRegion },
+      semanticContent: {
+        schemaVersion: 1,
+        complete: capturedLayouts.length > 0
+          && capturedLayouts.length === options.viewports.length
+          && capturedLayouts.every((layout) => layout.semanticContent?.complete === true),
+        viewports: capturedLayouts.map((layout, index) => ({
+          label: layoutCapture.layouts?.[index]?.label || '',
+          viewUrl: layout.semanticContent?.viewUrl || '',
+          region: layout.semanticContent?.region || '',
+          complete: layout.semanticContent?.complete === true,
+          reasons: layout.semanticContent?.reasons || ['missing-semantic-content'],
+          ledger: buildContentLedger(layout.semanticContent?.entries || [], { semantic: true, viewUrl: layout.semanticContent?.viewUrl }),
+        })),
+      },
+    } : {}),
     capturedAt: new Date().toISOString(),
     captureStatus: resolvedCaptureStatus,
     captureMessage: resolvedCaptureMessage,

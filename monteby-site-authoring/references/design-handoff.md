@@ -27,6 +27,13 @@ operations and published controls for refinements; report a missing capability
 instead of adding custom CSS, technical classes or a parallel interaction engine.
 Do not invent testimonials, metrics, prices, credentials or legal copy.
 
+Choose a structure that makes the supplied material useful: a programme index
+should lead to its stories, a process should explain progression, and a product
+demonstration should expose the approved demonstration rather than only repeat
+marketing copy in slides. These are content jobs, not mandatory widget choices.
+Use only the brief's assets and live capabilities; where the required material
+is missing, record that limitation instead of substituting unrelated decoration.
+
 ### Visual acceptance, separate from technical acceptance
 
 Inspect the saved public PHP page, not only the editor or static preview. Keep

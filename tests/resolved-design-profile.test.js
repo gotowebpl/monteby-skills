@@ -468,24 +468,22 @@ test('numeric control normalization reports any snapped or clamped author value'
   assert.ok(kit.notes.some((note) => note.includes('13 → 10')));
 });
 
-test('absent h3 preset receives bounded neutral typography without replacing live or project choices', () => {
+test('absent h3 preset binds published h2 without inventing local typography', () => {
   const current = contract();
   current.components.find((entry) => entry.name === 'Heading').props.push('fontSizeTablet', 'fontSizeMobile', 'lineHeight', 'fontWeight');
   current.globalStyles.typography.presets.h2.fontWeight = '600';
   const fallback = applyResolvedDesignDefaults('Heading', { tag: 'h3' }, buildResolvedDesignProfile(current));
-  assert.equal(fallback.typographyPreset, undefined);
-  assert.equal(fallback.fontSize, '28px');
-  assert.equal(fallback.fontSizeTablet, '26px');
-  assert.equal(fallback.fontSizeMobile, '24px');
-  assert.equal(fallback.lineHeight, '1.3');
-  assert.equal(fallback.fontFamily, 'var(--gcb-font-body)');
-  assert.equal(fallback.fontWeight, '600');
+  assert.equal(fallback.typographyPreset, 'h2');
+  assert.equal(fallback.tag, 'h3');
+  for (const prop of ['fontSize', 'fontSizeTablet', 'fontSizeMobile', 'lineHeight', 'fontFamily', 'fontWeight']) {
+    assert.equal(fallback[prop], undefined, prop);
+  }
   const partialHeadingProfile = buildResolvedDesignProfile(current, { typography: { presets: { h2: { fontSize: '60px' } } } });
   const partialFallback = applyResolvedDesignDefaults('Heading', { tag: 'h3' }, partialHeadingProfile);
-  assert.equal(partialFallback.typographyPreset, undefined);
-  assert.equal(partialFallback.fontFamily, fallback.fontFamily);
-  assert.equal(partialFallback.fontWeight, fallback.fontWeight);
-  assert.equal(partialFallback.fontSize, '28px');
+  assert.equal(partialFallback.typographyPreset, 'h2');
+  assert.equal(partialFallback.fontFamily, undefined);
+  assert.equal(partialFallback.fontWeight, undefined);
+  assert.equal(partialFallback.fontSize, '60px');
   const explicitFallback = applyResolvedDesignDefaults('Heading', { tag: 'h3', fontWeight: '800' }, partialHeadingProfile);
   assert.equal(explicitFallback.fontWeight, '800');
   const explicit = applyResolvedDesignDefaults('Heading', { tag: 'h3', fontSize: '32px' }, buildResolvedDesignProfile(current));
@@ -504,6 +502,18 @@ test('absent h3 preset receives bounded neutral typography without replacing liv
   const authored = applyResolvedDesignDefaults('Heading', { tag: 'h3' }, project);
   assert.equal(authored.fontSize, '31px');
   assert.equal(authored.lineHeight, '1.35');
+  assert.equal(authored.typographyPreset, 'h3');
+  delete current.globalStyles.typography.presets.h3;
+  const localH3 = buildResolvedDesignProfile(current, { typography: { presets: { h3: { fontSize: '31px' } } } });
+  const local = applyResolvedDesignDefaults('Heading', { tag: 'h3' }, localH3);
+  assert.equal(local.fontSize, '31px');
+  assert.equal(local.typographyPreset, 'h2');
+  assert.equal(local.fontFamily, undefined);
+  const explicitPreset = applyResolvedDesignDefaults('Heading', { tag: 'h3', typographyPreset: 'unknown' }, localH3);
+  assert.equal(explicitPreset.typographyPreset, 'unknown');
+  delete current.globalStyles.typography.presets.h2;
+  const unavailable = applyResolvedDesignDefaults('Heading', { tag: 'h3' }, buildResolvedDesignProfile(current));
+  assert.deepEqual(unavailable, { tag: 'h3' });
 });
 
 test('normalizer and kit share effective line height and preserve genuinely missing preset warnings', async () => {
