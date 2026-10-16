@@ -302,6 +302,16 @@ pomiar, zatwierdzone tokeny projektu, `globalStyles`, `designTokens`, neutralny
 fallback. Konflikt koloru lub typografii rozstrzyga `globalStyles` i trafia do
 uwag kitu. `customCSS` nigdy nie jest wejściem profilu.
 
+Testy kilku niezależnych briefów na jednej lokalnej witrynie wymagają izolacji
+globalnych stylów. `global-styles-compose` scala profil z bieżącymi ustawieniami;
+nie resetuje pominiętych pól, np. `textTransform` poprzedniego kierunku.
+Wyłącznie za zgodą użytkownika zapisz bazowy snapshot i rewizję, przed każdym
+demo przywróć i odczytaj dokładnie ten sam stan bazowy, a dopiero potem zastosuj
+profil. Zmiany wykonuj przez wersjonowane REST i sprawdzaj canonical readback.
+Po wszystkich testach, również po błędzie, przywróć bazowy snapshot i potwierdź
+zgodność wartości oraz rewizji. Nie traktuj ostatniego profilu demo jako nowej
+bazy ani nie usuwaj pominiętych pól w produkcyjnym PATCH, aby izolować test.
+
 Semantyczne H3 zachowuje `tag: h3`. Gdy witryna publikuje preset `h3`, użyj
 go; gdy nie publikuje `h3`, ale ma `h2`, powiąż `typographyPreset: h2`.
 Nie kopiuj z niego rodziny ani wagi i nie wymyślaj globalnej skali rozmiarów.

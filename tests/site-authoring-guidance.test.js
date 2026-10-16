@@ -42,6 +42,9 @@ test('brief workflow requires source-bound content and a separate qualitative vi
   assert.match(brief, /faktycznie używanym foncie/);
   assert.match(brief, /Sam `font-family` w computed style/);
   assert.match(brief, /nie jest dowodem pobrania fontu/);
+  assert.match(brief, /`global-styles-compose` scala profil z bieżącymi ustawieniami/);
+  assert.match(brief, /przed każdym\s+demo przywróć i odczytaj dokładnie ten sam stan bazowy/);
+  assert.match(brief, /również po błędzie, przywróć bazowy snapshot/);
   assert.doesNotMatch(brief, /Papier Studio|Orbit Desk|Forma Wnętrz/);
   assert.match(handoff, /passing tests are necessary but do not\s+prove premium design/);
   assert.match(handoff, /reviewer who did not build the\s+page/);
