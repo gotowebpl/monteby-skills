@@ -19,6 +19,7 @@ const {
   paintedBackgroundImageRect,
   parseArgs,
   primaryFontEvidence,
+  probeMotionEnvironment,
   probeRenderedTabInteractions,
   renderReferenceBrief,
   renderedLayoutCaptureScript,
@@ -35,6 +36,211 @@ const {
 const TEXT_SELECTOR = 'h1,h2,h3,h4,p,blockquote,a,button,li,span,strong,small';
 const LANDMARK_SELECTOR = 'header,nav,main,section,article,aside,footer';
 const INTERACTION_SELECTOR = 'a[href],button,details,summary,dialog,input,select,textarea,[role="button"],[role="link"],[role="switch"],[role="checkbox"],[role="radio"],[role="menuitem"],[role="menuitemcheckbox"],[role="menuitemradio"],[role="option"],[role="tab"],[role="tabpanel"],[role="dialog"],[role="alertdialog"],[role="accordion"],[aria-expanded]';
+
+for (const javaScript of [false, true]) {
+  test(`motion probe uses render callbacks only with JavaScript enabled (${javaScript})`, async () => {
+    let frames = 0;
+    let closed = false;
+    const page = {
+      async goto() {}, async waitForLoadState() {}, async waitForTimeout() {},
+      async evaluate(callback, input) {
+        return require('node:vm').runInNewContext(`(${callback.toString()})(input)`, {
+          input,
+          document: { querySelectorAll: () => [], body: { innerText: 'Readable static content', dispatchEvent() {} } },
+          window: {
+            scrollX: 0, scrollY: 0, scrollTo() {}, matchMedia: () => ({ matches: false }),
+            requestAnimationFrame(callback) {
+              assert.equal(javaScript, true, 'Disabled page scripts cannot deliver animation frames.');
+              frames += 1;
+              callback();
+            },
+          },
+          KeyboardEvent: class { defaultPrevented = false; }, WheelEvent: class { defaultPrevented = false; },
+        });
+      },
+    };
+    const result = await probeMotionEnvironment({ newContext: async (options) => {
+      assert.equal(options.javaScriptEnabled, javaScript);
+      return { newPage: async () => page, close: async () => { closed = true; } };
+    } }, 'https://example.test/', { width: 390, height: 844 }, { javaScript });
+    assert.equal(result.status, 'passed');
+    assert.equal(result.contentVisible, true);
+    assert.equal(result.javaScript, javaScript);
+    assert.equal(frames, javaScript ? 2 : 0);
+    assert.equal(closed, true);
+  });
+}
+
+for (const failureStage of ['context', 'page', 'navigation', 'measurement', 'cleanup']) {
+  test(`motion probe preserves a safe diagnostic and closes its context after ${failureStage} failure`, async () => {
+    const privateError = new Error('https://user:password@example.test/?nonce=SECRET Authorization: Bearer SECRET');
+    privateError.name = failureStage === 'navigation' ? 'TimeoutError' : 'Error';
+    let closed = false;
+    const page = {
+      async goto() { if (failureStage === 'navigation') throw privateError; },
+      async waitForLoadState() {}, async waitForTimeout() {},
+      async evaluate() { if (failureStage === 'measurement') throw privateError; return { status: 'passed' }; },
+    };
+    await assert.rejects(probeMotionEnvironment({ newContext: async () => {
+      if (failureStage === 'context') throw privateError;
+      return {
+        newPage: async () => { if (failureStage === 'page') throw privateError; return page; },
+        close: async () => { closed = true; if (failureStage === 'cleanup') throw privateError; },
+      };
+    } }, 'https://example.test/', { width: 390, height: 844 }), (error) => {
+      assert.equal(error.motionProbe.stage, failureStage);
+      assert.equal(error.motionProbe.code, failureStage === 'navigation' ? 'timeout' : failureStage === 'cleanup' ? 'cleanup-error' : 'probe-error');
+      assert.ok(Number.isFinite(error.motionProbe.elapsedMs) && error.motionProbe.elapsedMs >= 0);
+      assert.doesNotMatch(`${error.stack} ${JSON.stringify(error)}`, /SECRET|password|example\.test/);
+      return true;
+    });
+    assert.equal(closed, failureStage !== 'context');
+  });
+}
+
+test('motion probe retains its primary diagnostic when context cleanup also fails', async () => {
+  await assert.rejects(probeMotionEnvironment({ newContext: async () => ({
+    newPage: async () => ({ goto: async () => { throw new Error('private navigation'); } }),
+    close: async () => { throw new Error('private cleanup'); },
+  }) }, 'https://example.test/', { width: 390, height: 844 }), (error) => {
+    assert.equal(error.motionProbe.stage, 'navigation');
+    assert.equal(error.motionProbe.cleanupFailed, true);
+    assert.doesNotMatch(`${error.stack} ${JSON.stringify(error)}`, /private navigation|private cleanup/);
+    return true;
+  });
+});
+
+test('rendered motion environment evidence preserves the safe stage instead of swallowing failure', async () => {
+  const source = renderedLayoutCaptureScript();
+  const start = source.indexOf('const unavailableEnvironment =');
+  const end = source.indexOf('capturedLayout.motionEvidence =', start);
+  const failure = new Error('Motion environment probe failed.');
+  failure.motionProbe = { stage: 'measurement', code: 'probe-error', elapsedMs: 17 };
+  const context = require('node:vm').createContext({
+    capturedLayout: { motionEvidence: { owners: [{}] } }, browser: { newContext() {} },
+    captureUrl: 'https://example.test/', viewport: { width: 390, height: 844 },
+    probeMotionEnvironment: async () => { throw failure; },
+  });
+  const environments = await require('node:vm').runInContext(`(async () => { ${source.slice(start, end)} return [normalFinePointer, reducedMotion, noJavaScript, coarsePointer]; })()`, context);
+  for (const environment of environments) {
+    assert.equal(environment.status, 'failed');
+    assert.equal(environment.contentVisible, false);
+    assert.deepEqual(environment.diagnostic, failure.motionProbe);
+  }
+});
+
+if (process.env.MONTEBY_MOTION_CAPTURE_BROWSER_QA === '1') {
+  test('real disabled-JavaScript three-slide motion capture stays readable without waiting for page callbacks', { timeout: 15_000 }, async () => {
+    const playwright = require(process.env.MONTEBY_PLAYWRIGHT_MODULE || 'playwright');
+    const browser = await playwright.chromium.launch({ headless: true });
+    let directory;
+    const failures = [];
+    const fixture = `<!doctype html><html><head><style>
+      .enhanced .gotoweb-slider__slide:not(.is-active){display:none}
+      section{min-height:120px} .is-gw-ct-in{opacity:.99}
+      </style></head><body><section data-gw-ct="fade">
+      <p class="gotoweb-slider__slide is-active">First slide</p><p class="gotoweb-slider__slide">Second slide</p><p class="gotoweb-slider__slide">Third slide</p>
+      <button data-slider-prev>Previous</button><button data-slider-next>Next</button></section>
+      <script>window.fixtureScriptRan=true;const root=document.querySelector('section');root.classList.add('enhanced');
+      for(const [selector,delta] of [['[data-slider-next]',1],['[data-slider-prev]',-1]]) root.querySelector(selector).onclick=()=>{
+        const slides=[...root.querySelectorAll('p')];const index=slides.findIndex(slide=>slide.classList.contains('is-active'));
+        slides[index].classList.remove('is-active');slides[(index+delta+slides.length)%slides.length].classList.add('is-active');root.classList.add('is-gw-ct-in');
+      };</script></body></html>`;
+    const url = `data:text/html,${encodeURIComponent(fixture)}`;
+    let bound;
+    try {
+      directory = fs.mkdtempSync(path.join(os.tmpdir(), 'monteby-motion-capture-'));
+      const context = await browser.newContext({ javaScriptEnabled: false });
+      const page = await context.newPage();
+      await page.goto(url);
+      assert.equal(await page.evaluate(() => window.fixtureScriptRan === true), false);
+      assert.equal(await page.locator('.gotoweb-slider__slide:visible').count(), 3);
+      await context.close();
+      const probe = probeMotionEnvironment(browser, url, { width: 390, height: 844 }, { javaScript: false }).catch((error) => error);
+      const result = await Promise.race([probe, new Promise((resolve) => { bound = setTimeout(() => resolve(null), 3000); })]);
+      assert.notEqual(result, null, 'Static inspection must not wait for disabled page animation callbacks.');
+      assert.equal(result.status, 'passed');
+      assert.equal(result.javaScript, false);
+      assert.equal(result.ownerCount, 1);
+      assert.equal(result.contentVisible, true);
+      assert.equal(result.keyboardIntercepted, false);
+      assert.equal(result.wheelIntercepted, false);
+      const normal = await probeMotionEnvironment(browser, url, { width: 390, height: 844 }, { positiveProof: true });
+      assert.equal(normal.status, 'passed');
+      assert.equal(normal.positiveByKind['state-change'].passed, true);
+      const child = require('node:child_process').spawnSync(process.execPath, ['-e', renderedLayoutCaptureScript()], {
+        timeout: 10_000, encoding: 'utf8',
+        env: {
+          ...process.env,
+          NODE_PATH: path.dirname(path.dirname(require.resolve(`${process.env.MONTEBY_PLAYWRIGHT_MODULE || 'playwright'}/package.json`))),
+          MONTEBY_REFERENCE_CAPTURE_URL: url,
+          MONTEBY_REFERENCE_CAPTURE_WIDTH: '390', MONTEBY_REFERENCE_CAPTURE_HEIGHT: '844',
+          MONTEBY_REFERENCE_CAPTURE_FULL_PAGE: '1', MONTEBY_REFERENCE_CAPTURE_WAIT_MS: '0',
+          MONTEBY_REFERENCE_CAPTURE_RESOURCE_THROTTLE: '',
+          MONTEBY_REFERENCE_CAPTURE_LAYOUT_OUT: path.join(directory, 'layout.json'),
+          MONTEBY_REFERENCE_CAPTURE_SCREENSHOT_OUT: path.join(directory, 'capture.png'),
+        },
+      });
+      assert.equal(child.status, 0, child.stderr);
+      assert.equal(child.error, undefined);
+      assert.ok(fs.statSync(path.join(directory, 'capture.png')).size > 0);
+      const layout = JSON.parse(fs.readFileSync(path.join(directory, 'layout.json'), 'utf8'));
+      assert.equal(layout.motionEvidence.owners.length, 1);
+      for (const environment of Object.values(layout.motionEvidence.environments)) {
+        assert.equal(environment.status, 'passed');
+        assert.equal(environment.diagnostic.stage, 'complete');
+      }
+      assert.deepEqual(layout.motionEvidence.checks, {
+        reducedMotionStatic: true, noJavaScriptStatic: true, coarsePointerStatic: true,
+        keyboardOperable: true, wheelInterception: false,
+      });
+    } catch (error) {
+      failures.push(error);
+    } finally {
+      clearTimeout(bound);
+      try { await browser.close(); } catch (error) { failures.push(error); }
+      try { if (directory) fs.rmSync(directory, { recursive: true, force: true }); } catch (error) { failures.push(error); }
+    }
+    if (failures.length === 1) throw failures[0];
+    if (failures.length > 1) throw new AggregateError(failures, 'Motion browser regression or cleanup failed.');
+  });
+}
+
+for (const fault of ['primary', 'close', 'remove', 'both', 'directory']) {
+  test(`real motion regression cleanup preserves its primary error and independently attempts cleanup (${fault})`, async () => {
+    const source = fs.readFileSync(__filename, 'utf8');
+    const start = source.indexOf("test('real disabled-JavaScript three-slide motion capture");
+    const end = source.indexOf('\n  });\n}', start) + '\n  });'.length;
+    const primary = new Error('primary fixture failure');
+    const closed = new Error('browser close failure');
+    const removed = new Error('directory cleanup failure');
+    const calls = [];
+    let run;
+    require('node:vm').runInNewContext(source.slice(start, end), {
+      test: (_name, _options, callback) => { run = callback; }, process: { env: {} }, path, os, assert, clearTimeout,
+      require: () => ({ chromium: { launch: async () => ({
+        newContext: async () => { throw primary; },
+        close: async () => { calls.push('close'); if (['close', 'both'].includes(fault)) throw closed; },
+      }) } }),
+      fs: {
+        mkdtempSync: () => { if (fault === 'directory') throw primary; return '/owned-motion-regression'; },
+        rmSync: (directory, options) => {
+          calls.push('remove');
+          assert.equal(directory, '/owned-motion-regression');
+          assert.equal(options.recursive, true);
+          if (['remove', 'both'].includes(fault)) throw removed;
+        },
+      },
+    });
+    await assert.rejects(run(), (error) => {
+      const errors = error.errors || [error];
+      assert.equal(errors[0], primary);
+      assert.equal(errors.length, fault === 'both' ? 3 : ['close', 'remove'].includes(fault) ? 2 : 1);
+      return true;
+    });
+    assert.deepEqual(calls, fault === 'directory' ? ['close'] : ['close', 'remove']);
+  });
+}
 
 test('reference capture invokes npx without a Windows command shim', () => {
   assert.deepEqual(resolveNpxInvocation('darwin'), { command: 'npx', args: [] });

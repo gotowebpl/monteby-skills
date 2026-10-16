@@ -4267,17 +4267,26 @@ function loadPlaywright() {
 }
 
 async function probeMotionEnvironment(browser, url, viewport, options = {}) {
-  const context = await browser.newContext({
-    viewport,
-    javaScriptEnabled: options.javaScript !== false,
-    reducedMotion: options.reducedMotion === true ? 'reduce' : 'no-preference',
-    hasTouch: options.coarsePointer === true,
-  });
-  const page = await context.newPage();
+  const startedAt = Date.now();
+  let stage = 'context';
+  let context;
+  let failure;
   try {
+    context = await browser.newContext({
+      viewport,
+      javaScriptEnabled: options.javaScript !== false,
+      reducedMotion: options.reducedMotion === true ? 'reduce' : 'no-preference',
+      hasTouch: options.coarsePointer === true,
+    });
+    stage = 'page';
+    const page = await context.newPage();
+    stage = 'navigation';
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    stage = 'load';
     await page.waitForLoadState('load', { timeout: 10000 }).catch(() => {});
+    stage = 'settle';
     if (options.javaScript !== false) await page.waitForTimeout(options.positiveProof === true ? 40 : 250);
+    stage = 'measurement';
     const result = await page.evaluate(async ({ javaScript, positiveProof }) => {
       const selector = [
         '[data-gw-motion]',
@@ -4290,6 +4299,7 @@ async function probeMotionEnvironment(browser, url, viewport, options = {}) {
         '[data-gw-ct]',
       ].join(',');
       const settle = async (delay = 32) => {
+        if (!javaScript) return;
         if (typeof window.requestAnimationFrame === 'function') {
           await new Promise((resolve) => window.requestAnimationFrame(() => window.requestAnimationFrame(resolve)));
         }
@@ -4624,6 +4634,7 @@ async function probeMotionEnvironment(browser, url, viewport, options = {}) {
       positiveProof: options.positiveProof === true,
     });
 
+    stage = 'hover';
     if (options.positiveProof === true && result.positiveByKind?.['state-change']?.passed !== true) {
       const hoverOwners = Array.isArray(result.owners)
         ? result.owners.filter((owner) => owner.kind === 'state-change' && owner.hoverCandidate === true).slice(0, 8)
@@ -4676,10 +4687,31 @@ async function probeMotionEnvironment(browser, url, viewport, options = {}) {
         await page.mouse.move(0, 0).catch(() => {});
       }
     }
-    if (result && typeof result === 'object') delete result.owners;
+    if (result && typeof result === 'object') {
+      delete result.owners;
+      result.diagnostic = { stage: 'complete', elapsedMs: Math.max(0, Date.now() - startedAt) };
+    }
     return result;
+  } catch (error) {
+    failure = new Error('Motion environment probe failed.');
+    failure.motionProbe = {
+      stage,
+      code: error instanceof Error && error.name === 'TimeoutError' ? 'timeout' : 'probe-error',
+      elapsedMs: Math.max(0, Date.now() - startedAt),
+    };
+    throw failure;
   } finally {
-    await context.close();
+    try {
+      if (context) await context.close();
+    } catch {
+      if (failure) {
+        failure.motionProbe.cleanupFailed = true;
+      } else {
+        const cleanupFailure = new Error('Motion environment probe cleanup failed.');
+        cleanupFailure.motionProbe = { stage: 'cleanup', code: 'cleanup-error', elapsedMs: Math.max(0, Date.now() - startedAt) };
+        throw cleanupFailure;
+      }
+    }
   }
 }
 
@@ -4818,7 +4850,7 @@ const warmLazyMedia = ${warmLazyMedia.toString()};
     const hasMotionOwners = Array.isArray(capturedLayout.motionEvidence?.owners)
       && capturedLayout.motionEvidence.owners.length > 0;
     const probe = (probeOptions) => hasMotionOwners && typeof browser.newContext === 'function'
-      ? probeMotionEnvironment(browser, captureUrl, viewport, probeOptions).catch(() => ({ ...unavailableEnvironment, status: 'failed' }))
+      ? probeMotionEnvironment(browser, captureUrl, viewport, probeOptions).catch((error) => ({ ...unavailableEnvironment, status: 'failed', diagnostic: error.motionProbe }))
       : Promise.resolve({ ...unavailableEnvironment, status: hasMotionOwners ? 'unavailable' : 'not-required' });
     const [normalFinePointer, reducedMotion, noJavaScript, coarsePointer] = await Promise.all([
       probe({ positiveProof: true }),
