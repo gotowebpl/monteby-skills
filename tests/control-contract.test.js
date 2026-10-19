@@ -232,6 +232,92 @@ test('valueSchemas prove exact defaults without narrowing non-default authoring 
   ), { accepted: true, value: 'content' });
 });
 
+test('registered shortcode binding preserves one published invocation without accepting markup or unknown tags', () => {
+  const contract = {
+    hostChoices: { shortcodes: { tags: [{ name: 'public_gallery' }, { name: 'vendor:gallery-v2' }] } },
+    components: [{
+      name: 'WPBridge',
+      defaults: { shortcode: '' },
+      valueSchemas: { shortcode: { type: 'string', const: '' } },
+      hostScopedProps: ['shortcode'],
+      hostBindings: {
+        shortcode: { source: 'hostChoices.shortcodes.tags', valueField: 'name', kind: 'registered-shortcode' },
+      },
+      controls: [{ type: 'textarea', props: ['shortcode'], maxLength: 4096 }],
+    }],
+  };
+  const control = buildControlIndex(contract).get('WPBridge.shortcode');
+  for (const shortcode of [
+    '',
+    '[public_gallery]',
+    '[public_gallery id="7" columns=3]',
+    "[public_gallery title='Zażółć gęślą jaźń' /]",
+    '[public_gallery]Opis galerii[/public_gallery]',
+    ' \t[public_gallery id="7"]\r\n',
+    '[vendor:gallery-v2 item="7"]',
+    `[public_gallery title="${'a'.repeat(4071)}"]`,
+  ]) {
+    assert.deepEqual(normalizeControlValue(control, shortcode), { accepted: true, value: shortcode });
+  }
+  for (const shortcode of [
+    '[unknown_gallery id="7"]',
+    '[PUBLIC_GALLERY]',
+    '[public_gallery][public_gallery]',
+    '[public_gallery][vendor:gallery-v2][/public_gallery]',
+    '[public_gallery]text[/unknown_gallery]',
+    '<div>[public_gallery]</div>',
+    '[public_gallery onclick="<script>"]',
+    '[public_gallery title="line\nbreak"]',
+    '[public_gallery]\u2028',
+    '\u00a0[public_gallery]\u00a0',
+    `[public_gallery title="${'ą'.repeat(2040)}"]`,
+    `[public_gallery title="${'a'.repeat(4072)}"]`,
+    ['public_gallery'],
+    42,
+    null,
+  ]) {
+    const result = normalizeControlValue(control, shortcode);
+    assert.equal(result.accepted, false, JSON.stringify(shortcode));
+    assert.notEqual(result.contractError, true);
+  }
+  const noTags = structuredClone(contract);
+  noTags.hostChoices.shortcodes.tags = [];
+  assert.equal(normalizeControlValue(buildControlIndex(noTags).get('WPBridge.shortcode'), '[public_gallery]').accepted, false);
+});
+
+test('nullable host defaults retain selected template IDs and still reject unknown choices', () => {
+  const contract = {
+    hostChoices: { queryLoop: { templates: [{ id: 47 }], emptyTemplates: [{ id: 48 }] } },
+    components: [{
+      name: 'QueryLoop',
+      defaults: { templateId: null, emptyTemplateId: null },
+      valueSchemas: {
+        templateId: { type: 'null', const: null },
+        emptyTemplateId: { type: 'null', const: null },
+      },
+      hostScopedProps: ['templateId', 'emptyTemplateId'],
+      hostBindings: Object.fromEntries(['templateId', 'emptyTemplateId'].map((prop) => [prop, {
+        source: `hostChoices.queryLoop.${prop === 'templateId' ? 'templates' : 'emptyTemplates'}`,
+        valueField: 'id',
+        schema: { oneOf: [{ type: 'integer', minimum: 1 }, { type: 'null' }] },
+      }])),
+      controls: ['templateId', 'emptyTemplateId'].map((prop) => ({ type: 'host-choice', props: [prop] })),
+    }],
+  };
+  const index = buildControlIndex(contract);
+  for (const [prop, id] of [['templateId', 47], ['emptyTemplateId', 48]]) {
+    const control = index.get(`QueryLoop.${prop}`);
+    assert.deepEqual(normalizeControlValue(control, id), { accepted: true, value: id });
+    assert.deepEqual(normalizeControlValue(control, null), { accepted: true, value: null });
+    for (const unknown of [999, String(id), -1, true]) {
+      assert.equal(normalizeControlValue(control, unknown).accepted, false);
+    }
+    delete contract.components[0].valueSchemas[prop];
+    const missing = buildControlIndex(contract).get(`QueryLoop.${prop}`);
+    assert.equal(normalizeControlValue(missing, id).contractError, true);
+  }
+});
+
 test('host bindings enforce exact sources, prefixes, targets, schemas, and bounded media references', () => {
   const contract = {
     dynamicFields: {

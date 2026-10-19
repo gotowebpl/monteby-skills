@@ -854,7 +854,7 @@ function validateHostBinding(control, value, options) {
     }
   }
   if (hasOwn(effective, 'kind')
-      && !['dynamic-field', 'form-destination-list', 'retention-policy', 'exact-term-set-allowlist'].includes(effective.kind)) {
+      && !['dynamic-field', 'form-destination-list', 'retention-policy', 'exact-term-set-allowlist', 'registered-shortcode'].includes(effective.kind)) {
     return { valid: false, contractError: true, reason: 'host binding kind is unsupported' };
   }
   if (controlSource && isRecord(binding) && typeof binding.source === 'string' && controlSource !== binding.source) {
@@ -887,6 +887,18 @@ function validateHostBinding(control, value, options) {
   }
   const values = publishedChoiceValues(choices, effective);
   if (!values) return { valid: false, contractError: true, reason: 'host binding does not publish a valueField' };
+  let candidateValue = value;
+  if (effective.kind === 'registered-shortcode') {
+    const shortcode = typeof value === 'string' ? value.replace(/^[ \t\n\r\v\0]+|[ \t\n\r\v\0]+$/gu, '') : '';
+    if (shortcode === '' || Buffer.byteLength(shortcode, 'utf8') > 4096) {
+      return { valid: false, reason: 'shortcode must contain between 1 and 4096 UTF-8 bytes' };
+    }
+    const match = /^\[([A-Za-z_][A-Za-z0-9_:-]*)(?:[ \t]+[^\[\]<>\u0000-\u001f\u007f]*)?[ \t]*\/?\](?:[^\[\]<>\u0000-\u001f\u007f]*\[\/\1\])?$/u.exec(shortcode);
+    if (!match || match[0] !== shortcode) {
+      return { valid: false, reason: 'value must contain one bounded WordPress shortcode without nested calls or markup' };
+    }
+    candidateValue = match[1];
+  }
   if (effective.kind === 'form-destination-list' || Array.isArray(value)) {
     if (!Array.isArray(value) || value.some((item) => !values.some((choice) => sameJsonValue(choice, item)))) {
       return { valid: false, reason: 'list contains a value outside the published host choices' };
@@ -919,7 +931,7 @@ function validateHostBinding(control, value, options) {
   const matchingValues = publishedChoiceValues(matchingChoices, effective)?.filter((choice) => (
     !excludedValues.some((excluded) => sameJsonValue(excluded, choice))
   ));
-  return matchingValues?.some((choice) => sameJsonValue(choice, value))
+  return matchingValues?.some((choice) => sameJsonValue(choice, candidateValue))
     ? { valid: true }
     : { valid: false, reason: 'value is outside the exact published host choices' };
 }
