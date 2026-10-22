@@ -126,13 +126,25 @@ test('installer and check resolve npm-hoisted screenshot dependencies', () => {
     const args = [path.join(packageDirectory, 'bin', 'monteby-skills.js'), '--target', 'both', '--scope', 'project', '--project-dir', projectDirectory];
     const installed = spawnSync(process.execPath, args, { encoding: 'utf8' });
     assert.equal(installed.status, 0, installed.stderr);
+    const { PNG } = require('pngjs');
+    const image = new PNG({ width: 2, height: 2 });
+    image.data.fill(255);
+    const imagePath = path.join(projectDirectory, 'runtime.png');
+    fs.writeFileSync(imagePath, PNG.sync.write(image));
     for (const agentDirectory of ['.agents', '.claude']) {
       const scripts = path.join(projectDirectory, agentDirectory, 'skills', 'monteby-site-authoring', 'scripts');
       for (const dependency of ['pixelmatch', 'pngjs']) {
         assert.equal(fs.existsSync(path.join(scripts, 'node_modules', dependency, 'package.json')), true);
       }
-      const runtime = spawnSync(process.execPath, [path.join(scripts, 'compare-screenshots.js'), '--help'], { encoding: 'utf8' });
+      const runtime = spawnSync(process.execPath, [
+        path.join(scripts, 'compare-screenshots.js'), '--target', imagePath,
+        '--candidate', imagePath, '--max-percent', '0', '--json',
+      ], { cwd: projectDirectory, encoding: 'utf8' });
       assert.equal(runtime.status, 0, runtime.stderr);
+      const comparison = JSON.parse(runtime.stdout);
+      assert.equal(comparison.ok, true);
+      assert.equal(comparison.mismatched, 0);
+      assert.equal(comparison.total, 4);
     }
     const checked = spawnSync(process.execPath, [...args, '--check'], { encoding: 'utf8' });
     assert.equal(checked.status, 0, checked.stderr);
