@@ -219,21 +219,14 @@ function copySkill(source, destination, dryRun) {
   });
 }
 
-function copySkillRuntimeDependencies(skill, destination, dryRun) {
+function copySkillRuntimeDependencies(skill, destination, dryRun, dependencies) {
   if (dryRun || skill !== 'monteby-site-authoring') {
     return;
   }
 
-  const dependencies = ['pixelmatch', 'pngjs'];
-  const sourceNodeModules = path.join(packageRoot(), 'node_modules');
   const destinationNodeModules = path.join(destination, 'scripts', 'node_modules');
 
-  for (const dependency of dependencies) {
-    const source = path.join(sourceNodeModules, dependency);
-    if (!fs.existsSync(source)) {
-      continue;
-    }
-
+  for (const [dependency, source] of dependencies) {
     fs.mkdirSync(destinationNodeModules, { recursive: true });
     fs.cpSync(source, path.join(destinationNodeModules, dependency), {
       recursive: true,
@@ -256,6 +249,17 @@ function removeUnshippedSkillArtifacts(skill, destination, dryRun) {
 function install(options) {
   const directories = targetDirectories(options);
   const planned = [];
+  const runtimeDependencies = new Map();
+
+  if ((options.check || !options.dryRun) && options.skills.includes('monteby-site-authoring')) {
+    for (const dependency of ['pixelmatch', 'pngjs']) {
+      try {
+        runtimeDependencies.set(dependency, path.dirname(require.resolve(`${dependency}/package.json`)));
+      } catch {
+        throw new Error(`Missing runtime dependency: ${dependency}. Run npm ci in a source checkout or reinstall the npm package.`);
+      }
+    }
+  }
 
   for (const skill of options.skills) {
     const source = ensureSkillExists(skill);
@@ -273,11 +277,7 @@ function install(options) {
     if (options.check) {
       const expected = skillFileHashes(item.source, UNSHIPPED_SKILL_PATHS[item.skill] || []);
       if (item.skill === 'monteby-site-authoring') {
-        for (const dependency of ['pixelmatch', 'pngjs']) {
-          const dependencyPath = path.join(packageRoot(), 'node_modules', dependency);
-          if (!fs.existsSync(dependencyPath)) {
-            throw new Error(`Missing runtime dependency: ${dependency}. Run npm ci before checking installations.`);
-          }
+        for (const [dependency, dependencyPath] of runtimeDependencies) {
           for (const [file, hash] of skillFileHashes(dependencyPath)) {
             expected.set(`scripts/node_modules/${dependency}/${file}`, hash);
           }
@@ -295,7 +295,7 @@ function install(options) {
     console.log(`${options.dryRun ? '[dry-run] ' : ''}${item.agent}: ${item.skill} -> ${item.destination}`);
     copySkill(item.source, item.destination, options.dryRun);
     removeUnshippedSkillArtifacts(item.skill, item.destination, options.dryRun);
-    copySkillRuntimeDependencies(item.skill, item.destination, options.dryRun);
+    copySkillRuntimeDependencies(item.skill, item.destination, options.dryRun, runtimeDependencies);
   }
 
   if (!options.dryRun && !options.check) {

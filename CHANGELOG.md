@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.6.2 - 2026-10-22
+
+- Preserve published global design bindings through local overrides, shared
+  profile resolution and layout normalization without detaching unrelated values.
+- Bind approved client copy, CTA and UI content to the exact source bytes and
+  canonical page identity; verify semantic content separately for each viewport
+  without deriving expected counts from the candidate.
+- Preserve nested content and semantic text boundaries during browser capture,
+  and inspect no-JavaScript motion without waiting for animation callbacks.
+- Keep registered shortcode controls and nullable host bindings compatible with
+  the live contract instead of rejecting supported authoring inputs.
+- Align premium brief guidance with content inventories, rendered font evidence,
+  independent review and isolated shared-site design-profile benchmarks.
+- Add a read-only installer check with exact source digests and missing, changed
+  and stale-file reports; published packages still omit quarantined tools.
+- Resolve npm-hoisted screenshot dependencies for both installation and drift
+  checks, and reject missing dependencies before replacing installed skills.
+- Keep package, lockfile and compatibility versions aligned at 0.6.2 without
+  migrating saved layouts or automatically updating installed agent skills.
+
 ## 0.6.1 - 2026-10-08
 
 - Admit explicitly declared Builder release-candidate floors using real SemVer

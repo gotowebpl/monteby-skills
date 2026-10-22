@@ -109,3 +109,64 @@ test('check reports absent installations without creating directories', () => {
     fs.rmSync(projectDir, { recursive: true, force: true });
   }
 });
+
+test('installer and check resolve npm-hoisted screenshot dependencies', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'monteby-skills-hoisted-'));
+  const modules = path.join(directory, 'node_modules');
+  const packageDirectory = path.join(modules, '@gotowebpl', 'monteby-skills');
+  const projectDirectory = path.join(directory, 'project');
+  try {
+    for (const entry of ['bin', 'monteby-site-authoring', 'monteby-widget-development']) {
+      fs.cpSync(path.join(root, entry), path.join(packageDirectory, entry), { recursive: true });
+    }
+    for (const dependency of ['pixelmatch', 'pngjs']) {
+      fs.cpSync(path.dirname(require.resolve(`${dependency}/package.json`)), path.join(modules, dependency), { recursive: true });
+    }
+    assert.equal(fs.existsSync(path.join(packageDirectory, 'node_modules')), false);
+    const args = [path.join(packageDirectory, 'bin', 'monteby-skills.js'), '--target', 'both', '--scope', 'project', '--project-dir', projectDirectory];
+    const installed = spawnSync(process.execPath, args, { encoding: 'utf8' });
+    assert.equal(installed.status, 0, installed.stderr);
+    for (const agentDirectory of ['.agents', '.claude']) {
+      const scripts = path.join(projectDirectory, agentDirectory, 'skills', 'monteby-site-authoring', 'scripts');
+      for (const dependency of ['pixelmatch', 'pngjs']) {
+        assert.equal(fs.existsSync(path.join(scripts, 'node_modules', dependency, 'package.json')), true);
+      }
+      const runtime = spawnSync(process.execPath, [path.join(scripts, 'compare-screenshots.js'), '--help'], { encoding: 'utf8' });
+      assert.equal(runtime.status, 0, runtime.stderr);
+    }
+    const checked = spawnSync(process.execPath, [...args, '--check'], { encoding: 'utf8' });
+    assert.equal(checked.status, 0, checked.stderr);
+    const reports = checked.stdout.trim().split('\n').map((line) => JSON.parse(line));
+    assert.equal(reports.length, 4);
+    for (const report of reports) assert.deepEqual([report.missing, report.changed, report.extra], [[], [], []]);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('missing screenshot dependencies fail before replacing installed skills while dry-run stays read-only', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'monteby-skills-dependencies-'));
+  const packageDirectory = path.join(directory, 'package');
+  const projectDirectory = path.join(directory, 'project');
+  const destination = path.join(projectDirectory, '.agents', 'skills', 'monteby-site-authoring');
+  try {
+    fs.cpSync(path.join(root, 'bin'), path.join(packageDirectory, 'bin'), { recursive: true });
+    fs.mkdirSync(path.join(packageDirectory, 'monteby-site-authoring'), { recursive: true });
+    fs.writeFileSync(path.join(packageDirectory, 'monteby-site-authoring', 'SKILL.md'), 'New bundled skill');
+    fs.mkdirSync(destination, { recursive: true });
+    fs.writeFileSync(path.join(destination, 'SKILL.md'), 'Keep existing installation');
+    const args = [path.join(packageDirectory, 'bin', 'monteby-skills.js'), '--target', 'codex', '--scope', 'project', '--project-dir', projectDirectory, '--skills', 'monteby-site-authoring'];
+    const options = { encoding: 'utf8', env: { ...process.env, NODE_PATH: '' } };
+    for (const extra of [[], ['--check']]) {
+      const failed = spawnSync(process.execPath, [...args, ...extra], options);
+      assert.equal(failed.status, 1, failed.stderr);
+      assert.match(failed.stderr, /Missing runtime dependency: pixelmatch/);
+      assert.equal(fs.readFileSync(path.join(destination, 'SKILL.md'), 'utf8'), 'Keep existing installation');
+    }
+    const dryRun = spawnSync(process.execPath, [...args, '--dry-run'], options);
+    assert.equal(dryRun.status, 0, dryRun.stderr);
+    assert.equal(fs.readFileSync(path.join(destination, 'SKILL.md'), 'utf8'), 'Keep existing installation');
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});

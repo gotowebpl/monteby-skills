@@ -1,7 +1,7 @@
 # Monteby Skills
 
-Package version: `0.6.1`.
-The published `v0.6.0` tag remains unchanged. Site Authoring 0.6.1 requires Monteby Builder 1.4.0
+Package version: `0.6.2`.
+The published `v0.6.1` tag remains unchanged. Site Authoring 0.6.2 requires Monteby Builder 1.4.0
 or newer for canonical writes and uses named feature gates from the live
 contract. Its complete 1.6 capability path requires Builder 1.6.0 or an
 explicitly admitted candidate from `1.6.0-rc.2`; the candidate's actual version
@@ -27,9 +27,11 @@ instantiation, revision restore, bulk page creation, global styles PATCH,
 design profiles, contract projections, per-component reads and WordPress
 Abilities — each with a named fallback so older sites keep the 1.5 routes.
 
-The 0.6.1 patch includes canonical operation-proof compatibility, hash-bound
-composition motion with mandatory server validation, linked-slot motion audits,
-and published FormBlock typography defaults shared by the Kit and drafter.
+The 0.6.2 patch preserves design bindings and nested semantic content, binds
+client-content proof to approved source bytes, and hardens browser capture for
+semantic text boundaries and no-JavaScript motion checks. It also preserves
+registered shortcode and nullable host bindings and adds a read-only installed-skill
+drift check.
 It does not migrate saved layouts or install itself into existing agent directories.
 
 Reusable Agent Skills for working with the Monteby ecosystem.
