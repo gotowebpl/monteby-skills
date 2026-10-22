@@ -2843,12 +2843,23 @@ function captureRenderedLayout(
   const renderedTextLines = (element, measure = true) => {
     const elementRect = readRect(element);
     const lines = [];
-    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT | (measure ? 0 : NodeFilter.SHOW_ELEMENT));
     let previousLine = null;
     let pendingWhitespace = '';
     let order = 0;
+    let previousBlock = null;
+    let explicitLineBreak = false;
+    const blockDisplay = /^(?:block|flow-root|flex|grid|list-item|table(?:-(?:row|cell|caption|row-group|header-group|footer-group))?)(?:\s|$)/u;
 
     for (let textNode = walker.nextNode(); textNode; textNode = walker.nextNode()) {
+      if (!measure && elementTag(textNode)) {
+        const style = window.getComputedStyle(textNode);
+        if ((elementTag(textNode) === 'br' || blockDisplay.test(style.display)) && !isIconTreeElement(textNode)
+          && isVisible(textNode, elementRect, style)) {
+          explicitLineBreak = true;
+        }
+        continue;
+      }
       const parentElement = textNode.parentElement || element;
       if (isIconTreeElement(parentElement) || !isVisible(parentElement, elementRect, window.getComputedStyle(parentElement))) {
         continue;
@@ -2856,7 +2867,15 @@ function captureRenderedLayout(
 
       const value = String(textNode.nodeValue || '');
       if (!measure) {
-        lines.push({ text: value });
+        let block = parentElement;
+        while (block !== element && block.parentElement
+          && !blockDisplay.test(window.getComputedStyle(block).display)) {
+          block = block.parentElement;
+        }
+        const separator = explicitLineBreak || (previousBlock && previousBlock !== block) ? ' ' : '';
+        lines.push({ text: separator + value });
+        previousBlock = block;
+        explicitLineBreak = false;
         continue;
       }
       const range = document.createRange();

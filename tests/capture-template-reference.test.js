@@ -206,6 +206,106 @@ if (process.env.MONTEBY_MOTION_CAPTURE_BROWSER_QA === '1') {
   });
 }
 
+if (process.env.MONTEBY_CONTENT_CAPTURE_BROWSER_QA === '1') {
+  test('real browser capture preserves source text boundaries and exact nested references', { timeout: 120_000 }, async (t) => {
+    const { pathToFileURL } = require('node:url');
+    const { sha256 } = require('../monteby-site-authoring/scripts/icon-mapping');
+    const { renderDocument } = require('../monteby-site-authoring/scripts/render-monteby-preview');
+    const { Kit } = await import('../monteby-site-authoring/scripts/layout-kit.mjs');
+    const modulePath = process.env.MONTEBY_PLAYWRIGHT_MODULE || 'playwright';
+    const packagePath = require.resolve(`${modulePath}/package.json`);
+    const outputRoot = process.env.MONTEBY_CONTENT_CAPTURE_OUTPUT || path.join(__dirname, '..', 'output', 'playwright');
+    fs.mkdirSync(outputRoot, { recursive: true });
+    const directory = fs.mkdtempSync(path.join(outputRoot, 'rc4-content-'));
+    t.diagnostic(`Retained synthetic browser evidence: ${directory}`);
+    const source = `<!doctype html><html><head><meta charset="utf-8"><style>
+      body{font-family:Arial,sans-serif;margin:24px} .upper{text-transform:uppercase}
+      .block{display:block} .hidden{display:none}
+      </style></head><body><main>
+      <h1 class="upper">Nasza<br>oferta i Żółć&nbsp;razem</h1>
+      <p>In<em>line</em>&nbsp;słowo</p>
+      <p>Pierwszy<span class="block">Drugi</span>Trzeci</p>
+      <p>A<span class="block"></span>B</p>
+      <p>Widoczne<span class="hidden">NIE DODAWAJ UKRYTEJ TREŚCI</span> zakończenie</p>
+      </main></body></html>`;
+    const contract = {
+      globalStyles: { colors: { primary: '#123456' } },
+      components: [
+        { name: 'Section', isCanvas: true, props: [], controls: [] },
+        { name: 'MultilineHeading', props: ['lines', 'tag'], controls: [
+          { type: 'select', props: ['tag'], options: ['h1', 'h2', 'h3'] },
+          { type: 'repeater', props: ['lines'], itemControls: [
+            { type: 'text', props: ['text'] }, { type: 'color', props: ['color'] },
+          ] },
+        ] },
+      ],
+    };
+    const lines = [
+      { text: 'Pierwsza linia', color: 'var(--gcb-color-primary)' },
+      { text: 'Druga\u00a0linia', color: 'var(--gcb-color-primary)' },
+    ];
+    const kit = new Kit(contract);
+    const heading = kit.node('MultilineHeading', { tag: 'h1', lines });
+    const section = kit.node('Section', {}, [heading]);
+    const nodes = kit.build([section]);
+    const snapshot = structuredClone(nodes);
+    const invalid = structuredClone(lines);
+    invalid[1].color = 'var(--gcb-color-unpublished)';
+    const invalidSnapshot = structuredClone(invalid);
+    assert.throws(() => kit.node('MultilineHeading', { lines: invalid }), /nieopublikowana referencja CSS/);
+    assert.deepEqual(invalid, invalidSnapshot);
+    assert.deepEqual(nodes, snapshot);
+    const rendered = renderDocument(nodes, 'Synthetic nested reference regression', contract);
+    assert.deepEqual(rendered.diagnostics, []);
+    fs.writeFileSync(path.join(directory, 'source.html'), source, { flag: 'wx' });
+    fs.writeFileSync(path.join(directory, 'candidate.html'), rendered.html, { flag: 'wx' });
+    fs.writeFileSync(path.join(directory, 'nodes.json'), JSON.stringify(nodes, null, 2), { flag: 'wx' });
+    fs.writeFileSync(path.join(directory, 'contract.json'), JSON.stringify(contract, null, 2), { flag: 'wx' });
+    const results = [];
+    for (const width of [1440, 834, 390]) {
+      for (const kind of ['source', 'candidate']) {
+        const prefix = path.join(directory, `${kind}-${width}`);
+        const child = require('node:child_process').spawnSync(process.execPath, ['-e', renderedLayoutCaptureScript()], {
+          timeout: 15_000, encoding: 'utf8',
+          env: {
+            ...process.env,
+            NODE_PATH: path.dirname(path.dirname(packagePath)),
+            MONTEBY_REFERENCE_CAPTURE_URL: pathToFileURL(path.join(directory, `${kind}.html`)).href,
+            MONTEBY_REFERENCE_CAPTURE_WIDTH: String(width), MONTEBY_REFERENCE_CAPTURE_HEIGHT: '844',
+            MONTEBY_REFERENCE_CAPTURE_FULL_PAGE: '1', MONTEBY_REFERENCE_CAPTURE_WAIT_MS: '0',
+            MONTEBY_REFERENCE_CAPTURE_CHANNEL: '', MONTEBY_REFERENCE_LAYOUT_CHANNEL: '',
+            MONTEBY_REFERENCE_CAPTURE_RESOURCE_THROTTLE: '1',
+            MONTEBY_REFERENCE_CAPTURE_LAYOUT_OUT: `${prefix}.json`,
+            MONTEBY_REFERENCE_CAPTURE_SCREENSHOT_OUT: `${prefix}.png`,
+          },
+        });
+        assert.equal(child.status, 0, child.stderr);
+        assert.equal(child.error, undefined);
+        const layout = JSON.parse(fs.readFileSync(`${prefix}.json`, 'utf8'));
+        const texts = layout.contentTextEntries.map(({ text }) => text);
+        if (kind === 'source') {
+          assert.deepEqual(texts, ['Nasza oferta i Żółć\u00a0razem', 'Inline\u00a0słowo', 'Pierwszy Drugi Trzeci', 'A B', 'Widoczne zakończenie']);
+          assert.ok(layout.textBoxes.some((box) => box.tag === 'h1' && box.text === 'NASZA OFERTA I ŻÓŁĆ\u00a0RAZEM'));
+          assert.doesNotMatch(JSON.stringify(layout), /NIE DODAWAJ UKRYTEJ TREŚCI/);
+        } else {
+          assert.deepEqual(texts, ['Pierwsza linia Druga\u00a0linia']);
+          for (const line of lines) assert.ok(layout.textBoxes.some((box) => box.text === line.text && box.color === 'rgb(18, 52, 86)'));
+          assert.deepEqual(nodes[heading].props.lines, lines);
+        }
+        assert.ok(fs.statSync(`${prefix}.png`).size > 100);
+        results.push({ kind, width, texts, capture: path.basename(`${prefix}.json`), screenshot: path.basename(`${prefix}.png`), exitCode: child.status });
+      }
+    }
+    fs.writeFileSync(path.join(directory, 'report.json'), JSON.stringify({
+      status: 'passed', evidenceKind: 'synthetic-source-and-skill-static-preview', wordpress: false,
+      browser: 'chromium', playwrightVersion: require(packagePath).version,
+      captureScriptSha256: sha256(fs.readFileSync(captureScript)),
+      sourceSha256: sha256(source), nodeMapSha256: sha256(JSON.stringify(nodes)),
+      rejectedUnknownReferenceWithoutMutation: true, results,
+    }, null, 2), { flag: 'wx' });
+  });
+}
+
 for (const fault of ['primary', 'close', 'remove', 'both', 'directory']) {
   test(`real motion regression cleanup preserves its primary error and independently attempts cleanup (${fault})`, async () => {
     const source = fs.readFileSync(__filename, 'utf8');
@@ -1811,6 +1911,43 @@ test('content ledger preserves authored case while measured text retains CSS tex
   assert.equal(layout.textBoxes[0].text, source.toUpperCase());
   assert.equal(layout.textBoxes[0].textTransform, 'uppercase');
   assert.deepEqual(buildContentLedger(layout.contentTextEntries).items.map(({ text }) => text), [source]);
+});
+
+test('content ledger retains explicit line breaks without changing authored case', () => {
+  const element = textElement('h1', 'Nasza\noferta', rect(8, 18, 300, 60), [], { textTransform: 'uppercase' });
+  const first = { nodeValue: 'Nasza', parentElement: element, rangeRects: Array.from('Nasza', (_, index) => rect(10 + index * 7, 20, 7, 14)) };
+  const second = { nodeValue: 'oferta', parentElement: element, rangeRects: Array.from('oferta', (_, index) => rect(10 + index * 7, 40, 7, 14)) };
+  const lineBreak = controlElement('br', rect(45, 20, 0, 14), {}, { parentElement: element }, { display: 'inline' });
+  element.childNodes = [first, lineBreak, second];
+  element.innerText = 'NASZA\nOFERTA';
+  const { layout, rangeCallCount } = captureWithMockDom([element]);
+  assert.equal(layout.contentTextEntries[0].text, 'Nasza oferta');
+  assert.equal(layout.textBoxes[0].text, 'NASZA OFERTA');
+  assert.equal(rangeCallCount, 11);
+  lineBreak.computedStyle.display = 'none';
+  assert.equal(captureWithMockDom([element]).layout.contentTextEntries[0].text, 'Naszaoferta');
+});
+
+test('content ledger separates block text but does not insert spaces inside inline words', () => {
+  const element = textElement('p', 'Nasza oferta dzisiaj', rect(8, 18, 300, 90), []);
+  const inline = textElement('em', 'za', rect(30, 20, 14, 14), [rect(30, 20, 7, 14), rect(37, 20, 7, 14)], { display: 'inline' });
+  const block = textElement('span', 'oferta', rect(10, 40, 80, 14), Array.from('oferta', (_, index) => rect(10 + index * 7, 40, 7, 14)), { display: 'block' });
+  const hidden = textElement('span', 'hidden', rect(10, 40, 80, 14), [], { display: 'none' });
+  element.children = [inline, block, hidden];
+  connectMockElementTree(element);
+  element.childNodes = [
+    { nodeValue: 'Nas', parentElement: element, rangeRects: Array.from('Nas', (_, index) => rect(10 + index * 7, 20, 7, 14)) },
+    inline,
+    block,
+    hidden,
+    { nodeValue: 'dzisiaj', parentElement: element, rangeRects: Array.from('dzisiaj', (_, index) => rect(10 + index * 7, 60, 7, 14)) },
+  ];
+  const { layout, rangeCallCount } = captureWithMockDom([element]);
+  assert.equal(layout.contentTextEntries[0].text, 'Nasza oferta dzisiaj');
+  assert.equal(rangeCallCount, 18);
+  assert.doesNotMatch(JSON.stringify(layout), /hidden/);
+  block.textNodes = [];
+  assert.equal(captureWithMockDom([element]).layout.contentTextEntries[0].text, 'Nasza dzisiaj');
 });
 
 test('rendered text capture preserves an authored non-breaking space', () => {
@@ -3627,7 +3764,7 @@ function captureWithMockDom(elementOrElements, mediaElements = [], backgroundDim
   };
   const structuralElements = connectMockElementTree(body, Boolean(options.contentRegion));
 
-  global.NodeFilter = { SHOW_TEXT: 4 };
+  global.NodeFilter = { SHOW_TEXT: 4, SHOW_ELEMENT: 1 };
   global.document = {
     body,
     documentElement,
@@ -3661,11 +3798,22 @@ function captureWithMockDom(elementOrElements, mediaElements = [], backgroundDim
       return [];
     },
     getElementById(id) { return structuralElements.find((element) => element.getAttribute?.('id') === id) || null; },
-    createTreeWalker(target) {
+    createTreeWalker(target, mask) {
+      const nodes = [];
+      const pending = [...(target.childNodes || target.textNodes || [])];
+      while (pending.length > 0) {
+        const node = pending.shift();
+        if (node.tagName) {
+          if (mask & global.NodeFilter.SHOW_ELEMENT) nodes.push(node);
+          pending.unshift(...(node.childNodes || node.textNodes || []));
+        } else if (mask & global.NodeFilter.SHOW_TEXT) {
+          nodes.push(node);
+        }
+      }
       let index = 0;
       return {
         nextNode() {
-          const node = target.textNodes[index] || null;
+          const node = nodes[index] || null;
           index += 1;
           return node;
         },
