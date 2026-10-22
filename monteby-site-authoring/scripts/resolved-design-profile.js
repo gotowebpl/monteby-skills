@@ -316,6 +316,7 @@ function applyResolvedDesignDefaults(component, props, profile, semanticRole = '
   }
   const bindings = profile?.bindings?.[component] || {};
   for (const [prop, tokenKey] of Object.entries(bindings)) {
+    if (component === 'Container' && prop === 'borderRadius' && !['card', 'surface'].includes(semanticRole)) continue;
     if (
       (resolved[prop] !== undefined && resolved[prop] !== null && resolved[prop] !== '')
       || !allowedProps.has(prop)

@@ -141,6 +141,7 @@ function normalizePolicy(value) {
     maxPinnedScenesPerPage: finiteNonNegativeInteger(policy.maxPinnedScenesPerPage),
     maxBackgroundEffectsPerPage: finiteNonNegativeInteger(policy.maxBackgroundEffectsPerPage),
     maxStaggerSpanMs: finiteNonNegativeInteger(policy.maxStaggerSpanMs),
+    maxStaggerGroupSize: policy.maxStaggerGroupSize === undefined ? 6 : finiteNonNegativeInteger(policy.maxStaggerGroupSize),
     maxEntranceDurationMs: finiteNonNegativeInteger(policy.maxEntranceDurationMs),
     maxEntranceDelayMs: finiteNonNegativeInteger(policy.maxEntranceDelayMs),
     maxEntranceDistancePx: finiteNonNegativeInteger(policy.maxEntranceDistancePx),
@@ -171,6 +172,11 @@ function buildResolvedMotionProfile(contract) {
       || published.policy[prop] > maximum
     ))
     .map(([prop, [minimum, maximum]]) => `authoring.motion.policy.${prop} must be an integer from ${minimum} to ${maximum}`);
+  if (published?.policy?.maxStaggerGroupSize !== undefined
+      && (!Number.isInteger(published.policy.maxStaggerGroupSize)
+        || published.policy.maxStaggerGroupSize < 2 || published.policy.maxStaggerGroupSize > 24)) {
+    policyErrors.push('authoring.motion.policy.maxStaggerGroupSize must be an integer from 2 to 24');
+  }
   if (published?.policy?.defaultRepeat !== 'once') {
     policyErrors.push('authoring.motion.policy.defaultRepeat must be once');
   }
@@ -288,6 +294,7 @@ function buildResolvedMotionProfile(contract) {
     const motionSections = motionSectionsByComponent.get(component);
     if (typeof control?.section !== 'string' || !motionSections?.has(control.section)) continue;
     const prop = path.slice(separator + 1);
+    if (/^(?:hover|active)(?:Color|Bg|BorderColor|Shadow)$/u.test(prop)) continue;
     const propNames = propNamesByComponent.get(component) || new Set();
     propNames.add(prop);
     propNamesByComponent.set(component, propNames);
@@ -584,8 +591,8 @@ function auditMotionLayout(nodeMap, profile, evidence = {}) {
     if (stagger > 0) {
       const groupSize = motionGroupSize(node);
       const span = stagger * Math.max(0, groupSize - 1);
-      if (groupSize < 2 || groupSize > 6) {
-        errors.push({ code: 'motion_stagger_group_size', nodeId, component, message: `${nodeId} stagger requires two to six direct children; found ${groupSize}.` });
+      if (groupSize < 2 || groupSize > profile.policy.maxStaggerGroupSize) {
+        errors.push({ code: 'motion_stagger_group_size', nodeId, component, message: `${nodeId} stagger requires 2 to ${profile.policy.maxStaggerGroupSize} direct children; found ${groupSize}.` });
       }
       if (span > profile.policy.maxStaggerSpanMs) {
         errors.push({ code: 'motion_stagger_budget_exceeded', nodeId, component, message: `${nodeId} stagger spans ${span}ms; live budget is ${profile.policy.maxStaggerSpanMs}ms.` });

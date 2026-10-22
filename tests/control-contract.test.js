@@ -2,6 +2,10 @@
 
 const assert = require('node:assert/strict');
 const test = require('node:test');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 const { sha256 } = require('../monteby-site-authoring/scripts/icon-mapping');
 const {
   buildControlIndex,
@@ -136,6 +140,49 @@ test('control metadata keeps nested fields contextual and enforces nested bounds
   ]).accepted, false);
 });
 
+test('nested references use their exact published control context without mutating content', async () => {
+  const contract = {
+    globalStyles: { colors: { primary: '#123456' }, typography: { presets: { body: { fontSize: '18px' } } } },
+    designTokens: {
+      tokens: { 'cards.radius': { reference: 'var(--monteby-token-cards-radius)', value: '12px' } },
+      bindings: { MultilineHeading: { 'lines[].radius': 'cards.radius' } },
+    },
+    components: [{
+      name: 'MultilineHeading', props: ['lines', 'marginTop'], aiProps: ['lines', 'marginTop'],
+      controls: [{ type: 'repeater', props: ['lines'], itemControls: [
+        { type: 'text', props: ['text'] }, { type: 'color', props: ['color'] },
+        { type: 'css-value', props: ['radius'], units: ['px'] },
+        { type: 'object', props: ['style'], itemControls: [{ type: 'color', props: ['color'] }] },
+      ] }],
+    }],
+  };
+  const control = buildControlIndex(contract).get('MultilineHeading.lines');
+  const lines = [
+    { text: 'Keep this heading', color: 'var(--gcb-color-primary)', radius: 'var(--monteby-token-cards-radius)' },
+    { text: 'Keep this too', style: { color: 'var(--mb-primary)' } },
+  ];
+  const before = structuredClone(lines);
+  assert.deepEqual(normalizeControlValue(control, lines), { accepted: true, value: lines });
+  const { Kit } = await import('../monteby-site-authoring/scripts/layout-kit.mjs');
+  const kit = new Kit(contract);
+  const validId = kit.node('MultilineHeading', { lines });
+  assert.deepEqual(kit.nodes[validId].props.lines, before);
+  for (const [prop, invalid] of [
+    ['color', 'var(--private-color)'], ['color', 'var(--gcb-color-unpublished)'],
+    ['radius', 'var(--gcb-color-primary)'], ['text', 'var(--gcb-color-primary)'],
+  ]) {
+    const rejected = structuredClone(lines);
+    rejected[0][prop] = invalid;
+    const snapshot = structuredClone(rejected);
+    assert.equal(normalizeControlValue(control, rejected, new Set([invalid])).accepted, false);
+    assert.throws(() => kit.node('MultilineHeading', { lines: rejected }), /nieopublikowana referencja CSS/);
+    assert.deepEqual(rejected, snapshot);
+    assert.deepEqual(Object.keys(kit.nodes), [validId]);
+    assert.deepEqual(kit.nodes[validId].props.lines, before);
+  }
+  assert.deepEqual(lines, before);
+});
+
 test('control normalization honors empty, atomic, list, matrix, and spacing metadata', () => {
   assert.equal(normalizeControlValue({ type: 'number', min: 0, max: 5, step: 1 }, '').accepted, false);
   assert.deepEqual(
@@ -175,6 +222,37 @@ test('control normalization honors empty, atomic, list, matrix, and spacing meta
     { type: 'spacing', units: ['px'] },
     { inlineStart: '4px' },
   ).accepted, false);
+});
+
+test('normalizer rejects unknown nested references while preserving every row and unrelated prop', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'monteby-nested-token-test-'));
+  try {
+    const contract = { components: [{
+      name: 'MultilineHeading', props: ['lines', 'marginTop'],
+      controls: [{ type: 'repeater', props: ['lines'], itemControls: [
+        { type: 'text', props: ['text'] }, { type: 'color', props: ['color'] },
+      ] }],
+    }], globalStyles: { colors: { primary: '#123456' } } };
+    const nodeMap = { heading: { type: { resolvedName: 'MultilineHeading' }, props: {
+      marginTop: '0px', lines: [{ text: 'First', color: 'var(--private)' }, { text: 'Second', color: 'var(--gcb-color-primary)' }],
+    }, nodes: [] } };
+    const contractPath = path.join(directory, 'contract.json');
+    const layoutPath = path.join(directory, 'layout.json');
+    const outputPath = path.join(directory, 'fixed.json');
+    fs.writeFileSync(contractPath, JSON.stringify(contract));
+    fs.writeFileSync(layoutPath, JSON.stringify(nodeMap));
+    const execution = spawnSync(process.execPath, [
+      path.resolve(__dirname, '../monteby-site-authoring/scripts/normalize-layout.js'),
+      '--contract', contractPath, '--layout', layoutPath, '--fix', outputPath, '--json',
+    ], { encoding: 'utf8' });
+    assert.equal(execution.status, 1, execution.stderr);
+    const report = JSON.parse(execution.stdout);
+    assert.equal(report.ok, false);
+    assert.match(report.errors[0].message, /repeater\[0\]\.color.*nieopublikowana/);
+    assert.deepEqual(report.repairs, []);
+    assert.deepEqual(JSON.parse(fs.readFileSync(outputPath, 'utf8')), nodeMap);
+    assert.deepEqual(JSON.parse(fs.readFileSync(layoutPath, 'utf8')), nodeMap);
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
 });
 
 test('valueSchemas prove exact defaults without narrowing non-default authoring values', () => {

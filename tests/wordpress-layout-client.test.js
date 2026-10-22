@@ -2298,7 +2298,8 @@ test('patch-save rejects a compiled output digest not bound to preflight', async
   assert.deepEqual(server.errors, []);
 });
 
-test('preview posts nodeMap and writes returned HTML atomically', async (t) => {
+for (const authoringMode of ['', 'owned-html-reconstruction', 'content-brief-authoring']) {
+test(`preview posts nodeMap and writes returned HTML atomically (${authoringMode || 'legacy'})`, async (t) => {
   const directory = tempDir(t);
   const layoutFile = path.join(directory, 'layout.json');
   const previewFile = path.join(directory, 'preview.html');
@@ -2324,6 +2325,7 @@ test('preview posts nodeMap and writes returned HTML atomically', async (t) => {
     '--save-report', saveReportFile,
     '--out', previewFile,
     '--report-out', previewReportFile,
+    ...(authoringMode ? ['--authoring-mode', authoringMode] : []),
   ]);
 
   assert.equal(execution.exitCode, 0);
@@ -2352,11 +2354,30 @@ test('preview posts nodeMap and writes returned HTML atomically', async (t) => {
     saveReport: saveReportFile,
   });
   assert.deepEqual(JSON.parse(fs.readFileSync(previewReportFile, 'utf8')), execution.result);
-  assert.equal(execution.result.nextAction.id, 'verify_canonical_page');
-  assert.ok(execution.result.nextAction.args.includes('$MONTEBY_ITERATION_REPORT'));
-  assert.ok(execution.result.nextAction.args.includes(previewReportFile));
+  assert.equal(execution.result.authoringMode, authoringMode || undefined);
+  if (authoringMode === 'content-brief-authoring') {
+    const action = execution.result.nextAction;
+    assert.equal(action.id, 'capture_canonical_brief_page');
+    assert.ok(action.tool.endsWith('capture-template-reference.js'));
+    assert.equal(action.args.includes('--iteration-report'), false);
+    assert.ok(action.args.includes('--full-page'));
+    assert.ok(action.args.includes('--capture-layout'));
+    assert.ok(action.requires.includes('MONTEBY_CLIENT_CONTENT_DOCUMENT'));
+    assert.ok(action.requires.includes('MONTEBY_SOURCE_DOCUMENT'));
+    assert.ok(action.requires.includes('CANONICAL_BRIEF_VISUAL_AND_INTERACTION_REVIEW'));
+    assert.match(action.instruction, /verify-client-content.*sourceBound.*1440\/834\/390.*Undo.*do not emit DONE/);
+    const capture = require('../monteby-site-authoring/scripts/capture-template-reference').parseArgs(
+      action.args.map((arg) => arg === '$MONTEBY_CONTENT_REGION' ? 'full-render' : arg)
+    );
+    assert.deepEqual(capture.viewports.map(({ width }) => width), [1440, 834, 390]);
+    assert.equal(capture.contentRegion, 'full-render');
+  } else {
+    assert.equal(execution.result.nextAction.id, 'verify_canonical_page');
+    assert.ok(execution.result.nextAction.args.includes('$MONTEBY_ITERATION_REPORT'));
+    assert.ok(execution.result.nextAction.args.includes(previewReportFile));
+    assert.ok(execution.result.nextAction.requires.includes('MONTEBY_ITERATION_REPORT'));
+  }
   assert.ok(execution.result.nextAction.args.includes(`${server.site}/page-17/`));
-  assert.ok(execution.result.nextAction.requires.includes('MONTEBY_ITERATION_REPORT'));
   assert.equal(execution.result.nextAction.requires.includes('MONTEBY_PUBLIC_PAGE_URL'), false);
   assert.ok(execution.result.nextAction.requires.includes('PUBLIC_PAGE_URL_CONFIRMED'));
   assert.equal(
@@ -2364,6 +2385,13 @@ test('preview posts nodeMap and writes returned HTML atomically', async (t) => {
     false
   );
   assert.deepEqual(server.errors, []);
+});
+}
+
+test('authoring mode is a closed layout-path option, not a verification bypass', () => {
+  for (const [command, mode] of [['preview', 'skip-verification'], ['global-styles-get', 'content-brief-authoring']]) {
+    assert.throws(() => parseArgs([command, '--site', 'https://example.test', '--authoring-mode', mode]), /authoring-mode/);
+  }
 });
 
 test('preview refuses a missing descriptor without calling a guessed endpoint', async (t) => {

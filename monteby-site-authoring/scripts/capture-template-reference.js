@@ -2840,7 +2840,7 @@ function captureRenderedLayout(
       right,
     });
   };
-  const renderedTextLines = (element) => {
+  const renderedTextLines = (element, measure = true) => {
     const elementRect = readRect(element);
     const lines = [];
     const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
@@ -2855,6 +2855,10 @@ function captureRenderedLayout(
       }
 
       const value = String(textNode.nodeValue || '');
+      if (!measure) {
+        lines.push({ text: value });
+        continue;
+      }
       const range = document.createRange();
       let offset = 0;
 
@@ -2892,6 +2896,7 @@ function captureRenderedLayout(
       }
     }
 
+    if (!measure) return [{ text: normalizeText(lines.map((line) => line.text).join('')) }];
     return lines
       .map((line) => ({
         text: normalizeText(line.text),
@@ -3010,9 +3015,9 @@ function captureRenderedLayout(
       }
       return true;
     })
-    .map(({ element, text }) => ({
+    .map(({ element }) => ({
       structureKey: elementPathKey(element),
-      text,
+      text: renderedTextLines(element, false)[0].text,
     }))
     .filter((entry, index, entries) => entries.findIndex((candidate) => (
       candidate.structureKey === entry.structureKey

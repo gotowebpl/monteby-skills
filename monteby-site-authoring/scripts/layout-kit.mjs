@@ -134,6 +134,9 @@ export class Kit {
   #normalizeControlValue(control, label, value, references, componentProps) {
     const result = normalizeControlValue(control, value, references, { componentProps });
     if (!result.accepted) {
+      if (['object', 'repeater'].includes(control.type)) {
+        throw new Error(`${label}: ${result.reason}; zachowaj treść i popraw wskazaną wartość`);
+      }
       this.notes.push(`${label}: ${result.reason}, pominięte`);
       return undefined;
     }
@@ -142,9 +145,34 @@ export class Kit {
   }
 
   /** Dowolny komponent z kontraktu. */
-  node(component, props = {}, children = [], semanticRole = '') {
+  node(component, props = {}, children = [], semanticRole = '', linkedNodes = {}) {
     const definition = this.components.get(component);
     if (!definition) throw new Error(`Komponent spoza kontraktu: ${component}`);
+    if (!Array.isArray(children) || !linkedNodes || typeof linkedNodes !== 'object' || Array.isArray(linkedNodes)) {
+      throw new Error(`${component}: nodes wymagają listy, linkedNodes mapy nazw slotów`);
+    }
+    const childIds = [...children, ...Object.values(linkedNodes)];
+    if (new Set(childIds).size !== childIds.length) throw new Error(`${component}: dziecko ma więcej niż jednego właściciela`);
+    if (children.length && !definition.isCanvas) throw new Error(`${component} nie jest kanwą — nie może mieć dzieci`);
+    for (const child of childIds) {
+      if (typeof child !== 'string' || !Object.hasOwn(this.nodes, child)) throw new Error(`${component}: nieznane dziecko`);
+      if (this.nodes[child].parent) throw new Error(`${component}: dziecko ${child} ma już właściciela`);
+      const childName = this.nodes[child].type.resolvedName;
+      const parents = this.components.get(childName).allowedParents || [];
+      if (parents.length && !parents.includes(component)) {
+        throw new Error(`${childName} niedozwolony w ${component} (dozwolone: ${parents.join(', ')})`);
+      }
+    }
+    for (const [slot, child] of Object.entries(linkedNodes)) {
+      const rule = this.contract.authoring?.nodeMap?.linkedSlots?.[component]?.[slot];
+      if (['__proto__', 'constructor', 'prototype'].includes(slot) || !rule
+          || rule.maxItems !== 1 || typeof rule.enabledBy !== 'string'
+          || props[rule.enabledBy] !== true
+          || this.nodes[child].type.resolvedName !== rule.component
+          || this.nodes[child].isCanvas !== rule.isCanvas) {
+        throw new Error(`${component}.${slot}: linked slot nie spełnia opublikowanego kontraktu`);
+      }
+    }
 
     const allowed = new Set(definition.props || []);
     const out = {};
@@ -251,18 +279,11 @@ export class Kit {
     const isCanvas = Boolean(definition.isCanvas);
     this.counter += 1;
     const id = `${component.toLowerCase()}-${this.counter}`;
-    const entry = { type: { resolvedName: component }, isCanvas, props: out, nodes: [] };
+    const entry = { type: { resolvedName: component }, isCanvas, props: out, nodes: [...children], linkedNodes: { ...linkedNodes } };
     this.nodes[id] = entry;
 
-    for (const child of children) {
-      if (!isCanvas) throw new Error(`${component} nie jest kanwą — nie może mieć dzieci`);
-      const childName = this.nodes[child].type.resolvedName;
-      const parents = this.components.get(childName).allowedParents || [];
-      if (parents.length && !parents.includes(component)) {
-        throw new Error(`${childName} niedozwolony w ${component} (dozwolone: ${parents.join(', ')})`);
-      }
+    for (const child of childIds) {
       this.nodes[child].parent = id;
-      entry.nodes.push(child);
     }
     return id;
   }

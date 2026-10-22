@@ -551,7 +551,8 @@ function publishedControlReferences(contract, component, prop, control = {}) {
     }
   }
   const tokens = isRecord(contract?.designTokens?.tokens) ? contract.designTokens.tokens : {};
-  const binding = contract?.designTokens?.bindings?.[component]?.[prop];
+  const bindingPath = control[CONTROL_CONTEXT]?.path || prop;
+  const binding = contract?.designTokens?.bindings?.[component]?.[bindingPath];
   const boundReference = typeof binding === 'string' ? tokens[binding]?.reference : undefined;
   const color = ['color', 'border-color'].includes(control?.type) || /color$/i.test(prop);
   const font = control?.type === 'font-picker' || /fontfamily$/i.test(prop);
@@ -1046,7 +1047,7 @@ function normalizeNestedObject(control, value, publishedReferences, options, lab
   let changed = false;
   for (const [key, item] of Object.entries(value)) {
     const result = normalizeControlValue(controls.get(key), item, publishedReferences, options);
-    if (!result.accepted) return result;
+    if (!result.accepted) return { ...result, reason: `${label}.${key}: ${result.reason}` };
     normalized[key] = result.value;
     changed ||= result.changed === true;
   }
@@ -1284,6 +1285,10 @@ function normalizeCustomValue(control, value, label) {
 
 function normalizeControlValue(control, value, publishedReferences = new Set(), options = {}) {
   if (!isRecord(control)) return { accepted: true, value };
+  const context = control[CONTROL_CONTEXT];
+  if (context) {
+    publishedReferences = publishedControlReferences(context.contract, context.componentName, context.prop, control);
+  }
   const label = JSON.stringify(value);
   const type = String(control.type || '');
   const values = optionValues(control.options);
@@ -1304,7 +1309,11 @@ function normalizeControlValue(control, value, publishedReferences = new Set(), 
   if (!publishedSchema.valid) {
     return { accepted: false, contractError: true, reason: publishedSchema.reason };
   }
-  if (publishedSchema.defaultMatch && type !== 'icon-svg') return { accepted: true, value };
+  if (publishedSchema.defaultMatch && type !== 'icon-svg'
+      && !(typeof value === 'string' && /^var\s*\(/iu.test(value.trim()))
+      && (!['object', 'repeater'].includes(type) || (Array.isArray(value) && value.length === 0))) {
+    return { accepted: true, value };
+  }
 
   const host = validateHostBinding(control, value, options);
   if (!host.valid) {

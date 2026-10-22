@@ -261,6 +261,16 @@ niezmienionej opublikowanej recepturze.
 
 ### Zapis i ocena
 
+Na trasie klienta `snapshot` → `validate` → `save` → `preview` podaj
+`--authoring-mode content-brief-authoring`. Wygenerowane następne komendy
+zachowują ten tryb. `PREVIEW_OK` kieruje wtedy do istniejącego pełnego capture
+ze świadomie wybranym `--content-region`, a następnie do opisanej niżej bramki
+`verify-client-content.js`. Nie wymaga nieistniejącego `iteration-report`.
+To przekazanie pracy, nie automatyczny werdykt: nadal potrzebne są dowody
+widoczności, interakcji i edytora. Bez tej opcji lub z
+`--authoring-mode owned-html-reconstruction` pozostaje rygorystyczna trasa
+porównania z referencją; nie twórz fikcyjnego raportu iteracji dla briefu.
+
 Oceń zapis na 1440/834/390: czy cała treść jest widoczna, tytuł ma właściwą
 hierarchię i mieści się w kolumnie, media są załadowane i poprawnie wykadrowane,
 CTA jest widoczne i klikalne, rytm i wyrównanie powtarzanych elementów są spójne,
@@ -301,6 +311,18 @@ wartości jako literału. Kolejność jest stała: wartość istniejąca lub dok
 pomiar, zatwierdzone tokeny projektu, `globalStyles`, `designTokens`, neutralny
 fallback. Konflikt koloru lub typografii rozstrzyga `globalStyles` i trafia do
 uwag kitu. `customCSS` nigdy nie jest wejściem profilu.
+
+Genericzny `Container` nie dziedziczy automatycznie promienia kart. W Kicie
+istniejący czwarty argument `semanticRole` równy `card` albo `surface`
+pozwala zastosować opublikowany binding `borderRadius`. Jawne `0`, literal
+lub opublikowana referencja pozostają nadrzędne. Samo tło nie dowodzi roli karty.
+
+Powiązane sloty przekazuj jako piąty argument istniejącego `Kit.node`, np.
+`kit.node('Section', { sectionOverlayEnabled: true }, children, '', { overlay: overlayId })`.
+Slot, komponent, canvas i włączający prop muszą pochodzić dokładnie z
+`authoring.nodeMap.linkedSlots`; starszy kontrakt bez tego bloku nie uprawnia
+do wymyślenia slotu. Każde dziecko ma jednego właściciela, również gdy slot
+i zwykła lista dzieci występują obok siebie.
 
 Testy kilku niezależnych briefów na jednej lokalnej witrynie wymagają izolacji
 globalnych stylów. `global-styles-compose` scala profil z bieżącymi ustawieniami;
@@ -587,8 +609,9 @@ do payloadu i zachowaj zapisany profil bez zmian.
   Uruchamiaj `normalize-layout.js` i `/validate`; nie zakładaj, że `custom`,
   `color`, `font-picker` lub `media` oznacza dowolną wartość. Nieznany kształt
   wymaga sprawdzenia kontraktu, nie obejścia przez surowy CSS.
-- Kit emituje skrócony kształt węzła (5 pól); serwer dopisuje `displayName`,
-  `custom`, `hidden`, `linkedNodes`, `schemaVersion` przy zapisie. To jest
+- Kit emituje skrócony kształt węzła; serwer dopisuje `displayName`,
+  `custom`, `hidden`, `schemaVersion` przy zapisie; jawne `linkedNodes`
+  są walidowane przez Kit według żywego kontraktu. To jest
   poprawne, nie brak.
 
 ## Raport końcowy

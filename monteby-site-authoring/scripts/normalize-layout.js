@@ -67,6 +67,9 @@ function readJson(path, label) {
  */
 function normalizeValue(control, value, publishedReferences = new Set(), componentProps = {}) {
   const result = normalizeControlValue(control, value, publishedReferences, { componentProps });
+  if (!result.accepted && ['object', 'repeater'].includes(control.type)) {
+    return { value, error: result.reason };
+  }
   if (!result.accepted) return { value: null, note: result.reason };
   return {
     value: result.value,
@@ -228,9 +231,13 @@ function main() {
         continue;
       }
       const control = controls.get(`${name}.${prop}`);
-      const { value: normalized, note } = control
+      const { value: normalized, note, error } = control
         ? normalizeValue(control, value, publishedControlReferences(contract, name, prop, control), props)
         : { value, note: undefined };
+      if (error) {
+        errors.push({ node: nodeId, prop, message: error });
+        continue;
+      }
       if (note) {
         repairs.push({ node: nodeId, prop, message: note, dropped: normalized === null });
       }

@@ -1801,6 +1801,18 @@ test('content ledger capture retains a paragraph longer than 180 characters', ()
   assert.equal(typeof layout.contentTextEntries[0].structureKey, 'string');
 });
 
+test('content ledger preserves authored case while measured text retains CSS text-transform', () => {
+  const source = 'Nasza\u00a0oferta i ŻÓŁĆ';
+  const element = textElement('h1', source, rect(8, 18, 300, 30),
+    Array.from(source, (_, index) => rect(10 + index * 7, 20, 7, 14)), { textTransform: 'uppercase' });
+  element.innerText = source.toUpperCase();
+  const { layout } = captureWithMockDom([element]);
+  assert.equal(layout.contentTextEntries[0].text, source);
+  assert.equal(layout.textBoxes[0].text, source.toUpperCase());
+  assert.equal(layout.textBoxes[0].textTransform, 'uppercase');
+  assert.deepEqual(buildContentLedger(layout.contentTextEntries).items.map(({ text }) => text), [source]);
+});
+
 test('rendered text capture preserves an authored non-breaking space', () => {
   const text = '\u00a0Oferta i\u00a0wdrożenie\u00a0';
   const element = textElement(

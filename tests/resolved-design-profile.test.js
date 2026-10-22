@@ -468,6 +468,61 @@ test('numeric control normalization reports any snapped or clamped author value'
   assert.ok(kit.notes.some((note) => note.includes('13 → 10')));
 });
 
+test('Container radius binding requires an explicit semantic card or surface and preserves authored values', async () => {
+  const current = contract();
+  const container = current.components.find((entry) => entry.name === 'Container');
+  container.props.push('borderRadius', 'backgroundColor');
+  container.aiProps.push('borderRadius', 'backgroundColor');
+  current.designTokens.bindings.Container = { borderRadius: 'buttons.radius' };
+  const profile = buildResolvedDesignProfile(current);
+  const { Kit } = await import(path.join(scripts, 'layout-kit.mjs'));
+  for (const role of ['', 'band', 'card', 'surface']) {
+    const kit = new Kit(current);
+    const id = kit.node('Container', { backgroundColor: '#ffffff' }, [], role);
+    assert.equal(kit.nodes[id].props.borderRadius, ['card', 'surface'].includes(role) ? 'var(--monteby-token-buttons-radius)' : undefined);
+    for (const borderRadius of [0, '0px', '4px', 'var(--monteby-token-buttons-radius)']) {
+      assert.equal(applyResolvedDesignDefaults('Container', { borderRadius }, profile, role).borderRadius, borderRadius);
+    }
+  }
+});
+
+test('Kit attaches linked children only to exact live slots with reciprocal single ownership', async () => {
+  const current = contract();
+  current.authoring.nodeMap = { linkedSlots: {
+    Section: { overlay: { component: 'Container', isCanvas: true, maxItems: 1, enabledBy: 'sectionOverlayEnabled' } },
+  } };
+  const section = current.components.find((entry) => entry.name === 'Section');
+  section.props.push('sectionOverlayEnabled');
+  section.controls = [{ type: 'toggle', props: ['sectionOverlayEnabled'] }];
+  const { Kit } = await import(path.join(scripts, 'layout-kit.mjs'));
+  const kit = new Kit(current);
+  const content = kit.heading('Content');
+  const overlayContent = kit.heading('Overlay');
+  const overlay = kit.box({}, [overlayContent]);
+  const before = structuredClone(kit.nodes);
+  for (const [props, children, slots] of [
+    [{ sectionOverlayEnabled: true }, [], { invented: overlay }],
+    [{ sectionOverlayEnabled: false }, [], { overlay }],
+    [{ sectionOverlayEnabled: true }, [overlay], { overlay }],
+    [{ sectionOverlayEnabled: true }, [], { overlay: content }],
+    [{ sectionOverlayEnabled: true }, [], { overlay: 'unknown' }],
+  ]) {
+    assert.throws(() => kit.node('Section', props, children, '', slots));
+    assert.deepEqual(kit.nodes, before);
+  }
+  const owner = kit.node('Section', { sectionOverlayEnabled: true }, [content], '', { overlay });
+  const layout = kit.build([owner]);
+  assert.deepEqual(layout[owner].nodes, [content]);
+  assert.deepEqual(layout[owner].linkedNodes, { overlay });
+  assert.equal(layout[overlay].parent, owner);
+  assert.equal(layout[overlayContent].parent, overlay);
+  assert.throws(() => kit.node('Section', { sectionOverlayEnabled: true }, [], '', { overlay }), /ma już właściciela/);
+  delete current.authoring.nodeMap;
+  const legacy = new Kit(current);
+  const legacyOverlay = legacy.box({}, []);
+  assert.throws(() => legacy.node('Section', { sectionOverlayEnabled: true }, [], '', { overlay: legacyOverlay }), /opublikowanego kontraktu/);
+});
+
 test('absent h3 preset binds published h2 without inventing local typography', () => {
   const current = contract();
   current.components.find((entry) => entry.name === 'Heading').props.push('fontSizeTablet', 'fontSizeMobile', 'lineHeight', 'fontWeight');

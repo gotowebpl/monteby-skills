@@ -802,6 +802,70 @@ test('motion sections and prop names remain scoped to their owning component', (
   assert.deepEqual(motionSignature(nodeMap, profile), []);
 });
 
+test('paint-only hover controls do not inherit motion identity from a shared inspector section', () => {
+  const live = contract();
+  const button = live.components.find((entry) => entry.name === 'ButtonBlock');
+  button.controls.forEach((entry) => { entry.section = 'Hover'; });
+  for (const prop of ['hoverColor', 'hoverBg', 'hoverBorderColor', 'hoverShadow', 'activeBg']) {
+    button.props.push(prop);
+    button.aiProps.push(prop);
+    button.controls.push(control(prop, prop.endsWith('Shadow') ? 'select' : 'color', { section: 'Hover', ...(prop.endsWith('Shadow') ? { options: ['sm', 'md'] } : {}) }));
+  }
+  button.props.push('hoverTranslateY');
+  button.aiProps.push('hoverTranslateY');
+  button.controls.push(control('hoverTranslateY', 'number', { section: 'Hover', min: -20, max: 20 }));
+  const profile = buildResolvedMotionProfile(live);
+  const candidate = layout();
+  Object.assign(candidate['button-1'].props, { hoverColor: '#123456', hoverBg: '#ffffff', hoverBorderColor: '#abcdef', hoverShadow: 'md', activeBg: '#000000' });
+  assert.equal(auditMotionLayout(candidate, profile).ok, true);
+  assert.deepEqual(motionSignature(candidate, profile), []);
+  Object.assign(candidate['button-1'].props, profile.recipeById.get('magnetic-cta').props);
+  assert.equal(recipeForNode(profile, 'ButtonBlock', candidate['button-1'].props).id, 'magnetic-cta');
+  candidate['button-1'].props.hoverTranslateY = -4;
+  assert.ok(auditMotionLayout(candidate, profile).errors.some(({ code }) => code === 'motion_recipe_unmatched'));
+});
+
+test('stagger size reads bounded live policy with legacy six fallback and independent span enforcement', () => {
+  for (const maximum of [undefined, 2, 7, 24]) {
+    const live = contract();
+    if (maximum !== undefined) live.authoring.motion.policy.maxStaggerGroupSize = maximum;
+    const profile = buildResolvedMotionProfile(live);
+    assert.equal(profile.available, true);
+    assert.equal(profile.policy.maxStaggerGroupSize, maximum ?? 6);
+    for (const size of [1, 2, 6, 7, 25]) {
+      const candidate = layout();
+      candidate['section-1'].nodes = Array.from({ length: size }, (_, index) => `child-${index}`);
+      Object.assign(candidate['section-1'].props, profile.recipeById.get('hero-reveal').props);
+      const codes = auditMotionLayout(candidate, profile).errors.map(({ code }) => code);
+      assert.equal(codes.includes('motion_stagger_group_size'), size < 2 || size > (maximum ?? 6));
+      assert.equal(codes.includes('motion_stagger_budget_exceeded'), 100 * (size - 1) > 300);
+    }
+  }
+  for (const invalid of [null, '7', 1, 25, 6.5]) {
+    const live = contract();
+    live.authoring.motion.policy.maxStaggerGroupSize = invalid;
+    assert.equal(buildResolvedMotionProfile(live).available, false);
+  }
+});
+
+test('explicitly published blur recipe round-trips while legacy heading recipe remains unchanged', () => {
+  const live = contract();
+  live.components.push(component('Heading', [
+    control('motionPreset', 'select', { options: ['none', 'slide'] }),
+    control('motionDuration', 'number', { min: 100, max: 2000, step: 50 }),
+    control('motionBlur', 'toggle'),
+  ]));
+  live.authoring.motion.recipes.push(
+    { id: 'heading-reveal', intent: 'reveal', components: ['Heading'], props: { motionPreset: 'slide', motionDuration: 650 } },
+    { id: 'heading-blur-reveal', intent: 'reveal', components: ['Heading'], props: { motionPreset: 'slide', motionDuration: 650, motionBlur: true } },
+  );
+  const profile = buildResolvedMotionProfile(live);
+  for (const id of ['heading-reveal', 'heading-blur-reveal']) {
+    assert.equal(recipeForNode(profile, 'Heading', profile.recipeById.get(id).props).id, id);
+  }
+  assert.equal(profile.recipeById.get('heading-reveal').props.motionBlur, undefined);
+});
+
 test('motion audit fails closed when published recipe prerequisites are absent', () => {
   const ambient = canonicalMotionFixture('ambient');
   delete ambient.layout['motion-owner'].props.backgroundImage;

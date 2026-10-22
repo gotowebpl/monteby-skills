@@ -152,6 +152,7 @@ function parseArgs(argv) {
     components: 'full',
     component: '',
     name: '',
+    authoringMode: '',
   };
   const seen = new Set();
 
@@ -228,6 +229,8 @@ function parseArgs(argv) {
       options.component = requiredValue(argv, index += 1, option);
     } else if (option === '--name') {
       options.name = requiredValue(argv, index += 1, option);
+    } else if (option === '--authoring-mode') {
+      options.authoringMode = requiredValue(argv, index += 1, option);
     } else {
       throw new ClientError(`Unknown option: ${option}.`, {
         code: 'CLI_USAGE',
@@ -321,6 +324,14 @@ function normalizeLogoUrl(rawUrl, stage) {
 function validateOptions(options) {
   requireOption(options, 'site', '--site');
   options.site = normalizeSite(options.site, options.command);
+
+  if (options.authoringMode && (!['content-brief-authoring', 'owned-html-reconstruction'].includes(options.authoringMode)
+      || !['snapshot', 'validate', 'save', 'preview', 'composition-plan'].includes(options.command))) {
+    throw new ClientError('--authoring-mode requires content-brief-authoring or owned-html-reconstruction on the layout authoring path.', {
+      code: 'CLI_USAGE', stage: options.command,
+      nextAction: 'Choose the actual authoring mode; it changes the verification handoff, never the save or verification gates.',
+    });
+  }
 
   if (options.motionPlan || options.motionSourceDocument) {
     if (options.command !== 'composition-plan' || !options.motionPlan || !options.motionSourceDocument) {
@@ -631,6 +642,8 @@ Common options:
                           Defaults to MONTEBY_AUTH_HEADER. The header value is never accepted
                           as a CLI argument and is never written to reports.
   --timeout-ms NUMBER     Per-request timeout in milliseconds (default: 30000).
+  --authoring-mode MODE   content-brief-authoring or owned-html-reconstruction for
+                          snapshot/validate/save/preview/composition-plan verification handoff.
 
 save reads DIR/layout-before.json when --snapshot is omitted. It never retries a
 409 conflict or 428 precondition response automatically. validate emits the
@@ -692,6 +705,7 @@ function withCommonArgs(args, options) {
   return args.concat([
     '--auth-header-env', options.authHeaderEnv,
     '--timeout-ms', String(options.timeoutMs),
+    ...(options.authoringMode ? ['--authoring-mode', options.authoringMode] : []),
   ]);
 }
 
@@ -930,6 +944,22 @@ function materializeNextAction(report, options) {
   }
 
   if (report.code === 'PREVIEW_OK') {
+    if (options.authoringMode === 'content-brief-authoring') {
+      const captureDirectory = path.join(path.dirname(options.out), 'canonical-brief');
+      return nextAction(
+        'capture_canonical_brief_page',
+        path.join(__dirname, 'capture-template-reference.js'),
+        ['--url', report.evidence.publicPageUrl, '--capture-layout', '--full-page',
+          '--content-region', '$MONTEBY_CONTENT_REGION', '--out-dir', captureDirectory],
+        ['MONTEBY_CONTENT_REGION', 'MONTEBY_CLIENT_CONTENT_DOCUMENT', 'MONTEBY_SOURCE_DOCUMENT',
+          'PUBLIC_PAGE_URL_CONFIRMED', 'CANONICAL_BRIEF_VISUAL_AND_INTERACTION_REVIEW'],
+        'Use the approved v2 content document scope, then run verify-client-content.js with --client-document, '
+          + '--source-document and --live-manifest from this capture. Require complete/sourceBound/sourceDocumentBound. '
+          + 'Review full-page visibility, media, overflow, CTA and keyboard interactions at 1440/834/390, '
+          + 'plus editor controls, Undo, save and reopen. Capture and content completeness alone do not emit DONE '
+          + 'or canonical_verified; a brief without a visual reference cannot claim canonical_verified_1_to_1.'
+      );
+    }
     return nextAction(
       'verify_canonical_page',
       CANONICAL_VERIFICATION_TOOL,
@@ -1132,6 +1162,7 @@ function withMaterializedNextAction(report, options) {
     : report;
   return {
     ...normalizedReport,
+    ...(options?.authoringMode ? { authoringMode: options.authoringMode } : {}),
     nextAction: materializeNextAction(normalizedReport, options),
   };
 }
