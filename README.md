@@ -1,7 +1,7 @@
 # Monteby Skills
 
-Package version: `0.6.2`.
-The published `v0.6.1` tag remains unchanged. Site Authoring 0.6.2 requires Monteby Builder 1.4.0
+Package version: `0.6.3`.
+The published `v0.6.2` tag remains unchanged. Site Authoring 0.6.3 requires Monteby Builder 1.4.0
 or newer for canonical writes and uses named feature gates from the live
 contract. Its complete 1.6 capability path requires Builder 1.6.0 or an
 explicitly admitted candidate from `1.6.0-rc.2`; the candidate's actual version
@@ -26,6 +26,11 @@ request-scoped render filters, server-side composition planning and
 instantiation, revision restore, bulk page creation, global styles PATCH,
 design profiles, contract projections, per-component reads and WordPress
 Abilities — each with a named fallback so older sites keep the 1.5 routes.
+
+The 0.6.3 patch discovers native global-header settings for sticky,
+show-on-scroll-up and shrink behavior, preserving the active header and its
+layout. It uses the live settings resource, fresh revision and canonical
+readback instead of CSS or nested-widget workarounds.
 
 The 0.6.2 patch preserves design bindings and nested semantic content, binds
 client-content proof to approved source bytes, and hardens browser capture for
