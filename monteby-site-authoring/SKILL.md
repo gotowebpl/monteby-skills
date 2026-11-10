@@ -252,7 +252,7 @@ The client removes an `update_props` entry only when both `props` and
 `unsetProps` are empty; it never removes empty strings inside a meaningful
 `props` object because values such as decorative alt text can be intentional.
 
-Save only through the page-layout write descriptor. Immediately before writing,
+Save layouts only through the page-layout write descriptor. Before writing,
 send the token through the field named by `layoutPersistence.writePreconditionField`
 and compare/send its canonical layout digest; this closes same-second lost updates.
 Current names are `postModifiedGmt` and `expectedModifiedGmt`; they are live-contract examples, not fixed client keys. A save returns `428` or `409` only when the server refuses the requested write.
@@ -291,8 +291,8 @@ selected. `activeSlug` and `activeStatus` are evidence, not rejection criteria.
 The `_gotoweb_craft_template_type` meta validates the selected post's type; it
 does not activate a template by itself. Never delete, invalidate, or replace a
 theme-selected template merely because its slug is not canonical. Compose
-headers from `SiteBranding`, a host `WPMenu`, and layout nodes — never one
-monolithic `Navbar`.
+headers from `SiteBranding`, a host `WPMenu`, and layout nodes, not one `Navbar`.
+For sticky/scroll-up/shrink behavior read `references/header-template-settings.md`.
 
 Changing which global template is active is a separate versioned operation.
 Discover `globalTemplates.{header|footer}.selectionResource` from the same live

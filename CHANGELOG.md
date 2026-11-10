@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.6.3 - 2026-11-10
+
+- Use native global-header template settings for sticky, show-on-scroll-up and
+  shrink-on-scroll behavior instead of declaring the controls missing or adding
+  CSS, theme code or nested sticky widgets.
+- Discover the active header and settings resource from the full live contract,
+  send only requested changes with the settings revision, preserve unrelated
+  settings and verify the saved state on a real public page.
+- Require a saved root Section selected from the live shrink-target list and
+  approved padding before enabling shrink behavior.
+- Add executable contract-cache coverage for header settings discovery and
+  active-header changes while retaining the global binding, content and
+  installer improvements from 0.6.2.
+
 ## 0.6.2 - 2026-10-22
 
 - Preserve published global design bindings through local overrides, shared

@@ -192,6 +192,7 @@ test('global styles are an explicit site-wide GET merge save task with no import
 
 test('global templates use activePostId and snapshots use the layout identity resource', () => {
   const production = read(path.join(references, 'production-site-benchmark.md'));
+  const headerSettings = read(path.join(references, 'header-template-settings.md'));
 
   assert.match(skill, /globalTemplates\.header\/footer\.activePostId/);
   assert.match(skill, /selectionSource: canonical\|host-filter/);
@@ -205,6 +206,13 @@ test('global templates use activePostId and snapshots use the layout identity re
   assert.match(production, /layout's\s+`postModifiedGmt` is not the selection revision/);
   assert.match(production, /exactly one\s+public Monteby header or footer/);
   assert.match(production, /templates\.resources\.title[\s\S]*expectedRevision/);
+  assert.ok(skill.includes('references/header-template-settings.md'));
+  assert.ok(production.includes('header-template-settings.md'));
+  assert.match(headerSettings, /globalTemplates\.header\.settingsResource/);
+  assert.match(headerSettings, /`readMethod`, `writeMethod`, `path`, `versionField`/);
+  assert.match(headerSettings, /`shrink_targets`[\s\S]*saved\s+direct root Section/);
+  assert.match(headerSettings, /A `200` alone does not prove the change/);
+  assert.match(headerSettings, /JavaScript disabled/);
 });
 
 test('production runbook diagnoses icon profiles without a permanent cache workaround', () => {

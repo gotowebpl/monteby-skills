@@ -39,6 +39,12 @@ current title document and PUT the approved title with that document's
 `expectedRevision`. A title revision cannot authorize selection or layout
 writes.
 
+For a sticky header, hide-on-scroll-down/show-on-scroll-up, or shrink-on-scroll,
+use the existing template settings described in
+[`header-template-settings.md`](header-template-settings.md). Check the full
+live `globalTemplates.header.settingsResource` before reporting a missing
+feature; this is not a sticky prop on a nested layout node.
+
 ## Assets
 
 - Import licensed or user-provided media through the WordPress media library. Use optimized WebP where appropriate, preserve useful dimensions, write meaningful alt text, and set featured/social images when the page needs them.
