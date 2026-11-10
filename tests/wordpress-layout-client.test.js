@@ -2999,6 +2999,73 @@ test('contract-fetch caches projections by ETag and hydrates components from the
   assert.deepEqual(server.errors, []);
 });
 
+test('full contract discovery preserves native header settings and refreshes a changed active header', async (t) => {
+  const directory = tempDir(t);
+  const cache = path.join(directory, 'header-contract-cache.json');
+  const requests = [];
+  let activePostId = 41;
+  let etag = '"header-settings-v1"';
+  const settingsResource = {
+    versionField: 'revision',
+    writePreconditionField: 'expectedRevision',
+    readMethod: 'GET',
+    writeMethod: 'POST',
+    path: '/gotoweb-craft/v1/template-settings/{postId}',
+    fields: ['display_conditions', 'cache_policy', 'header_behavior', 'sticky_offset', 'shrink_target_node_id', 'shrink_padding', 'preview_record'],
+    headerBehavior: ['static', 'sticky', 'showOnScrollUp', 'shrinkOnScroll'],
+  };
+  const server = await startServer(t, (request, response) => {
+    requests.push({ method: request.method, url: request.url, etag: request.headers['if-none-match'] || '' });
+    if (request.headers['if-none-match'] === etag) {
+      response.writeHead(304, { ETag: etag });
+      response.end();
+      return;
+    }
+    response.writeHead(200, { 'Content-Type': 'application/json', ETag: etag });
+    response.end(JSON.stringify({
+      ...capabilityContract(),
+      globalTemplates: {
+        header: {
+          type: 'header', activePostId, selectionSource: 'host-filter',
+          settingsResource: { ...settingsResource, postId: activePostId },
+        },
+      },
+    }));
+  });
+  const first = await runClient([
+    'contract-fetch', '--site', server.site, '--mode', 'full', '--cache', cache,
+    '--out', path.join(directory, 'header-first.json'),
+  ]);
+  const cached = await runClient([
+    'contract-fetch', '--site', server.site, '--mode', 'full', '--cache', cache,
+    '--out', path.join(directory, 'header-cached.json'),
+  ]);
+  activePostId = 52;
+  etag = '"header-settings-v2"';
+  const changed = await runClient([
+    'contract-fetch', '--site', server.site, '--mode', 'full', '--cache', cache,
+    '--out', path.join(directory, 'header-changed.json'),
+  ]);
+
+  for (const execution of [first, cached, changed]) {
+    assertEnvelope(execution.result, { ok: true, stage: 'contract-fetch', code: 'CONTRACT_FETCH_OK' });
+    const header = execution.result.response.globalTemplates.header;
+    assert.deepEqual(header.settingsResource, { ...settingsResource, postId: header.activePostId });
+    assert.equal(header.selectionSource, 'host-filter');
+  }
+  assert.equal(first.result.response.globalTemplates.header.activePostId, 41);
+  assert.deepEqual(cached.result.response, first.result.response);
+  assert.equal(cached.result.evidence.notModified, true);
+  assert.equal(changed.result.response.globalTemplates.header.activePostId, 52);
+  assert.equal(changed.result.evidence.notModified, false);
+  assert.deepEqual(requests, [
+    { method: 'GET', url: '/wp-json/monteby/v1/contract?mode=full&components=full', etag: '' },
+    { method: 'GET', url: '/wp-json/monteby/v1/contract?mode=full&components=full', etag: '"header-settings-v1"' },
+    { method: 'GET', url: '/wp-json/monteby/v1/contract?mode=full&components=full', etag: '"header-settings-v1"' },
+  ]);
+  assert.deepEqual(server.errors, []);
+});
+
 test('contract-fetch rejects mismatched scopes and unavailable features before writing cache', async (t) => {
   const directory = tempDir(t);
   const scopeCache = path.join(directory, 'scope-cache.json');
